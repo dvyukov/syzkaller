@@ -14,5 +14,5 @@ cl executor\executor_windows.cc /EHsc -o bin\windows_amd64\syz-executor.exe
 
 To run:
 ```
-bin\windows_amd64\syz-stress.exe -executor c:\full\path\to\bin\windows_amd64\syz-executor.exe -cover=0
+bin\windows_amd64\syz-stress.exe -executor c:\full\path\to\bin\windows_amd64\syz-executor.exe
 ```

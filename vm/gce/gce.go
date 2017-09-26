@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/syzkaller/pkg/config"
@@ -39,6 +40,7 @@ type Config struct {
 	Count        int    // number of VMs to use
 	Machine_Type string // GCE machine type (e.g. "n1-highcpu-2")
 	GCS_Path     string // GCS path to upload image
+	SSH_User     string
 }
 
 type Pool struct {
@@ -49,6 +51,7 @@ type Pool struct {
 }
 
 type instance struct {
+	env     *vmimpl.Env
 	cfg     *Config
 	GCE     *gce.Context
 	debug   bool
@@ -70,7 +73,8 @@ func ctor(env *vmimpl.Env) (vmimpl.Pool, error) {
 		return nil, fmt.Errorf("config param image is empty (required for GCE)")
 	}
 	cfg := &Config{
-		Count: 1,
+		Count:    1,
+		SSH_User: "root",
 	}
 	if err := config.LoadData(env.Config, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse gce vm config: %v", err)
@@ -95,18 +99,23 @@ func ctor(env *vmimpl.Env) (vmimpl.Pool, error) {
 	Logf(0, "GCE initialized: running on %v, internal IP %v, project %v, zone %v",
 		GCE.Instance, GCE.InternalIP, GCE.ProjectID, GCE.ZoneID)
 
-	gcsImage := filepath.Join(cfg.GCS_Path, env.Name+"-image.tar.gz")
-	Logf(0, "uploading image to %v...", gcsImage)
-	if err := uploadImageToGCS(env.Image, gcsImage); err != nil {
-		return nil, err
-	}
-	gceImage := env.Name
-	Logf(0, "creating GCE image %v...", gceImage)
-	if err := GCE.DeleteImage(gceImage); err != nil {
-		return nil, fmt.Errorf("failed to delete GCE image: %v", err)
-	}
-	if err := GCE.CreateImage(gceImage, gcsImage); err != nil {
-		return nil, fmt.Errorf("failed to create GCE image: %v", err)
+	gceImage := ""
+	if strings.HasPrefix(env.Image, "gce:") {
+		gceImage = env.Image[4:]
+	} else {
+		gcsImage := filepath.Join(cfg.GCS_Path, env.Name+"-image.tar.gz")
+		Logf(0, "uploading image to %v...", gcsImage)
+		if err := uploadImageToGCS(env.Image, gcsImage); err != nil {
+			return nil, err
+		}
+		gceImage = env.Name
+		Logf(0, "creating GCE image %v...", gceImage)
+		if err := GCE.DeleteImage(gceImage); err != nil {
+			return nil, fmt.Errorf("failed to delete GCE image: %v", err)
+		}
+		if err := GCE.CreateImage(gceImage, gcsImage); err != nil {
+			return nil, fmt.Errorf("failed to create GCE image: %v", err)
+		}
 	}
 	pool := &Pool{
 		cfg:      cfg,
@@ -151,18 +160,19 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 		}
 	}()
 	sshKey := pool.env.Sshkey
-	sshUser := "root"
+	sshUser := pool.cfg.SSH_User
 	if sshKey == "" {
 		// Assuming image supports GCE ssh fanciness.
 		sshKey = gceKey
 		sshUser = "syzkaller"
 	}
 	Logf(0, "wait instance to boot: %v (%v)", name, ip)
-	if err := waitInstanceBoot(pool.env.Debug, ip, sshKey, sshUser); err != nil {
+	if err := pool.waitInstanceBoot(ip, sshKey, sshUser); err != nil {
 		return nil, err
 	}
 	ok = true
 	inst := &instance{
+		env:     pool.env,
 		cfg:     pool.cfg,
 		debug:   pool.env.Debug,
 		GCE:     pool.GCE,
@@ -272,8 +282,10 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 		sshRpipe.Close()
 		return nil, nil, err
 	}
-	if inst.sshUser != "root" {
-		command = fmt.Sprintf("sudo bash -c '%v'", command)
+	if inst.env.OS == "linux" {
+		if inst.sshUser != "root" {
+			command = fmt.Sprintf("sudo bash -c '%v'", command)
+		}
 	}
 	args := append(sshArgs(inst.debug, inst.sshKey, "-p", 22), inst.sshUser+"@"+inst.name, command)
 	ssh := exec.Command("ssh", args...)
@@ -334,13 +346,17 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 	return merger.Output, errc, nil
 }
 
-func waitInstanceBoot(debug bool, ip, sshKey, sshUser string) error {
+func (pool *Pool) waitInstanceBoot(ip, sshKey, sshUser string) error {
+	pwd := "pwd"
+	if pool.env.OS == "windows" {
+		pwd = "dir"
+	}
 	for i := 0; i < 100; i++ {
 		if !vmimpl.SleepInterruptible(5 * time.Second) {
 			return fmt.Errorf("shutdown in progress")
 		}
-		args := append(sshArgs(debug, sshKey, "-p", 22), sshUser+"@"+ip, "pwd")
-		if _, err := runCmd(debug, "ssh", args...); err == nil {
+		args := append(sshArgs(pool.env.Debug, sshKey, "-p", 22), sshUser+"@"+ip, pwd)
+		if _, err := runCmd(pool.env.Debug, "ssh", args...); err == nil {
 			return nil
 		}
 	}
