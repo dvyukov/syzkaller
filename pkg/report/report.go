@@ -342,6 +342,31 @@ var oopses = []*oops{
 		[]oopsFormat{},
 		[]*regexp.Regexp{},
 	},
+
+	// freebsd
+	&oops{
+		[]byte("Fatal trap"),
+		[]oopsFormat{
+			{
+				compile("Fatal trap (.+?)\\r?\\n(?:.*\\n)+?" +
+					"KDB: stack backtrace:\\r?\\n" +
+					"(?:#[0-9]+ {{ADDR}} at (?:kdb_backtrace|vpanic|panic|trap_fatal|trap_pfault|trap|calltrap|m_copydata|__rw_wlock_hard)\\+{{ADDR}}\\r?\\n)*" +
+					"#[0-9]+ {{ADDR}} at {{FUNC}}{{ADDR}}"),
+				"Fatal trap %[1]v in %[2]v",
+			},
+		},
+		[]*regexp.Regexp{},
+	},
+	&oops{
+		[]byte("panic:"),
+		[]oopsFormat{
+			{
+				compile("panic: ffs_write: type {{ADDR}} ([0-9]+) \\(([0-9]+),(?:[0-9]+)\\)"),
+				"panic: ffs_write: type ADDR %[1]v (%[2]v,X)",
+			},
+		},
+		[]*regexp.Regexp{},
+	},
 }
 
 var (

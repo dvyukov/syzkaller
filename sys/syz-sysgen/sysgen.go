@@ -107,11 +107,13 @@ func main() {
 			fmt.Printf("\n")
 		}
 
-		for what, count := range unsupported {
-			if count == len(jobs) {
-				failf("%v is unsupported on all arches (typo?)", what)
+		/*
+			for what, count := range unsupported {
+				if count == len(jobs) {
+					failf("%v is unsupported on all arches (typo?)", what)
+				}
 			}
-		}
+		*/
 
 		writeExecutorSyscalls(OS, syscallArchs)
 	}

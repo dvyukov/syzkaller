@@ -82,3 +82,7 @@ uint32_t* write_output(uint32_t v)
 void write_completed(uint32_t completed)
 {
 }
+
+void call_completed(uint32_t call_idx, uint64_t result, uint32_t reserrno)
+{
+}

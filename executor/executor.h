@@ -135,6 +135,7 @@ void thread_create(thread_t* th, int id);
 void* worker_thread(void* arg);
 uint32_t* write_output(uint32_t v);
 void write_completed(uint32_t completed);
+void call_completed(uint32_t call_idx, uint64_t result, uint32_t reserrno);
 uint64_t read_input(uint64_t** input_posp, bool peek = false);
 uint64_t read_arg(uint64_t** input_posp);
 uint64_t read_result(uint64_t** input_posp);
@@ -365,6 +366,7 @@ void handle_completion(thread_t* th)
 		}
 	}
 	if (!collide) {
+		//call_completed(th->call_index, th->res, th->reserrno);
 		write_output(th->call_index);
 		write_output(th->call_num);
 		uint32_t reserrno = th->res != (uint32_t)-1 ? 0 : th->reserrno;

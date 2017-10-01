@@ -56,31 +56,11 @@ include <asm/prctl.h>
 include <linux/ioprio.h>
 include <uapi/linux/kcov.h>
 
-resource fd[int32]: 0xffffffffffffffff, AT_FDCWD
-resource fd_dir[fd]
-
-open(file ptr[in, filename], flags flags[open_flags], mode flags[open_mode]) fd
-# Just so that we have something that creates fd_dir resources.
-open$dir(file ptr[in, filename], flags flags[open_flags], mode flags[open_mode]) fd_dir
-openat(fd fd_dir, file ptr[in, filename], flags flags[open_flags], mode flags[open_mode]) fd
 creat(file ptr[in, filename], mode flags[open_mode]) fd
-close(fd fd)
-read(fd fd, buf buffer[out], count len[buf])
 pread64(fd fd, buf buffer[out], count len[buf], pos fileoff)
-readv(fd fd, vec ptr[in, array[iovec_out]], vlen len[vec])
-preadv(fd fd, vec ptr[in, array[iovec_out]], vlen len[vec], off fileoff)
-write(fd fd, buf buffer[in], count len[buf])
 pwrite64(fd fd, buf buffer[in], count len[buf], pos fileoff)
-writev(fd fd, vec ptr[in, array[iovec_in]], vlen len[vec])
-pwritev(fd fd, vec ptr[in, array[iovec_in]], vlen len[vec], off fileoff)
-lseek(fd fd, offset fileoff, whence flags[seek_whence])
-
-dup(oldfd fd) fd
-dup2(oldfd fd, newfd fd) fd
 dup3(oldfd fd, newfd fd, flags flags[dup_flags]) fd
-
 pipe(pipefd ptr[out, pipefd])
-pipe2(pipefd ptr[out, pipefd], flags flags[pipe_flags])
 
 tee(fdin fd, fdout fd, len int64, f flags[splice_flags])
 splice(fdin fd, offin fileoff, fdout fd, offout fileoff, len int64, f flags[splice_flags])
@@ -90,7 +70,6 @@ sendfile(fdout fd, fdin fd, off ptr[inout, fileoff[int64], opt], count int64)
 stat(file ptr[in, filename], statbuf ptr[out, stat])
 statx(fd fd_dir, file ptr[in, filename], flags flags[statx_flags], mask flags[statx_mask], statxbuf ptr[out, statx])
 lstat(file ptr[in, filename], statbuf ptr[out, stat])
-fstat(fd fd, statbuf ptr[out, stat])
 
 poll(fds ptr[in, array[pollfd]], nfds len[fds], timeout int32)
 ppoll(fds ptr[in, array[pollfd]], nfds len[fds], tsp ptr[in, timespec], sigmask ptr[in, sigset], size len[sigmask])
@@ -129,13 +108,8 @@ ioctl$UFFDIO_WAKE(fd fd_uffd, cmd const[UFFDIO_WAKE], arg ptr[in, uffdio_range])
 ioctl$UFFDIO_COPY(fd fd_uffd, cmd const[UFFDIO_WAKE], arg ptr[in, uffdio_range])
 ioctl$UFFDIO_ZEROPAGE(fd fd_uffd, cmd const[UFFDIO_WAKE], arg ptr[in, uffdio_range])
 
-mmap(addr vma, len len[addr], prot flags[mmap_prot], flags flags[mmap_flags], fd fd, offset fileoff) vma
-munmap(addr vma, len len[addr])
 mremap(addr vma, len len[addr], newlen len[newaddr], flags flags[mremap_flags], newaddr vma) vma
 remap_file_pages(addr vma, size len[addr], prot flags[mmap_prot], pgoff intptr, flags flags[mmap_flags])
-mprotect(addr vma, len len[addr], prot flags[mmap_prot])
-msync(addr vma, len len[addr], f flags[msync_flags])
-madvise(addr vma, len len[addr], advice flags[madvise_flags])
 fadvise64(fd fd, offset fileoff, len intptr, advice flags[fadvise_flags])
 readahead(fd fd, off intptr, count intptr)
 mbind(addr vma, len len[addr], mode flags[mbind_mode], nodemask ptr[in, int64], maxnode intptr, flags flags[mbind_flags])
@@ -144,11 +118,7 @@ migrate_pages(pid pid, maxnode intptr, old ptr[in, int64], new ptr[in, int64])
 set_mempolicy(mode flags[mbind_mode], nodemask ptr[in, int64], maxnode intptr)
 get_mempolicy(mode ptr[out, int32], nodemask ptr[out, int64], maxnode intptr, addr vma, flags flags[mempolicy_flags])
 mincore(addr vma, size len[addr], vec buffer[out])
-mlock(addr vma, size len[addr])
 mlock2(addr vma, size len[addr], flags flags[mlock_flags])
-munlock(addr vma, size len[addr])
-mlockall(flags flags[mlockall_flags])
-munlockall()
 memfd_create(name ptr[in, string], flags flags[memfd_flags]) fd
 unshare(flags flags[clone_flags])
 kcmp(pid1 pid, pid2 pid, type flags[kcmp_flags], fd1 fd, fd2 fd)
@@ -255,10 +225,6 @@ utimensat(dir fd_dir, pathname ptr[in, filename], times ptr[in, itimerval], flag
 clone(flags flags[clone_flags], sp buffer[in], parentid ptr[out, int32], childtid ptr[out, int32], tls buffer[in])
 execve(file ptr[in, filename], argv ptr[in, array[ptr[in, string]]], envp ptr[in, array[ptr[in, string]]])
 execveat(dirfd fd_dir, file ptr[in, filename], argv ptr[in, array[ptr[in, string]]], envp ptr[in, array[ptr[in, string]]], flags flags[at_flags])
-
-resource pid[int32]: 0, 0xffffffffffffffff
-resource uid[int32]: 0, 0xffffffffffffffff
-resource gid[int32]: 0, 0xffffffffffffffff
 
 getgid() gid
 getegid() gid
@@ -489,42 +455,6 @@ openat$sequencer2(fd const[AT_FDCWD], file ptr[in, string["/dev/sequencer2"]], f
 openat$dsp(fd const[AT_FDCWD], file ptr[in, string["/dev/dsp"]], flags flags[open_flags], mode const[0]) fd
 openat$audio(fd const[AT_FDCWD], file ptr[in, string["/dev/audio"]], flags flags[open_flags], mode const[0]) fd
 openat$xenevtchn(fd const[AT_FDCWD], file ptr[in, string["/dev/xen/evtchn"]], flags flags[open_flags], mode const[0]) fd
-
-pipefd {
-	rfd	fd
-	wfd	fd
-}
-
-iovec_in {
-	addr	buffer[in]
-	len	len[addr, intptr]
-}
-
-iovec_out {
-	addr	buffer[out]
-	len	len[addr, intptr]
-}
-
-stat {
-	dev	int16
-	ino	int32
-	mode	int16
-	nlink	int16
-	uid	uid
-	gid	gid
-	rdev	int16
-	size	int32
-	blksize	int32
-	blocks	int32
-	atime	int32
-	ansec	int32
-	mtime	int32
-	mnsec	int32
-	ctime	int32
-	cnsec	int32
-	pad1	int32
-	pad2	int32
-}
 
 statx {
 	mask		int32
@@ -906,28 +836,19 @@ uffdio_zeropage {
 	zeropg	const[0, int64]
 }
 
-open_flags = O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, FASYNC, O_CLOEXEC, O_CREAT, O_DIRECT, O_DIRECTORY, O_EXCL, O_LARGEFILE, O_NOATIME, O_NOCTTY, O_NOFOLLOW, O_NONBLOCK, O_PATH, O_SYNC, O_TRUNC, __O_TMPFILE
-open_mode = S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP, S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH
-madvise_flags = MADV_NORMAL, MADV_RANDOM, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, MADV_REMOVE, MADV_DONTFORK, MADV_DOFORK, MADV_HWPOISON, MADV_SOFT_OFFLINE, MADV_MERGEABLE, MADV_UNMERGEABLE, MADV_HUGEPAGE, MADV_NOHUGEPAGE, MADV_DONTDUMP, MADV_DODUMP
 fadvise_flags = POSIX_FADV_NORMAL, POSIX_FADV_SEQUENTIAL, POSIX_FADV_RANDOM, POSIX_FADV_NOREUSE, POSIX_FADV_WILLNEED, POSIX_FADV_DONTNEED
 move_pages_flags = MPOL_MF_MOVE, MPOL_MF_MOVE_ALL
-msync_flags = MS_ASYNC, MS_SYNC, MS_INVALIDATE
-mmap_prot = PROT_EXEC, PROT_READ, PROT_WRITE, PROT_SEM, PROT_GROWSDOWN, PROT_GROWSUP
-mmap_flags = MAP_SHARED, MAP_PRIVATE, MAP_32BIT, MAP_ANONYMOUS, MAP_DENYWRITE, MAP_EXECUTABLE, MAP_FILE, MAP_FIXED, MAP_GROWSDOWN, MAP_HUGETLB, MAP_LOCKED, MAP_NONBLOCK, MAP_NORESERVE, MAP_POPULATE, MAP_STACK, MAP_UNINITIALIZED
 mremap_flags = MREMAP_MAYMOVE, MREMAP_FIXED
 mbind_mode = MPOL_DEFAULT, MPOL_BIND, MPOL_INTERLEAVE, MPOL_PREFERRED, MPOL_F_STATIC_NODES, MPOL_F_RELATIVE_NODES
 mbind_flags = MPOL_MF_STRICT, MPOL_MF_MOVE, MPOL_MF_MOVE_ALL
 memfd_flags = MFD_CLOEXEC, MFD_ALLOW_SEALING
-pipe_flags = O_NONBLOCK, O_CLOEXEC
 userfaultfd_flags = O_NONBLOCK, O_CLOEXEC
 uffdio_register_mode = UFFDIO_REGISTER_MODE_MISSING, UFFDIO_REGISTER_MODE_WP
 uffdio_copy_mode = UFFDIO_COPY_MODE_DONTWAKE
 uffdio_zero_mode = UFFDIO_ZEROPAGE_MODE_DONTWAKE
 mlock_flags = MLOCK_ONFAULT
-mlockall_flags = MCL_CURRENT, MCL_FUTURE
 dup_flags = O_CLOEXEC
 splice_flags = SPLICE_F_MOVE, SPLICE_F_NONBLOCK, SPLICE_F_MORE, SPLICE_F_GIFT
-seek_whence = SEEK_SET, SEEK_CUR, SEEK_END, SEEK_DATA, SEEK_HOLE
 signalfd_flags = SFD_NONBLOCK, SFD_CLOEXEC
 eventfd_flags = EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE
 timerfd_create_flags = TFD_NONBLOCK, TFD_CLOEXEC

@@ -98,3 +98,12 @@ uint32_t* write_output(uint32_t v)
 void write_completed(uint32_t completed)
 {
 }
+
+void call_completed(uint32_t call_idx, uint64_t result, uint32_t reserrno)
+{
+	uint32_t data[2];
+	data[0] = call_idx;
+	data[1] = result == (uint64_t)-1 ? reserrno : 0;
+	int res = write(3, data, sizeof(data));
+	debug("call_completed(%d, %d) = %d\n", data[0], data[1], res);
+}

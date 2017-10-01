@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
@@ -69,6 +70,14 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info []CallIn
 	}
 	defer os.RemoveAll(dir)
 
+	rout, wout, err := osutil.LongPipe()
+	if err != nil {
+		err0 = fmt.Errorf("failed to create pipe: %v", err)
+		return
+	}
+	defer rout.Close()
+	defer wout.Close()
+
 	data := make([]byte, prog.ExecBufferSize)
 	if err := p.SerializeForExec(data, env.pid); err != nil {
 		err0 = err
@@ -84,6 +93,7 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info []CallIn
 	cmd.Env = []string{}
 	cmd.Dir = dir
 	cmd.Stdin = inbuf
+	cmd.ExtraFiles = []*os.File{wout.(*os.File)}
 	if env.config.Flags&FlagDebug != 0 {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stdout
@@ -92,6 +102,7 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info []CallIn
 		err0 = fmt.Errorf("failed to start %d/%+v: %v", dir, env.bin, err)
 		return
 	}
+	wout.Close()
 	done := make(chan error)
 	go func() {
 		done <- cmd.Wait()
@@ -103,6 +114,25 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info []CallIn
 	case <-t.C:
 		cmd.Process.Kill()
 		<-done
+	}
+	{
+		output, err := ioutil.ReadAll(rout)
+		if err != nil {
+			fmt.Printf("read out data: %v\n", err)
+		} else {
+			//fmt.Printf("read %v out data\n", len(output))
+			info = make([]CallInfo, len(p.Calls))
+			for len(output) >= 8 {
+				r := *(*[2]uint32)(unsafe.Pointer(&output[0]))
+				output = output[8:]
+				//fmt.Printf("  result: idx=%v res=%v\n", r[0], r[1])
+				if int(r[0]) < len(info) {
+					sig := uint32(p.Calls[r[0]].Meta.ID<<16) | r[1]
+					info[r[0]].Signal = []uint32{sig}
+					info[r[0]].Errno = int(r[1])
+				}
+			}
+		}
 	}
 	return
 }

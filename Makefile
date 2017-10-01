@@ -193,6 +193,7 @@ format: bin/syz-fmt
 	clang-format --style=file -i executor/*.cc executor/*.h tools/kcovtrace/*.c
 	bin/syz-fmt sys/freebsd
 	bin/syz-fmt sys/linux
+	bin/syz-fmt sys/posix
 	bin/syz-fmt sys/fuchsia
 	bin/syz-fmt sys/windows
 bin/syz-fmt:

@@ -1,0 +1,20 @@
+# Copyright 2017 syzkaller project authors. All rights reserved.
+# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
+
+include <sys/mman.h>
+
+mmap(addr vma, len len[addr], prot flags[mmap_prot], flags flags[mmap_flags], fd fd, offset fileoff) vma
+munmap(addr vma, len len[addr])
+mprotect(addr vma, len len[addr], prot flags[mmap_prot])
+msync(addr vma, len len[addr], f flags[msync_flags])
+madvise(addr vma, len len[addr], advice flags[madvise_flags])
+mlock(addr vma, size len[addr])
+munlock(addr vma, size len[addr])
+mlockall(flags flags[mlockall_flags])
+munlockall()
+
+mmap_prot = PROT_EXEC, PROT_READ, PROT_WRITE, PROT_SEM, PROT_GROWSDOWN, PROT_GROWSUP
+msync_flags = MS_ASYNC, MS_SYNC, MS_INVALIDATE
+mmap_flags = MAP_SHARED, MAP_PRIVATE, MAP_32BIT, MAP_ANONYMOUS, MAP_DENYWRITE, MAP_EXECUTABLE, MAP_FILE, MAP_FIXED, MAP_GROWSDOWN, MAP_HUGETLB, MAP_LOCKED, MAP_NONBLOCK, MAP_NORESERVE, MAP_POPULATE, MAP_STACK, MAP_UNINITIALIZED
+madvise_flags = MADV_NORMAL, MADV_RANDOM, MADV_SEQUENTIAL, MADV_WILLNEED, MADV_DONTNEED, MADV_REMOVE, MADV_DONTFORK, MADV_DOFORK, MADV_HWPOISON, MADV_SOFT_OFFLINE, MADV_MERGEABLE, MADV_UNMERGEABLE, MADV_HUGEPAGE, MADV_NOHUGEPAGE, MADV_DONTDUMP, MADV_DODUMP
+mlockall_flags = MCL_CURRENT, MCL_FUTURE

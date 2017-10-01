@@ -55,6 +55,7 @@ type OS interface {
 
 var oses = map[string]OS{
 	"linux":   new(linux),
+	"freebsd": new(freebsd),
 	"android": new(linux),
 	"fuchsia": new(fuchsia),
 	"windows": new(windows),
