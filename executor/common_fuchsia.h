@@ -20,14 +20,30 @@
 #include <time.h>
 #endif
 
-#define doexit exit
 #define NORETURN __attribute__((noreturn))
+
+NORETURN static void doexit(int status)
+{
+	_exit(status);
+	for (;;) {
+	}
+}
 
 #include "common.h"
 
 #if defined(SYZ_EXECUTOR) || defined(SYZ_HANDLE_SEGV)
 static __thread int skip_segv;
 static __thread jmp_buf segv_env;
+
+static void recover()
+{
+	if (__atomic_load_n(&skip_segv, __ATOMIC_RELAXED)) {
+		debug("recover: skipping\n");
+		_longjmp(segv_env, 1);
+	}
+	debug("recover: exiting\n");
+	doexit(1);
+}
 
 static void segv_handler(int sig, siginfo_t* info, void* uctx)
 {
@@ -62,6 +78,11 @@ static void install_segv_handler()
 }
 
 #define NONFAILING(...)                                              \
+	{                                                            \
+			__VA_ARGS__;                                 \
+	}
+
+#define NONFAILING1(...)                                              \
 	{                                                            \
 		__atomic_fetch_add(&skip_segv, 1, __ATOMIC_SEQ_CST); \
 		if (_setjmp(segv_env) == 0) {                        \
@@ -112,8 +133,9 @@ long syz_mmap(size_t addr, size_t size)
 	uintptr_t res = 0;
 	zx_handle_t mapping = 0;
 	status = zx_vmar_allocate(root, addr - info.base, size,
-				  ZX_VM_FLAG_SPECIFIC | ZX_VM_FLAG_CAN_MAP_READ | ZX_VM_FLAG_CAN_MAP_WRITE,
+				  ZX_VM_FLAG_SPECIFIC | ZX_VM_FLAG_CAN_MAP_READ | ZX_VM_FLAG_CAN_MAP_WRITE | ZX_VM_FLAG_CAN_MAP_EXECUTE,
 				  &mapping, &res);
+	debug("base=%p add=%p size=%p res=%p\n", (void*)info.base, (void*)addr, (void*)size, (void*)res);
 	if (status == ZX_OK && addr != res)
 		error("zx_vmar_allocate allocated wrong address: %p, want %p", (void*)res, (void*)addr);
 	return status;

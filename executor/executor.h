@@ -76,6 +76,7 @@ struct thread_t {
 	bool created;
 	int id;
 	osthread_t th;
+	uint64_t osid;
 	// TODO(dvyukov): this assumes 64-bit kernel. This must be "kernel long" somehow.
 	uint64_t* cover_data;
 	// Pointer to the size of coverage (stored as first word of memory).
@@ -132,6 +133,7 @@ thread_t* schedule_call(int n, int call_index, int call_num, uint64_t num_args, 
 void handle_completion(thread_t* th);
 void execute_call(thread_t* th);
 void thread_create(thread_t* th, int id);
+void thread_init(thread_t* th);
 void* worker_thread(void* arg);
 uint32_t* write_output(uint32_t v);
 void write_completed(uint32_t completed);
@@ -146,6 +148,7 @@ void cover_reset(thread_t* th);
 uint64_t read_cover_size(thread_t* th);
 static uint32_t hash(uint32_t a);
 static bool dedup(uint32_t sig);
+void call_completed(uint32_t call_idx, uint64_t result, uint32_t reserrno);
 
 void execute_one(uint64_t* input_data)
 {
@@ -365,6 +368,7 @@ void handle_completion(thread_t* th)
 		}
 	}
 	if (!collide) {
+		call_completed(th->call_index, th->res, th->reserrno);
 		write_output(th->call_index);
 		write_output(th->call_num);
 		uint32_t reserrno = th->res != (uint32_t)-1 ? 0 : th->reserrno;
@@ -445,6 +449,7 @@ void* worker_thread(void* arg)
 {
 	thread_t* th = (thread_t*)arg;
 
+	thread_init(th);
 	cover_enable(th);
 	for (;;) {
 		event_wait(&th->ready);

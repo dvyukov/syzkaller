@@ -2,14 +2,14 @@
 
 #if defined(__x86_64__) || 0
 #define GOARCH "amd64"
-#define SYZ_REVISION "c3bd3ab69ea8ecd0c05971c0ced1dd363867b861"
+#define SYZ_REVISION "41de6c184e440ccfdcb2c9a55c2af9500b4e8748"
 #define __NR_syz_job_default 1000000
 #define __NR_syz_mmap 1000001
 #define __NR_syz_process_self 1000002
 #define __NR_syz_thread_self 1000003
 #define __NR_syz_vmar_root_self 1000004
 
-unsigned syscall_count = 103;
+unsigned syscall_count = 104;
 call_t syscalls[] = {
     {"syz_job_default", 1000000, (syscall_t)syz_job_default},
     {"syz_mmap", 1000001, (syscall_t)syz_mmap},
@@ -41,7 +41,6 @@ call_t syscalls[] = {
     {"zx_log_read", 0, (syscall_t)zx_log_read},
     {"zx_log_write", 0, (syscall_t)zx_log_write},
     {"zx_nanosleep", 0, (syscall_t)zx_nanosleep},
-    {"zx_object_get_child", 0, (syscall_t)zx_object_get_child},
     {"zx_object_get_cookie", 0, (syscall_t)zx_object_get_cookie},
     {"zx_object_get_info$ZX_INFO_CPU_STATS", 0, (syscall_t)zx_object_get_info},
     {"zx_object_get_info$ZX_INFO_HANDLE_BASIC", 0, (syscall_t)zx_object_get_info},
@@ -87,8 +86,10 @@ call_t syscalls[] = {
     {"zx_thread_create", 0, (syscall_t)zx_thread_create},
     {"zx_thread_exit", 0, (syscall_t)zx_thread_exit},
     {"zx_thread_read_state", 0, (syscall_t)zx_thread_read_state},
+    {"zx_thread_read_state$0", 0, (syscall_t)zx_thread_read_state},
     {"zx_thread_start", 0, (syscall_t)zx_thread_start},
     {"zx_thread_write_state", 0, (syscall_t)zx_thread_write_state},
+    {"zx_thread_write_state$0", 0, (syscall_t)zx_thread_write_state},
     {"zx_ticks_get", 0, (syscall_t)zx_ticks_get},
     {"zx_ticks_per_second", 0, (syscall_t)zx_ticks_per_second},
     {"zx_time_get", 0, (syscall_t)zx_time_get},
@@ -120,14 +121,14 @@ call_t syscalls[] = {
 
 #if defined(__aarch64__) || 0
 #define GOARCH "arm64"
-#define SYZ_REVISION "74ac3e7eb1255a4c53421a5f38ae8b75e7bada88"
+#define SYZ_REVISION "8e15d7da751588f8d52396bb11e2d33831691144"
 #define __NR_syz_job_default 1000000
 #define __NR_syz_mmap 1000001
 #define __NR_syz_process_self 1000002
 #define __NR_syz_thread_self 1000003
 #define __NR_syz_vmar_root_self 1000004
 
-unsigned syscall_count = 103;
+unsigned syscall_count = 104;
 call_t syscalls[] = {
     {"syz_job_default", 1000000, (syscall_t)syz_job_default},
     {"syz_mmap", 1000001, (syscall_t)syz_mmap},
@@ -159,7 +160,6 @@ call_t syscalls[] = {
     {"zx_log_read", 0, (syscall_t)zx_log_read},
     {"zx_log_write", 0, (syscall_t)zx_log_write},
     {"zx_nanosleep", 0, (syscall_t)zx_nanosleep},
-    {"zx_object_get_child", 0, (syscall_t)zx_object_get_child},
     {"zx_object_get_cookie", 0, (syscall_t)zx_object_get_cookie},
     {"zx_object_get_info$ZX_INFO_CPU_STATS", 0, (syscall_t)zx_object_get_info},
     {"zx_object_get_info$ZX_INFO_HANDLE_BASIC", 0, (syscall_t)zx_object_get_info},
@@ -205,8 +205,10 @@ call_t syscalls[] = {
     {"zx_thread_create", 0, (syscall_t)zx_thread_create},
     {"zx_thread_exit", 0, (syscall_t)zx_thread_exit},
     {"zx_thread_read_state", 0, (syscall_t)zx_thread_read_state},
+    {"zx_thread_read_state$0", 0, (syscall_t)zx_thread_read_state},
     {"zx_thread_start", 0, (syscall_t)zx_thread_start},
     {"zx_thread_write_state", 0, (syscall_t)zx_thread_write_state},
+    {"zx_thread_write_state$0", 0, (syscall_t)zx_thread_write_state},
     {"zx_ticks_get", 0, (syscall_t)zx_ticks_get},
     {"zx_ticks_per_second", 0, (syscall_t)zx_ticks_per_second},
     {"zx_time_get", 0, (syscall_t)zx_time_get},

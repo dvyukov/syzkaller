@@ -28,7 +28,7 @@ import (
 	"github.com/google/syzkaller/pkg/osutil"
 	. "github.com/google/syzkaller/pkg/rpctype"
 	"github.com/google/syzkaller/prog"
-	"github.com/google/syzkaller/sys"
+	_ "github.com/google/syzkaller/sys"
 )
 
 var (
@@ -59,8 +59,8 @@ type Candidate struct {
 }
 
 var (
-	manager *RpcClient
-	target  *prog.Target
+	//manager *RpcClient
+	target *prog.Target
 
 	signalMu     sync.RWMutex
 	corpusSignal map[uint32]struct{}
@@ -135,88 +135,95 @@ func main() {
 	newSignal = make(map[uint32]struct{})
 	corpusHashes = make(map[hash.Sig]struct{})
 
-	Logf(0, "dialing manager at %v", *flagManager)
-	a := &ConnectArgs{*flagName}
-	r := &ConnectRes{}
-	if err := RpcCall(*flagManager, "Manager.Connect", a, r); err != nil {
-		panic(err)
+	var ct *prog.ChoiceTable
+	calls := make(map[*prog.Syscall]bool)
+	for _, c := range target.Syscalls {
+		calls[c] = true
 	}
-	calls := buildCallList(target, r.EnabledCalls)
-	ct := target.BuildChoiceTable(r.Prios, calls)
-	for _, inp := range r.Inputs {
-		addInput(inp)
-	}
-	for _, s := range r.MaxSignal {
-		maxSignal[s] = struct{}{}
-	}
-	for _, candidate := range r.Candidates {
-		p, err := target.Deserialize(candidate.Prog)
-		if err != nil {
+	/*
+		Logf(0, "dialing manager at %v", *flagManager)
+		a := &ConnectArgs{*flagName}
+		r := &ConnectRes{}
+		if err := RpcCall(*flagManager, "Manager.Connect", a, r); err != nil {
 			panic(err)
 		}
-		if noCover {
-			corpusMu.Lock()
-			corpus = append(corpus, p)
-			corpusMu.Unlock()
-		} else {
-			triageMu.Lock()
-			candidates = append(candidates, Candidate{p, candidate.Minimized})
-			triageMu.Unlock()
+		calls := buildCallList(target, r.EnabledCalls)
+		ct := target.BuildChoiceTable(r.Prios, calls)
+		for _, inp := range r.Inputs {
+			addInput(inp)
 		}
-	}
+		for _, s := range r.MaxSignal {
+			maxSignal[s] = struct{}{}
+		}
+		for _, candidate := range r.Candidates {
+			p, err := target.Deserialize(candidate.Prog)
+			if err != nil {
+				panic(err)
+			}
+			if noCover {
+				corpusMu.Lock()
+				corpus = append(corpus, p)
+				corpusMu.Unlock()
+			} else {
+				triageMu.Lock()
+				candidates = append(candidates, Candidate{p, candidate.Minimized})
+				triageMu.Unlock()
+			}
+		}
 
-	// This requires "fault-inject: support systematic fault injection" kernel commit.
-	if fd, err := syscall.Open("/proc/self/fail-nth", syscall.O_RDWR, 0); err == nil {
-		syscall.Close(fd)
-		faultInjectionEnabled = true
-	}
-
-	kcov, compsSupported := checkCompsSupported()
-	Logf(1, "KCOV_CHECK: compsSupported=%v", compsSupported)
-	if r.NeedCheck {
-		out, err := osutil.RunCmd(time.Minute, "", *flagExecutor, "version")
-		if err != nil {
-			panic(err)
-		}
-		vers := strings.Split(strings.TrimSpace(string(out)), " ")
-		if len(vers) != 4 {
-			panic(fmt.Sprintf("bad executor version: %q", string(out)))
-		}
-		a := &CheckArgs{
-			Name:           *flagName,
-			UserNamespaces: osutil.IsExist("/proc/self/ns/user"),
-			FuzzerGitRev:   sys.GitRevision,
-			FuzzerSyzRev:   target.Revision,
-			ExecutorGitRev: vers[3],
-			ExecutorSyzRev: vers[2],
-			ExecutorArch:   vers[1],
-		}
-		a.Kcov = kcov
-		if fd, err := syscall.Open("/sys/kernel/debug/kmemleak", syscall.O_RDWR, 0); err == nil {
+		// This requires "fault-inject: support systematic fault injection" kernel commit.
+		if fd, err := syscall.Open("/proc/self/fail-nth", syscall.O_RDWR, 0); err == nil {
 			syscall.Close(fd)
-			a.Leak = true
+			faultInjectionEnabled = true
 		}
-		a.Fault = faultInjectionEnabled
-		a.CompsSupported = compsSupported
-		for c := range calls {
-			a.Calls = append(a.Calls, c.Name)
+
+		kcov, compsSupported := checkCompsSupported()
+		Logf(1, "KCOV_CHECK: compsSupported=%v", compsSupported)
+		if r.NeedCheck {
+			out, err := osutil.RunCmd(time.Minute, "", *flagExecutor, "version")
+			if err != nil {
+				panic(err)
+			}
+			vers := strings.Split(strings.TrimSpace(string(out)), " ")
+			if len(vers) != 4 {
+				panic(fmt.Sprintf("bad executor version: %q", string(out)))
+			}
+			a := &CheckArgs{
+				Name:           *flagName,
+				UserNamespaces: osutil.IsExist("/proc/self/ns/user"),
+				FuzzerGitRev:   sys.GitRevision,
+				FuzzerSyzRev:   target.Revision,
+				ExecutorGitRev: vers[3],
+				ExecutorSyzRev: vers[2],
+				ExecutorArch:   vers[1],
+			}
+			a.Kcov = kcov
+			if fd, err := syscall.Open("/sys/kernel/debug/kmemleak", syscall.O_RDWR, 0); err == nil {
+				syscall.Close(fd)
+				a.Leak = true
+			}
+			a.Fault = faultInjectionEnabled
+			a.CompsSupported = compsSupported
+			for c := range calls {
+				a.Calls = append(a.Calls, c.Name)
+			}
+			if err := RpcCall(*flagManager, "Manager.Check", a, nil); err != nil {
+				panic(err)
+			}
 		}
-		if err := RpcCall(*flagManager, "Manager.Check", a, nil); err != nil {
+
+		// Manager.Connect reply can ve very large and that memory will be permanently cached in the connection.
+		// So we do the call on a transient connection, free all memory and reconnect.
+		// The rest of rpc requests have bounded size.
+		debug.FreeOSMemory()
+		if conn, err := NewRpcClient(*flagManager); err != nil {
 			panic(err)
+		} else {
+			manager = conn
 		}
-	}
 
-	// Manager.Connect reply can ve very large and that memory will be permanently cached in the connection.
-	// So we do the call on a transient connection, free all memory and reconnect.
-	// The rest of rpc requests have bounded size.
-	debug.FreeOSMemory()
-	if conn, err := NewRpcClient(*flagManager); err != nil {
-		panic(err)
-	} else {
-		manager = conn
-	}
-
-	kmemleakInit()
+		kmemleakInit()
+	*/
 
 	config, err := ipc.DefaultConfig()
 	if err != nil {
@@ -331,6 +338,7 @@ func main() {
 	var lastPoll time.Time
 	var lastPrint time.Time
 	ticker := time.NewTicker(3 * time.Second).C
+	select {}
 	for {
 		poll := false
 		select {
@@ -386,9 +394,9 @@ func main() {
 			execTotal += execSmash
 			a.Stats["fuzzer new inputs"] = atomic.SwapUint64(&statNewInput, 0)
 			r := &PollRes{}
-			if err := manager.Call("Manager.Poll", a, r); err != nil {
-				panic(err)
-			}
+			//if err := manager.Call("Manager.Poll", a, r); err != nil {
+			//	panic(err)
+			//}
 			if len(r.MaxSignal) != 0 {
 				signalMu.Lock()
 				for _, s := range r.MaxSignal {
@@ -593,18 +601,20 @@ func triageInput(pid int, env *ipc.Env, inp Input) {
 
 	atomic.AddUint64(&statNewInput, 1)
 	Logf(2, "added new input for %v to corpus:\n%s", call.CallName, data)
-	a := &NewInputArgs{
-		Name: *flagName,
-		RpcInput: RpcInput{
-			Call:   call.CallName,
-			Prog:   data,
-			Signal: []uint32(cover.Canonicalize(inp.signal)),
-			Cover:  []uint32(inputCover),
-		},
-	}
-	if err := manager.Call("Manager.NewInput", a, nil); err != nil {
-		panic(err)
-	}
+	/*
+		a := &NewInputArgs{
+			Name: *flagName,
+			RpcInput: RpcInput{
+				Call:   call.CallName,
+				Prog:   data,
+				Signal: []uint32(cover.Canonicalize(inp.signal)),
+				Cover:  []uint32(inputCover),
+			},
+		}
+	*/
+	//if err := manager.Call("Manager.NewInput", a, nil); err != nil {
+	//	panic(err)
+	//}
 
 	signalMu.Lock()
 	cover.SignalAdd(corpusSignal, inp.signal)

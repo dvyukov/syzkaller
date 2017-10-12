@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"os"
+	//"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -102,15 +102,15 @@ func execute(pid int, env *ipc.Env, p *prog.Prog) {
 		outMu.Unlock()
 	}
 	opts := &ipc.ExecOpts{}
-	output, _, failed, hanged, err := env.Exec(opts, p)
+	_, _, failed, hanged, err := env.Exec(opts, p)
 	if err != nil {
 		fmt.Printf("failed to execute executor: %v\n", err)
 	}
 	if failed || hanged || err != nil {
-		fmt.Printf("PROGRAM:\n%s\n", p.Serialize())
+		//fmt.Printf("PROGRAM:\n%s\n", p.Serialize())
 	}
 	if failed || hanged || err != nil || *flagOutput {
-		os.Stdout.Write(output)
+		//os.Stdout.Write(output)
 	}
 }
 
