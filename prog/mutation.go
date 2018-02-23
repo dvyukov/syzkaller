@@ -312,6 +312,7 @@ loop:
 	for stop := false; !stop || retry; stop = r.oneOf(3) {
 		retry = false
 		switch r.Intn(14) {
+		//!!! insert/remove range of bytes preserving length
 		case 0:
 			// Append byte.
 			if uint64(len(data)) >= maxLen {
@@ -521,4 +522,121 @@ func swap64(v uint64) uint64 {
 	v |= uint64(v1) << 48
 	v |= uint64(v0) << 56
 	return v
+}
+
+func (p *Prog) SquashCall(idx int) bool {
+	orig := p.Calls[idx]
+	//if strings.HasSuffix(orig.Meta.Name, "$GENERIC") {
+	//	return false
+	//}
+	c := &Call{
+		Meta: p.Target.SyscallMap[orig.Meta.CallName+"$GENERIC"],
+		Ret:  MakeReturnArg(nil),
+	}
+	if c.Meta == nil {
+		return false //!!! happens for calls without args
+		panic(fmt.Sprintf("no generic version for %v", orig.Meta.Name))
+	}
+	for i, typ := range c.Meta.Args {
+		if i >= len(orig.Args) {
+			c.Args = append(c.Args, p.Target.defaultArg(typ))
+			continue
+		}
+		arg := p.Target.squashAnyArg(orig.Args[i], typ.(*UnionType))
+		c.Args = append(c.Args, arg)
+	}
+	p.Target.SanitizeCall(c)
+	p.Calls[idx] = c
+	if debug {
+		if err := p.validate(); err != nil {
+			//debug = false
+			//panic(fmt.Sprintf("%v\n%s\n", err, p.Serialize()))
+			panic(err)
+		}
+	}
+	return true
+}
+
+func (target *Target) squashAnyArg(a Arg, typ *UnionType) Arg {
+	switch arg := a.(type) {
+	case *ConstArg:
+		//!!! if it is proc type, then we need to adjust value.
+		arg.typ = typ.Fields[0]
+		return MakeUnionArg(typ, arg)
+	case *ResultArg:
+		arg.typ = typ.Fields[1]
+		return MakeUnionArg(typ, arg)
+	case *PointerArg:
+		arg.typ = typ.Fields[2]
+		arg.VmaSize = 0
+		if arg.Res != nil {
+			arg.Res = target.squashAny(arg.Res, arg.typ.(*PtrType).Type.(*ArrayType))
+		}
+		return MakeUnionArg(typ, arg)
+	case *UnionArg:
+		return target.squashAnyArg(arg.Option, typ)
+	default:
+		panic("bad arg kind")
+	}
+}
+
+func (target *Target) squashAny(arg Arg, typ *ArrayType) Arg {
+	var elems []Arg
+	target.squashAnyImpl(arg, typ.Type.(*UnionType), &elems)
+	return MakeGroupArg(typ, elems)
+}
+
+func ensureDataElem(elems *[]Arg, typ *UnionType) *DataArg {
+	if len(*elems) == 0 {
+		res := MakeDataArg(typ.Fields[3], nil)
+		*elems = append(*elems, MakeUnionArg(typ, res))
+		return res
+	}
+	res, ok := (*elems)[len(*elems)-1].(*UnionArg).Option.(*DataArg)
+	if !ok {
+		res = MakeDataArg(typ.Fields[3], nil)
+		*elems = append(*elems, MakeUnionArg(typ, res))
+	}
+	return res
+}
+
+func (target *Target) squashAnyImpl(a Arg, typ *UnionType, elems *[]Arg) {
+	switch arg := a.(type) {
+	case *ConstArg:
+		out := ensureDataElem(elems, typ)
+		//!!! if it is proc type, then we need to adjust value.
+		//!!! bitfields???
+		for i := uint64(0); i < arg.Size(); i++ {
+			out.data = append(out.Data(), byte(arg.Val))
+			arg.Val >>= 8
+		}
+	case *ResultArg:
+		switch arg.Size() {
+		case 4:
+			arg.typ = typ.Fields[0]
+		case 8:
+			arg.typ = typ.Fields[1]
+		default:
+			panic("bad size")
+		}
+		*elems = append(*elems, MakeUnionArg(typ, arg))
+	case *PointerArg:
+		arg.typ = typ.Fields[2]
+		arg.VmaSize = 0
+		if arg.Res != nil {
+			arg.Res = target.squashAny(arg.Res, arg.typ.(*PtrType).Type.(*ArrayType))
+		}
+		*elems = append(*elems, MakeUnionArg(typ, arg))
+	case *UnionArg:
+		target.squashAnyImpl(arg.Option, typ, elems)
+	case *DataArg:
+		out := ensureDataElem(elems, typ)
+		out.data = append(out.Data(), arg.Data()...)
+	case *GroupArg:
+		for _, inner := range arg.Inner {
+			target.squashAnyImpl(inner, typ, elems)
+		}
+	default:
+		panic("bad arg kind")
+	}
 }

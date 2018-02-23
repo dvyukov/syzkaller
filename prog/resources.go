@@ -48,6 +48,9 @@ func (target *Target) isCompatibleResource(dst, src string) bool {
 // If precise is true, then it does not allow passing a less specialized resource (e.g. fd)
 // as a more specialized resource (e.g. socket). Otherwise it does.
 func isCompatibleResourceImpl(dst, src []string, precise bool) bool {
+	if dst[0] == "ANYRES32" || dst[0] == "ANYRES64" {
+		return true
+	}
 	if len(dst) > len(src) {
 		// dst is more specialized, e.g dst=socket, src=fd.
 		if precise {
@@ -132,5 +135,6 @@ func (target *Target) TransitivelyEnabledCalls(enabled map[*Syscall]bool) map[*S
 			break
 		}
 	}
+	//!!! disable generic syscalls if no non-generic left
 	return supported
 }

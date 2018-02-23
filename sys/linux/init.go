@@ -123,18 +123,48 @@ func (arch *arch) makeMmap(addr, size uint64) *prog.Call {
 	}
 }
 
+func getConstArg(a prog.Arg) *prog.ConstArg {
+	switch arg := a.(type) {
+	case *prog.ConstArg:
+		return arg
+	case *prog.UnionArg:
+		return getConstArg(arg.Option)
+	default:
+		return nil
+	}
+}
+
+func setConstArg(a prog.Arg, v uint64) {
+	switch arg := a.(type) {
+	case *prog.ConstArg:
+		arg.Val = v
+	case *prog.UnionArg:
+		arg.Option = prog.MakeConstArg(arg.Type().(*prog.UnionType).Fields[0], v)
+	default:
+		panic("bad arg")
+	}
+}
+
 func (arch *arch) sanitizeCall(c *prog.Call) {
 	switch c.Meta.CallName {
 	case "mmap":
 		// Add MAP_FIXED flag, otherwise it produces non-deterministic results.
-		c.Args[3].(*prog.ConstArg).Val |= arch.MAP_FIXED
+		flags := getConstArg(c.Args[3])
+		newVal := arch.MAP_ANONYMOUS | arch.MAP_PRIVATE | arch.MAP_FIXED
+		if flags != nil {
+			newVal = flags.Val | arch.MAP_FIXED
+		}
+		setConstArg(c.Args[3], newVal)
 	case "mremap":
 		// Add MREMAP_FIXED flag, otherwise it produces non-deterministic results.
-		flags := c.Args[3].(*prog.ConstArg)
-		if flags.Val&arch.MREMAP_MAYMOVE != 0 {
-			flags.Val |= arch.MREMAP_FIXED
+		flags := getConstArg(c.Args[3])
+		newVal := uint64(0)
+		if flags != nil && flags.Val&arch.MREMAP_MAYMOVE != 0 {
+			newVal = flags.Val | arch.MREMAP_FIXED
 		}
+		setConstArg(c.Args[3], newVal)
 	case "mknod", "mknodat":
+	/*
 		pos := 1
 		if c.Meta.CallName == "mknodat" {
 			pos = 2
@@ -159,41 +189,45 @@ func (arch *arch) sanitizeCall(c *prog.Call) {
 			mode.Val &^= arch.S_IFCHR
 			mode.Val |= arch.S_IFREG
 		}
+	*/
 	case "syslog":
-		cmd := c.Args[0].(*prog.ConstArg)
-		cmd.Val = uint64(uint32(cmd.Val))
+		cmd := getConstArg(c.Args[0])
+		val := uint64(0)
+		if cmd != nil {
+			val = uint64(uint32(cmd.Val))
+		}
 		// These disable console output, but we need it.
-		if cmd.Val == arch.SYSLOG_ACTION_CONSOLE_OFF || cmd.Val == arch.SYSLOG_ACTION_CONSOLE_ON {
-			cmd.Val = arch.SYSLOG_ACTION_SIZE_UNREAD
+		if val == arch.SYSLOG_ACTION_CONSOLE_OFF || val == arch.SYSLOG_ACTION_CONSOLE_ON {
+			setConstArg(c.Args[0], arch.SYSLOG_ACTION_SIZE_UNREAD)
 		}
 	case "ioctl":
-		cmd := c.Args[1].(*prog.ConstArg)
+		cmd := getConstArg(c.Args[1])
 		// Freeze kills machine. Though, it is an interesting functions,
 		// so we need to test it somehow.
 		// TODO: not required if executor drops privileges.
-		if uint64(uint32(cmd.Val)) == arch.FIFREEZE {
-			cmd.Val = arch.FITHAW
+		if cmd == nil || uint64(uint32(cmd.Val)) == arch.FIFREEZE {
+			setConstArg(c.Args[1], arch.FITHAW)
 		}
 	case "ptrace":
-		req := c.Args[0].(*prog.ConstArg)
+		req := getConstArg(c.Args[0])
 		// PTRACE_TRACEME leads to unkillable processes, see:
 		// https://groups.google.com/forum/#!topic/syzkaller/uGzwvhlCXAw
-		if req.Val == arch.PTRACE_TRACEME {
-			req.Val = ^uint64(0)
+		if req == nil || uint64(uint32(req.Val)) == arch.PTRACE_TRACEME {
+			setConstArg(c.Args[0], ^uint64(0))
 		}
 	case "exit", "exit_group":
-		code := c.Args[0].(*prog.ConstArg)
+		code := getConstArg(c.Args[0])
 		// These codes are reserved by executor.
-		if code.Val%128 == 67 || code.Val%128 == 68 {
-			code.Val = 1
+		if code == nil || code.Val%128 == 67 || code.Val%128 == 68 {
+			setConstArg(c.Args[0], 1)
 		}
 	case "arch_prctl":
 		// fs holds address of tls, if a program messes it at least signal
 		// handling will break. This also allows a program to do writes
 		// at arbitrary addresses, which usually leads to machine outbreak.
-		cmd := c.Args[0].(*prog.ConstArg)
-		if uint64(uint32(cmd.Val)) == arch.ARCH_SET_FS {
-			cmd.Val = arch.ARCH_SET_GS
+		cmd := getConstArg(c.Args[0])
+		if cmd == nil || uint64(uint32(cmd.Val)) == arch.ARCH_SET_FS {
+			setConstArg(c.Args[0], arch.ARCH_SET_GS)
 		}
 	}
 

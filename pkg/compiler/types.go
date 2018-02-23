@@ -738,6 +738,7 @@ var typeArgBase = namedArg{
 var (
 	builtinTypes    = make(map[string]*typeDesc)
 	builtinTypedefs = make(map[string]*ast.TypeDef)
+	builtinPos      = ast.Pos{File: "builtins"}
 
 	// To avoid weird cases like ptr[in, in] and ptr[out, opt].
 	reservedName = map[string]bool{
@@ -754,6 +755,24 @@ type bool16 int16[0:1]
 type bool32 int32[0:1]
 type bool64 int64[0:1]
 type boolptr intptr[0:1]
+`
+
+const builtinInternalDefs = `
+resource ANYRES32[int32]
+resource ANYRES64[int64]
+
+ANYARG [
+	int	intptr
+	res	ANYRES64
+	ptr	ptr[in, array[ANY], opt]
+]
+
+ANY [
+	res32	ANYRES32
+	res64	ANYRES64
+	ptr	ptr[in, array[ANY], opt]
+	bin	array[int8]
+] [varlen]
 `
 
 func init() {
@@ -782,7 +801,7 @@ func init() {
 			builtinTypes[name] = desc
 		}
 	}
-	builtinDesc := ast.Parse([]byte(builtinDefs), "builtins", func(pos ast.Pos, msg string) {
+	builtinDesc := ast.Parse([]byte(builtinDefs), builtinPos.File, func(pos ast.Pos, msg string) {
 		panic(fmt.Sprintf("failed to parse builtins: %v: %v", pos, msg))
 	})
 	for _, decl := range builtinDesc.Nodes {

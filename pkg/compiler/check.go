@@ -127,7 +127,6 @@ func (comp *compiler) checkNames() {
 }
 
 func (comp *compiler) checkFields() {
-	const maxArgs = 9 // executor does not support more
 	for _, decl := range comp.desc.Nodes {
 		switch n := decl.(type) {
 		case *ast.Struct:
@@ -376,6 +375,8 @@ type structDir struct {
 
 func (comp *compiler) checkConstructors() {
 	ctors := make(map[string]bool) // resources for which we have ctors
+	ctors["ANYRES32"] = true
+	ctors["ANYRES64"] = true
 	checked := make(map[structDir]bool)
 	for _, decl := range comp.desc.Nodes {
 		switch n := decl.(type) {

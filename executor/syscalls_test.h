@@ -2,25 +2,35 @@
 
 #if 0
 #define GOARCH "32"
-#define SYZ_REVISION "2258fd7490fd41c1b0e0aa537454d223eef7929d"
+#define SYZ_REVISION "3815998d66128dad9531430669440fec0bed0476"
 #define SYZ_PAGE_SIZE 8192
 #define SYZ_NUM_PAGES 2048
 #define SYZ_DATA_OFFSET 536870912
-unsigned syscall_count = 87;
+unsigned syscall_count = 97;
 call_t syscalls[] = {
 	{"mmap", 0, (syscall_t)mmap},
+	{"mmap$GENERIC", 0, (syscall_t)mmap},
 	{"mutate0", 0, (syscall_t)mutate0},
 	{"mutate1", 0, (syscall_t)mutate1},
 	{"mutate2", 0, (syscall_t)mutate2},
 	{"mutate3", 0, (syscall_t)mutate3},
+	{"mutate3$GENERIC", 0, (syscall_t)mutate3},
 	{"mutate4", 0, (syscall_t)mutate4},
+	{"mutate4$GENERIC", 0, (syscall_t)mutate4},
 	{"mutate5", 0, (syscall_t)mutate5},
+	{"mutate5$GENERIC", 0, (syscall_t)mutate5},
 	{"mutate6", 0, (syscall_t)mutate6},
+	{"mutate6$GENERIC", 0, (syscall_t)mutate6},
 	{"mutate7", 0, (syscall_t)mutate7},
+	{"mutate7$GENERIC", 0, (syscall_t)mutate7},
 	{"mutate8", 0, (syscall_t)mutate8},
+	{"mutate8$GENERIC", 0, (syscall_t)mutate8},
 	{"serialize0", 0, (syscall_t)serialize0},
+	{"serialize0$GENERIC", 0, (syscall_t)serialize0},
 	{"serialize1", 0, (syscall_t)serialize1},
+	{"serialize1$GENERIC", 0, (syscall_t)serialize1},
 	{"syz_test", 0, (syscall_t)syz_test},
+	{"syz_test$GENERIC", 0, (syscall_t)syz_test},
 	{"syz_test$align0", 0, (syscall_t)syz_test},
 	{"syz_test$align1", 0, (syscall_t)syz_test},
 	{"syz_test$align2", 0, (syscall_t)syz_test},
@@ -101,25 +111,35 @@ call_t syscalls[] = {
 
 #if 0
 #define GOARCH "64"
-#define SYZ_REVISION "90f61a2054a8cefadc6cf2027a18e4073a9054ae"
+#define SYZ_REVISION "27e2eded8e10e6dedc6c522d8a98234d13e9332a"
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-unsigned syscall_count = 87;
+unsigned syscall_count = 97;
 call_t syscalls[] = {
 	{"mmap", 0, (syscall_t)mmap},
+	{"mmap$GENERIC", 0, (syscall_t)mmap},
 	{"mutate0", 0, (syscall_t)mutate0},
 	{"mutate1", 0, (syscall_t)mutate1},
 	{"mutate2", 0, (syscall_t)mutate2},
 	{"mutate3", 0, (syscall_t)mutate3},
+	{"mutate3$GENERIC", 0, (syscall_t)mutate3},
 	{"mutate4", 0, (syscall_t)mutate4},
+	{"mutate4$GENERIC", 0, (syscall_t)mutate4},
 	{"mutate5", 0, (syscall_t)mutate5},
+	{"mutate5$GENERIC", 0, (syscall_t)mutate5},
 	{"mutate6", 0, (syscall_t)mutate6},
+	{"mutate6$GENERIC", 0, (syscall_t)mutate6},
 	{"mutate7", 0, (syscall_t)mutate7},
+	{"mutate7$GENERIC", 0, (syscall_t)mutate7},
 	{"mutate8", 0, (syscall_t)mutate8},
+	{"mutate8$GENERIC", 0, (syscall_t)mutate8},
 	{"serialize0", 0, (syscall_t)serialize0},
+	{"serialize0$GENERIC", 0, (syscall_t)serialize0},
 	{"serialize1", 0, (syscall_t)serialize1},
+	{"serialize1$GENERIC", 0, (syscall_t)serialize1},
 	{"syz_test", 0, (syscall_t)syz_test},
+	{"syz_test$GENERIC", 0, (syscall_t)syz_test},
 	{"syz_test$align0", 0, (syscall_t)syz_test},
 	{"syz_test$align1", 0, (syscall_t)syz_test},
 	{"syz_test$align2", 0, (syscall_t)syz_test},

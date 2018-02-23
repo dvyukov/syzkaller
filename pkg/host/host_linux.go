@@ -39,6 +39,9 @@ func DetectSupportedSyscalls(target *prog.Target) (map[*prog.Syscall]bool, error
 }
 
 func isSupported(kallsyms []byte, c *prog.Syscall) bool {
+	if strings.HasSuffix(c.Name, "$GENERIC") {
+		return true
+	}
 	if strings.HasPrefix(c.CallName, "syz_") {
 		return isSupportedSyzkall(c)
 	}

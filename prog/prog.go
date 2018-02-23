@@ -141,7 +141,7 @@ type DataArg struct {
 	size uint64 // for out Args
 }
 
-func MakeDataArg(t Type, data []byte) Arg {
+func MakeDataArg(t Type, data []byte) *DataArg {
 	if t.Dir() == DirOut {
 		panic("non-empty output data arg")
 	}

@@ -193,11 +193,13 @@ func generateExecutorSyscalls(target *targets.Target, syscalls []*prog.Syscall, 
 		DataOffset: target.DataOffset,
 	}
 	for _, c := range syscalls {
+		needCall := c.CallName != "syz_generic" &&
+			(!target.SyscallNumbers || strings.HasPrefix(c.CallName, "syz_"))
 		data.Calls = append(data.Calls, SyscallData{
 			Name:     c.Name,
 			CallName: c.CallName,
 			NR:       int32(c.NR),
-			NeedCall: !target.SyscallNumbers || strings.HasPrefix(c.CallName, "syz_"),
+			NeedCall: needCall,
 		})
 	}
 	sort.Slice(data.Calls, func(i, j int) bool {

@@ -48,8 +48,15 @@ func Compile(desc *ast.Description, consts map[string]uint64, target *targets.Ta
 	if eh == nil {
 		eh = ast.LoggingHandler
 	}
+
+	builtinDesc := ast.Parse([]byte(builtinInternalDefs), builtinPos.File, func(pos ast.Pos, msg string) {
+		panic(fmt.Sprintf("failed to parse internal builtins: %v: %v", pos, msg))
+	})
+	desc = desc.Clone()
+	desc.Nodes = append(desc.Nodes, builtinDesc.Nodes...)
+
 	comp := &compiler{
-		desc:         desc.Clone(),
+		desc:         desc,
 		target:       target,
 		eh:           eh,
 		ptrSize:      target.PtrSize,
@@ -67,6 +74,7 @@ func Compile(desc *ast.Description, consts map[string]uint64, target *targets.Ta
 	for name, typedef := range builtinTypedefs {
 		comp.typedefs[name] = typedef
 	}
+	comp.addGenericCalls()
 	comp.typecheck()
 	// The subsequent, more complex, checks expect basic validity of the tree,
 	// in particular corrent number of type arguments. If there were errors,
@@ -134,6 +142,45 @@ func (comp *compiler) error(pos ast.Pos, msg string, args ...interface{}) {
 
 func (comp *compiler) warning(pos ast.Pos, msg string, args ...interface{}) {
 	comp.warnings = append(comp.warnings, warn{pos, fmt.Sprintf(msg, args...)})
+}
+
+const maxArgs = 9 // executor does not support more
+
+func (comp *compiler) addGenericCalls() {
+	numArgs := make(map[string]int)
+	for _, decl := range comp.desc.Nodes {
+		switch n := decl.(type) {
+		case *ast.Call:
+			nArgs := len(n.Args)
+			if nArgs != 0 && nArgs < maxArgs && numArgs[n.CallName] < nArgs {
+				numArgs[n.CallName] = nArgs
+			}
+		}
+	}
+	for callName, nArgs := range numArgs {
+		args := make([]*ast.Field, nArgs)
+		for i := range args {
+			args[i] = &ast.Field{
+				Pos: builtinPos,
+				Name: &ast.Ident{
+					Pos:  builtinPos,
+					Name: fmt.Sprintf("a%v", i),
+				},
+				Type: &ast.Type{
+					Pos:   builtinPos,
+					Ident: "ANYARG",
+				},
+			}
+		}
+		comp.desc.Nodes = append(comp.desc.Nodes, &ast.Call{
+			CallName: callName,
+			Name: &ast.Ident{
+				Pos:  builtinPos,
+				Name: callName + "$GENERIC",
+			},
+			Args: args,
+		})
+	}
 }
 
 func (comp *compiler) parseUnionAttrs(n *ast.Struct) (varlen bool) {

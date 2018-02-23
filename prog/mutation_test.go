@@ -186,6 +186,26 @@ mutate8(0xffffffffffffffff)
 	}
 }
 
+func TestSquash(t *testing.T) {
+	testEachTargetRandom(t, func(t *testing.T, target *Target, rs rand.Source, iters int) {
+		p := target.Generate(rs, 10, nil)
+		for i := range p.Calls {
+			p.SquashCall(i)
+			data := p.Serialize()
+			p.SquashCall(i)
+			if data1 := p.Serialize(); !bytes.Equal(data1, data) {
+				t.Fatalf("double squash changed program:\n%s\nvs:\n%s\n",
+					data, data1)
+			}
+			p1, err := target.Deserialize(data)
+			if err != nil {
+				t.Fatalf("failed to deserialize program: %v\n%s", err, data)
+			}
+			_ = p1
+		}
+	})
+}
+
 func BenchmarkMutate(b *testing.B) {
 	olddebug := debug
 	debug = false

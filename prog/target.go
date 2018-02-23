@@ -99,6 +99,7 @@ func (target *Target) lazyInit() {
 	target.SanitizeCall = func(c *Call) {}
 	target.initTarget()
 	target.initArch(target)
+	target.addGenericSyscalls()
 	target.ConstMap = nil // currently used only by initArch
 }
 
@@ -147,6 +148,10 @@ func (target *Target) initTarget() {
 	for _, res := range target.Resources {
 		target.resourceCtors[res.Name] = target.calcResourceCtors(res.Kind, false)
 	}
+}
+
+func (target *Target) addGenericSyscalls() {
+
 }
 
 type Gen struct {

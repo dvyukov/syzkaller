@@ -8,11 +8,24 @@ func init() {
 }
 
 var resources_amd64 = []*ResourceDesc{
+	{Name: "ANYRES32", Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", TypeSize: 4}}}, Kind: []string{"ANYRES32"}, Values: []uint64{0}},
+	{Name: "ANYRES64", Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", TypeSize: 8}}}, Kind: []string{"ANYRES64"}, Values: []uint64{0}},
 	{Name: "fd", Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", TypeSize: 4}}}, Kind: []string{"fd"}, Values: []uint64{18446744073709551615, 18446744073709551516}},
 	{Name: "pid", Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", TypeSize: 4}}}, Kind: []string{"pid"}, Values: []uint64{0, 18446744073709551615}},
 }
 
 var structDescs_amd64 = []*KeyedStruct{
+	{Key: StructKey{Name: "ANY"}, Desc: &StructDesc{TypeCommon: TypeCommon{TypeName: "ANY", IsVarlen: true}, Fields: []Type{
+		&ResourceType{TypeCommon: TypeCommon{TypeName: "ANYRES32", FldName: "res32", TypeSize: 4}},
+		&ResourceType{TypeCommon: TypeCommon{TypeName: "ANYRES64", FldName: "res64", TypeSize: 8}},
+		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "ptr", TypeSize: 8, IsOptional: true}, Type: &ArrayType{TypeCommon: TypeCommon{TypeName: "array", IsVarlen: true}, Type: &UnionType{Key: StructKey{Name: "ANY"}}}},
+		&BufferType{TypeCommon: TypeCommon{TypeName: "array", FldName: "bin", IsVarlen: true}},
+	}}},
+	{Key: StructKey{Name: "ANYARG"}, Desc: &StructDesc{TypeCommon: TypeCommon{TypeName: "ANYARG", TypeSize: 8}, Fields: []Type{
+		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "int", TypeSize: 8}}},
+		&ResourceType{TypeCommon: TypeCommon{TypeName: "ANYRES64", FldName: "res", TypeSize: 8}},
+		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "ptr", TypeSize: 8, IsOptional: true}, Type: &ArrayType{TypeCommon: TypeCommon{TypeName: "array", IsVarlen: true}, Type: &UnionType{Key: StructKey{Name: "ANY"}}}},
+	}}},
 	{Key: StructKey{Name: "flock"}, Desc: &StructDesc{TypeCommon: TypeCommon{TypeName: "flock", TypeSize: 32}, Fields: []Type{
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "flock_type", FldName: "type", TypeSize: 2}}, Vals: []uint64{0, 1, 2}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "seek_whence", FldName: "whence", TypeSize: 2}}, Vals: []uint64{0, 1, 2}},
@@ -36,95 +49,139 @@ var syscalls_amd64 = []*Syscall{
 	{NR: 33, Name: "abort_sysc_fd", CallName: "abort_sysc_fd", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 	}},
-	{ID: 1, NR: 116, Name: "chdir", CallName: "chdir", Args: []Type{
+	{ID: 1, NR: 33, Name: "abort_sysc_fd$GENERIC", CallName: "abort_sysc_fd", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 2, NR: 116, Name: "chdir", CallName: "chdir", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "dir", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 2, NR: 103, Name: "close", CallName: "close", Args: []Type{
+	{ID: 3, NR: 116, Name: "chdir$GENERIC", CallName: "chdir", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 4, NR: 103, Name: "close", CallName: "close", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 	}},
-	{ID: 3, NR: 124, Name: "fchdir", CallName: "fchdir", Args: []Type{
+	{ID: 5, NR: 103, Name: "close$GENERIC", CallName: "close", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 6, NR: 124, Name: "fchdir", CallName: "fchdir", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 	}},
-	{ID: 4, NR: 107, Name: "fcntl$F_DUPFD", CallName: "fcntl", Args: []Type{
+	{ID: 7, NR: 124, Name: "fchdir$GENERIC", CallName: "fchdir", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 8, NR: 107, Name: "fcntl$F_DUPFD", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}},
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "arg", TypeSize: 4}},
 	}, Ret: &ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "ret", TypeSize: 4, ArgDir: 1}}},
-	{ID: 5, NR: 107, Name: "fcntl$F_DUPFD_CLOEXEC", CallName: "fcntl", Args: []Type{
+	{ID: 9, NR: 107, Name: "fcntl$F_DUPFD_CLOEXEC", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 1030},
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "arg", TypeSize: 4}},
 	}, Ret: &ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "ret", TypeSize: 4, ArgDir: 1}}},
-	{ID: 6, NR: 107, Name: "fcntl$F_GETFD", CallName: "fcntl", Args: []Type{
+	{ID: 10, NR: 107, Name: "fcntl$F_GETFD", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 1},
 	}},
-	{ID: 7, NR: 107, Name: "fcntl$F_GETFL", CallName: "fcntl", Args: []Type{
+	{ID: 11, NR: 107, Name: "fcntl$F_GETFL", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 3},
 	}},
-	{ID: 8, NR: 107, Name: "fcntl$F_GETLK", CallName: "fcntl", Args: []Type{
+	{ID: 12, NR: 107, Name: "fcntl$F_GETLK", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 5},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "lock", TypeSize: 8}, Type: &StructType{Key: StructKey{Name: "flock"}}},
 	}},
-	{ID: 9, NR: 107, Name: "fcntl$F_GETOWN", CallName: "fcntl", Args: []Type{
+	{ID: 13, NR: 107, Name: "fcntl$F_GETOWN", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 9},
 	}, Ret: &ResourceType{TypeCommon: TypeCommon{TypeName: "pid", FldName: "ret", TypeSize: 4, ArgDir: 1}}},
-	{ID: 10, NR: 107, Name: "fcntl$F_SETFD", CallName: "fcntl", Args: []Type{
+	{ID: 14, NR: 107, Name: "fcntl$F_SETFD", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 2},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "fcntl_flags", FldName: "flags", TypeSize: 8}}, Vals: []uint64{1}},
 	}},
-	{ID: 11, NR: 107, Name: "fcntl$F_SETFL", CallName: "fcntl", Args: []Type{
+	{ID: 15, NR: 107, Name: "fcntl$F_SETFL", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 4},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "fcntl_status", FldName: "flags", TypeSize: 8}}, Vals: []uint64{1024, 8192, 2048}},
 	}},
-	{ID: 12, NR: 107, Name: "fcntl$F_SETLK", CallName: "fcntl", Args: []Type{
+	{ID: 16, NR: 107, Name: "fcntl$F_SETLK", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 6},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "lock", TypeSize: 8}, Type: &StructType{Key: StructKey{Name: "flock"}}},
 	}},
-	{ID: 13, NR: 107, Name: "fcntl$F_SETLKW", CallName: "fcntl", Args: []Type{
+	{ID: 17, NR: 107, Name: "fcntl$F_SETLKW", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 7},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "lock", TypeSize: 8}, Type: &StructType{Key: StructKey{Name: "flock"}}},
 	}},
-	{ID: 14, NR: 107, Name: "fcntl$F_SETOWN", CallName: "fcntl", Args: []Type{
+	{ID: 18, NR: 107, Name: "fcntl$F_SETOWN", CallName: "fcntl", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&ConstType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "const", FldName: "cmd", TypeSize: 8}}, Val: 8},
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "pid", FldName: "pid", TypeSize: 4}},
 	}},
-	{ID: 15, NR: 104, Name: "fstat", CallName: "fstat", Args: []Type{
+	{ID: 19, NR: 107, Name: "fcntl$GENERIC", CallName: "fcntl", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+	}},
+	{ID: 20, NR: 104, Name: "fstat", CallName: "fstat", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "statbuf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
 	}},
-	{ID: 16, NR: 117, Name: "getcwd", CallName: "getcwd", Args: []Type{
+	{ID: 21, NR: 104, Name: "fstat$GENERIC", CallName: "fstat", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 22, NR: 117, Name: "getcwd", CallName: "getcwd", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "buffer", FldName: "buf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{ArgDir: 1, IsVarlen: true}}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 8}}, Buf: "buf"},
 	}},
-	{ID: 17, NR: 112, Name: "link", CallName: "link", Args: []Type{
+	{ID: 23, NR: 117, Name: "getcwd$GENERIC", CallName: "getcwd", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 24, NR: 112, Name: "link", CallName: "link", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "old", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "new", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 18, NR: 111, Name: "llseek", CallName: "llseek", Args: []Type{
+	{ID: 25, NR: 112, Name: "link$GENERIC", CallName: "link", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 26, NR: 111, Name: "llseek", CallName: "llseek", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "offset_hi", TypeSize: 8}}},
 		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "offset_lo", TypeSize: 8}}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "result", TypeSize: 8}, Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", TypeSize: 8, ArgDir: 1}}}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "seek_whence", FldName: "whence", TypeSize: 8}}, Vals: []uint64{0, 1, 2}},
 	}},
-	{ID: 19, NR: 106, Name: "lstat", CallName: "lstat", Args: []Type{
+	{ID: 27, NR: 111, Name: "llseek$GENERIC", CallName: "llseek", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a3"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a4"},
+	}},
+	{ID: 28, NR: 106, Name: "lstat", CallName: "lstat", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "file", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "statbuf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
 	}},
-	{ID: 20, NR: 118, Name: "mkdir", CallName: "mkdir", Args: []Type{
+	{ID: 29, NR: 106, Name: "lstat$GENERIC", CallName: "lstat", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 30, NR: 118, Name: "mkdir", CallName: "mkdir", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "open_mode", FldName: "mode", TypeSize: 8}}, Vals: []uint64{256, 128, 64, 32, 16, 8, 4, 2, 1}},
 	}},
-	{ID: 21, NR: 18, Name: "mmap", CallName: "mmap", Args: []Type{
+	{ID: 31, NR: 118, Name: "mkdir$GENERIC", CallName: "mkdir", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 32, NR: 18, Name: "mmap", CallName: "mmap", Args: []Type{
 		&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "addr", TypeSize: 8}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "len", TypeSize: 8}}, Buf: "addr"},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "mmap_prot", FldName: "prot", TypeSize: 8}}, Vals: []uint64{4, 1, 2, 16777216, 33554432}},
@@ -132,62 +189,127 @@ var syscalls_amd64 = []*Syscall{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4, IsOptional: true}},
 		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "offset", TypeSize: 8}}},
 	}},
-	{ID: 22, NR: 20, Name: "mprotect", CallName: "mprotect", Args: []Type{
+	{ID: 33, NR: 18, Name: "mmap$GENERIC", CallName: "mmap", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a3"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a4"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a5"},
+	}},
+	{ID: 34, NR: 20, Name: "mprotect", CallName: "mprotect", Args: []Type{
 		&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "addr", TypeSize: 8}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "len", TypeSize: 8}}, Buf: "addr"},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "mmap_prot", FldName: "prot", TypeSize: 8}}, Vals: []uint64{4, 1, 2, 16777216, 33554432}},
 	}},
-	{ID: 23, NR: 19, Name: "munmap", CallName: "munmap", Args: []Type{
+	{ID: 35, NR: 20, Name: "mprotect$GENERIC", CallName: "mprotect", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+	}},
+	{ID: 36, NR: 19, Name: "munmap", CallName: "munmap", Args: []Type{
 		&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "addr", TypeSize: 8}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "len", TypeSize: 8}}, Buf: "addr"},
 	}},
-	{ID: 24, NR: 36, Name: "nanosleep", CallName: "nanosleep", Args: []Type{
+	{ID: 37, NR: 19, Name: "munmap$GENERIC", CallName: "munmap", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 38, NR: 36, Name: "nanosleep", CallName: "nanosleep", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "req", TypeSize: 8}, Type: &StructType{Key: StructKey{Name: "timespec"}}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "rem", TypeSize: 8, IsOptional: true}, Type: &StructType{Key: StructKey{Name: "timespec", Dir: 1}}},
 	}},
-	{ID: 25, NR: 102, Name: "openat", CallName: "openat", Args: []Type{
+	{ID: 39, NR: 36, Name: "nanosleep$GENERIC", CallName: "nanosleep", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 40, NR: 102, Name: "openat", CallName: "openat", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "file", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "open_flags", FldName: "flags", TypeSize: 8}}, Vals: []uint64{0, 1, 2, 1024, 8192, 524288, 64, 65536, 128, 256, 131072, 2048, 1052672, 512, 4259840}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "open_mode", FldName: "mode", TypeSize: 8}}, Vals: []uint64{256, 128, 64, 32, 16, 8, 4, 2, 1}},
 	}, Ret: &ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "ret", TypeSize: 4, ArgDir: 1}}},
-	{ID: 26, NR: 100, Name: "read", CallName: "read", Args: []Type{
+	{ID: 41, NR: 102, Name: "openat$GENERIC", CallName: "openat", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a3"},
+	}},
+	{ID: 42, NR: 100, Name: "read", CallName: "read", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "buffer", FldName: "buf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{ArgDir: 1, IsVarlen: true}}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "count", TypeSize: 8}}, Buf: "buf"},
 	}},
-	{ID: 27, NR: 115, Name: "readlink", CallName: "readlink", Args: []Type{
+	{ID: 43, NR: 100, Name: "read$GENERIC", CallName: "read", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+	}},
+	{ID: 44, NR: 115, Name: "readlink", CallName: "readlink", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "buffer", FldName: "buf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{ArgDir: 1, IsVarlen: true}}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "siz", TypeSize: 8}}, Buf: "buf"},
 	}},
-	{ID: 28, NR: 123, Name: "rename", CallName: "rename", Args: []Type{
+	{ID: 45, NR: 115, Name: "readlink$GENERIC", CallName: "readlink", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+	}},
+	{ID: 46, NR: 123, Name: "rename", CallName: "rename", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "old", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "new", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 29, NR: 119, Name: "rmdir", CallName: "rmdir", Args: []Type{
+	{ID: 47, NR: 123, Name: "rename$GENERIC", CallName: "rename", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 48, NR: 119, Name: "rmdir", CallName: "rmdir", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 30, NR: 105, Name: "stat", CallName: "stat", Args: []Type{
+	{ID: 49, NR: 119, Name: "rmdir$GENERIC", CallName: "rmdir", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 50, NR: 105, Name: "stat", CallName: "stat", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "file", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "statbuf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
 	}},
-	{ID: 31, NR: 114, Name: "symlink", CallName: "symlink", Args: []Type{
+	{ID: 51, NR: 105, Name: "stat$GENERIC", CallName: "stat", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 52, NR: 114, Name: "symlink", CallName: "symlink", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "old", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "new", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 32, NR: 113, Name: "unlink", CallName: "unlink", Args: []Type{
+	{ID: 53, NR: 114, Name: "symlink$GENERIC", CallName: "symlink", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+	}},
+	{ID: 54, NR: 113, Name: "unlink", CallName: "unlink", Args: []Type{
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{TypeName: "filename", IsVarlen: true}, Kind: 3}},
 	}},
-	{ID: 33, NR: 17, Name: "waitpid", CallName: "waitpid", Args: []Type{
+	{ID: 55, NR: 113, Name: "unlink$GENERIC", CallName: "unlink", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+	}},
+	{ID: 56, NR: 17, Name: "waitpid", CallName: "waitpid", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "pid", FldName: "pid", TypeSize: 4}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "ptr", FldName: "status", TypeSize: 8}, Type: &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", TypeSize: 4, ArgDir: 1}}}},
 		&FlagsType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "wait_options", FldName: "options", TypeSize: 8}}, Vals: []uint64{1, 2}},
 	}},
-	{ID: 34, NR: 101, Name: "write", CallName: "write", Args: []Type{
+	{ID: 57, NR: 17, Name: "waitpid$GENERIC", CallName: "waitpid", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
+	}},
+	{ID: 58, NR: 101, Name: "write", CallName: "write", Args: []Type{
 		&ResourceType{TypeCommon: TypeCommon{TypeName: "fd", FldName: "fd", TypeSize: 4}},
 		&PtrType{TypeCommon: TypeCommon{TypeName: "buffer", FldName: "buf", TypeSize: 8}, Type: &BufferType{TypeCommon: TypeCommon{IsVarlen: true}}},
 		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "count", TypeSize: 8}}, Buf: "buf"},
+	}},
+	{ID: 59, NR: 101, Name: "write$GENERIC", CallName: "write", Args: []Type{
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a0"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a1"},
+		&UnionType{Key: StructKey{Name: "ANYARG"}, FldName: "a2"},
 	}},
 }
 
@@ -285,4 +407,4 @@ var consts_amd64 = []ConstValue{
 	{Name: "__O_TMPFILE", Value: 4259840},
 }
 
-const revision_amd64 = "43f665d2468516ae8ffc137aec39649a4a1dc7ce"
+const revision_amd64 = "9ceee7f441c7e1084cc79b51e15faacad4d6d31b"

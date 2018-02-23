@@ -28,8 +28,8 @@ func TestExtractConsts(t *testing.T) {
 		t.Fatalf("%v: %v", pos, msg)
 	})
 	info := fileInfo["consts.txt"]
-	if info == nil || len(fileInfo) != 1 {
-		t.Fatalf("bad file info returned: %+v", info)
+	if info == nil || fileInfo["builtins"] == nil || len(fileInfo) != 2 {
+		t.Fatalf("bad file info returned: %+v\n%+v", fileInfo, info)
 	}
 	wantConsts := []string{
 		"__NR_bar", "__NR_foo",

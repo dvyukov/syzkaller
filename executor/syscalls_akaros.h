@@ -2,16 +2,20 @@
 
 #if defined(__x86_64__) || 0
 #define GOARCH "amd64"
-#define SYZ_REVISION "43f665d2468516ae8ffc137aec39649a4a1dc7ce"
+#define SYZ_REVISION "9ceee7f441c7e1084cc79b51e15faacad4d6d31b"
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-unsigned syscall_count = 35;
+unsigned syscall_count = 60;
 call_t syscalls[] = {
     {"abort_sysc_fd", 33},
+    {"abort_sysc_fd$GENERIC", 33},
     {"chdir", 116},
+    {"chdir$GENERIC", 116},
     {"close", 103},
+    {"close$GENERIC", 103},
     {"fchdir", 124},
+    {"fchdir$GENERIC", 124},
     {"fcntl$F_DUPFD", 107},
     {"fcntl$F_DUPFD_CLOEXEC", 107},
     {"fcntl$F_GETFD", 107},
@@ -23,26 +27,47 @@ call_t syscalls[] = {
     {"fcntl$F_SETLK", 107},
     {"fcntl$F_SETLKW", 107},
     {"fcntl$F_SETOWN", 107},
+    {"fcntl$GENERIC", 107},
     {"fstat", 104},
+    {"fstat$GENERIC", 104},
     {"getcwd", 117},
+    {"getcwd$GENERIC", 117},
     {"link", 112},
+    {"link$GENERIC", 112},
     {"llseek", 111},
+    {"llseek$GENERIC", 111},
     {"lstat", 106},
+    {"lstat$GENERIC", 106},
     {"mkdir", 118},
+    {"mkdir$GENERIC", 118},
     {"mmap", 18},
+    {"mmap$GENERIC", 18},
     {"mprotect", 20},
+    {"mprotect$GENERIC", 20},
     {"munmap", 19},
+    {"munmap$GENERIC", 19},
     {"nanosleep", 36},
+    {"nanosleep$GENERIC", 36},
     {"openat", 102},
+    {"openat$GENERIC", 102},
     {"read", 100},
+    {"read$GENERIC", 100},
     {"readlink", 115},
+    {"readlink$GENERIC", 115},
     {"rename", 123},
+    {"rename$GENERIC", 123},
     {"rmdir", 119},
+    {"rmdir$GENERIC", 119},
     {"stat", 105},
+    {"stat$GENERIC", 105},
     {"symlink", 114},
+    {"symlink$GENERIC", 114},
     {"unlink", 113},
+    {"unlink$GENERIC", 113},
     {"waitpid", 17},
+    {"waitpid$GENERIC", 17},
     {"write", 101},
+    {"write$GENERIC", 101},
 
 };
 #endif
