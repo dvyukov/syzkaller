@@ -1,0 +1,267 @@
+# Copyright 2018 syzkaller project authors. All rights reserved.
+# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
+
+# IP Virtual Server support.
+
+include <uapi/linux/netlink.h>
+include <uapi/linux/genetlink.h>
+include <uapi/linux/ip_vs.h>
+
+resource genl_ipvs_family_id[int16]
+type msghdr_nl_fou[CMD] msghdr_netlink[netlink_msg_t[genl_fou_family_id, genlmsghdr_t[CMD], fou_nl_policy]]
+
+syz_genetlink_get_family_id$ipvs(name ptr[in, string["IPVS"]]) genl_ipvs_family_id
+
+sendmsg$FOU_CMD_ADD(fd sock_nl_generic, msg ptr[in, msghdr_nl_fou[FOU_CMD_ADD]], f flags[send_flags])
+sendmsg$FOU_CMD_DEL(fd sock_nl_generic, msg ptr[in, msghdr_nl_fou[FOU_CMD_DEL]], f flags[send_flags])
+sendmsg$FOU_CMD_GET(fd sock_nl_generic, msg ptr[in, msghdr_nl_fou[FOU_CMD_GET]], f flags[send_flags])
+
+fou_nl_policy [
+	FOU_ATTR_PORT			nlattr[FOU_ATTR_PORT, sock_port]
+	FOU_ATTR_AF			nlattr[FOU_ATTR_AF, flags[fou_families, int8]]
+	FOU_ATTR_IPPROTO		nlattr[FOU_ATTR_IPPROTO, flags[ipv6_types, int8]]
+	FOU_ATTR_TYPE			nlattr[FOU_ATTR_TYPE, flags[fou_types, int8]]
+	FOU_ATTR_REMCSUM_NOPARTIAL	nlattr[FOU_ATTR_REMCSUM_NOPARTIAL, void]
+] [varlen]
+
+
+	IPVS_CMD_NEW_SERVICE,		/* add service */
+	IPVS_CMD_SET_SERVICE,		/* modify service */
+	IPVS_CMD_DEL_SERVICE,		/* delete service */
+	IPVS_CMD_GET_SERVICE,		/* get service info */
+
+	IPVS_CMD_NEW_DEST,		/* add destination */
+	IPVS_CMD_SET_DEST,		/* modify destination */
+	IPVS_CMD_DEL_DEST,		/* delete destination */
+	IPVS_CMD_GET_DEST,		/* get destination info */
+
+	IPVS_CMD_NEW_DAEMON,		/* start sync daemon */
+	IPVS_CMD_DEL_DAEMON,		/* stop sync daemon */
+	IPVS_CMD_GET_DAEMON,		/* get sync daemon status */
+
+	IPVS_CMD_SET_CONFIG,		/* set config settings */
+	IPVS_CMD_GET_CONFIG,		/* get config settings */
+
+	IPVS_CMD_SET_INFO,		/* only used in GET_INFO reply */
+	IPVS_CMD_GET_INFO,		/* get general IPVS info */
+
+	IPVS_CMD_ZERO,			/* zero all counters and stats */
+	IPVS_CMD_FLUSH,			/* flush services and dests */
+
+
+
+#define IP_VS_SO_SET_NONE	IP_VS_BASE_CTL		/* just peek */
+#define IP_VS_SO_SET_INSERT	(IP_VS_BASE_CTL+1)
+#define IP_VS_SO_SET_ADD	(IP_VS_BASE_CTL+2)
+#define IP_VS_SO_SET_EDIT	(IP_VS_BASE_CTL+3)
+#define IP_VS_SO_SET_DEL	(IP_VS_BASE_CTL+4)
+#define IP_VS_SO_SET_FLUSH	(IP_VS_BASE_CTL+5)
+#define IP_VS_SO_SET_LIST	(IP_VS_BASE_CTL+6)
+#define IP_VS_SO_SET_ADDDEST	(IP_VS_BASE_CTL+7)
+#define IP_VS_SO_SET_DELDEST	(IP_VS_BASE_CTL+8)
+#define IP_VS_SO_SET_EDITDEST	(IP_VS_BASE_CTL+9)
+#define IP_VS_SO_SET_TIMEOUT	(IP_VS_BASE_CTL+10)
+#define IP_VS_SO_SET_STARTDAEMON (IP_VS_BASE_CTL+11)
+#define IP_VS_SO_SET_STOPDAEMON (IP_VS_BASE_CTL+12)
+#define IP_VS_SO_SET_RESTORE    (IP_VS_BASE_CTL+13)
+#define IP_VS_SO_SET_SAVE       (IP_VS_BASE_CTL+14)
+#define IP_VS_SO_SET_ZERO	(IP_VS_BASE_CTL+15)
+#define IP_VS_SO_SET_MAX	IP_VS_SO_SET_ZERO
+
+#define IP_VS_SO_GET_VERSION	IP_VS_BASE_CTL
+#define IP_VS_SO_GET_INFO	(IP_VS_BASE_CTL+1)
+#define IP_VS_SO_GET_SERVICES	(IP_VS_BASE_CTL+2)
+#define IP_VS_SO_GET_SERVICE	(IP_VS_BASE_CTL+3)
+#define IP_VS_SO_GET_DESTS	(IP_VS_BASE_CTL+4)
+#define IP_VS_SO_GET_DEST	(IP_VS_BASE_CTL+5)	/* not used now */
+#define IP_VS_SO_GET_TIMEOUT	(IP_VS_BASE_CTL+6)
+#define IP_VS_SO_GET_DAEMON	(IP_VS_BASE_CTL+7)
+#define IP_VS_SO_GET_MAX	IP_VS_SO_GET_DAEMON
+
+static const unsigned char get_arglen[CMDID(IP_VS_SO_GET_MAX) + 1] = {
+	[CMDID(IP_VS_SO_GET_VERSION)]  = 64,
+	[CMDID(IP_VS_SO_GET_INFO)]     = sizeof(struct ip_vs_getinfo),
+	[CMDID(IP_VS_SO_GET_SERVICES)] = sizeof(struct ip_vs_get_services),
+	[CMDID(IP_VS_SO_GET_SERVICE)]  = sizeof(struct ip_vs_service_entry),
+	[CMDID(IP_VS_SO_GET_DESTS)]    = sizeof(struct ip_vs_get_dests),
+	[CMDID(IP_VS_SO_GET_TIMEOUT)]  = sizeof(struct ip_vs_timeout_user),
+	[CMDID(IP_VS_SO_GET_DAEMON)]   = 2 * sizeof(struct ip_vs_daemon_user),
+};
+
+
+
+
+static struct ctl_table vs_vars[] = {
+	{
+		.procname	= "amemthresh",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "am_droprate",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "drop_entry",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_do_defense_mode,
+	},
+	{
+		.procname	= "drop_packet",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_do_defense_mode,
+	},
+#ifdef CONFIG_IP_VS_NFCT
+	{
+		.procname	= "conntrack",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
+	{
+		.procname	= "secure_tcp",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_do_defense_mode,
+	},
+	{
+		.procname	= "snat_reroute",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "sync_version",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_do_sync_mode,
+	},
+	{
+		.procname	= "sync_ports",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_do_sync_ports,
+	},
+	{
+		.procname	= "sync_persist_mode",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sync_qlen_max",
+		.maxlen		= sizeof(unsigned long),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
+	{
+		.procname	= "sync_sock_size",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "cache_bypass",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "expire_nodest_conn",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sloppy_tcp",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sloppy_sctp",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "expire_quiescent_template",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sync_threshold",
+		.maxlen		=
+			sizeof(((struct netns_ipvs *)0)->sysctl_sync_threshold),
+		.mode		= 0644,
+		.proc_handler	= proc_do_sync_threshold,
+	},
+	{
+		.procname	= "sync_refresh_period",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_jiffies,
+	},
+	{
+		.procname	= "sync_retries",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &three,
+	},
+	{
+		.procname	= "nat_icmp_send",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "pmtu_disc",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "backup_only",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "conn_reuse_mode",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "schedule_icmp",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "ignore_tunneled",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#ifdef CONFIG_IP_VS_DEBUG
+	{
+		.procname	= "debug_level",
+		.data		= &sysctl_ip_vs_debug_level,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
+	{ }
+};
+
