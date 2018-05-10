@@ -33,14 +33,17 @@ func UmountAll(dir string) {
 }
 
 func Sandbox(cmd *exec.Cmd, user, net bool) error {
+	enabled, uid, gid, err := initSandbox()
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = new(syscall.SysProcAttr)
 	}
 	if user {
-		uid, gid, err := initSandbox()
-		if err != nil {
-			return err
-		}
 		cmd.SysProcAttr.Credential = &syscall.Credential{
 			Uid: uid,
 			Gid: gid,
@@ -54,22 +57,33 @@ func Sandbox(cmd *exec.Cmd, user, net bool) error {
 }
 
 func SandboxChown(file string) error {
-	uid, gid, err := initSandbox()
+	enabled, uid, gid, err := initSandbox()
 	if err != nil {
 		return err
+	}
+	if !enabled {
+		return nil
 	}
 	return os.Chown(file, int(uid), int(gid))
 }
 
 var (
 	sandboxOnce     sync.Once
+	sandboxEnabled  = true
 	sandboxUsername = "syzkaller"
 	sandboxUID      = ^uint32(0)
 	sandboxGID      = ^uint32(0)
 )
 
-func initSandbox() (uint32, uint32, error) {
+func initSandbox() (bool, uint32, uint32, error) {
 	sandboxOnce.Do(func() {
+		sandboxEnabled = false
+		return
+
+		if syscall.Getuid() != 0 {
+			sandboxEnabled = false
+			return
+		}
 		uid, err := usernameToID("-u")
 		if err != nil {
 			return
@@ -81,10 +95,10 @@ func initSandbox() (uint32, uint32, error) {
 		sandboxUID = uid
 		sandboxGID = gid
 	})
-	if sandboxUID == ^uint32(0) {
-		return 0, 0, fmt.Errorf("user %q is not found, can't sandbox command", sandboxUsername)
+	if sandboxEnabled && sandboxUID == ^uint32(0) {
+		return false, 0, 0, fmt.Errorf("user %q is not found, can't sandbox command", sandboxUsername)
 	}
-	return sandboxUID, sandboxGID, nil
+	return sandboxEnabled, sandboxUID, sandboxGID, nil
 }
 
 func usernameToID(what string) (uint32, error) {
