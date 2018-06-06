@@ -148,12 +148,14 @@ var List = map[string]map[string]*Target{
 			PageSize:         4 << 10,
 			CArch:            []string{"__x86_64__"},
 			KernelHeaderArch: "x64",
-			CCompiler:        os.ExpandEnv("${SOURCEDIR}/buildtools/linux-x64/clang/bin/clang"),
+			CCompiler:        os.ExpandEnv("${SOURCEDIR}/buildtools/linux-x64/clang/bin/clang++"),
 			CrossCFlags: []string{
 				"--target=x86_64-fuchsia",
 				"-lfdio",
 				"-lzircon",
 				"--sysroot", os.ExpandEnv("${SOURCEDIR}/out/build-zircon/build-x64/sysroot"),
+				"-L", os.ExpandEnv("${SOURCEDIR}/out/x64/x64-shared"),
+				"-L", os.ExpandEnv("${SOURCEDIR}/out/x64/sdks/zircon_sysroot/sysroot/lib"),
 			},
 		},
 		"arm64": {

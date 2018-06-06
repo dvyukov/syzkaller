@@ -43,14 +43,15 @@ export CGO_ENABLED=0
 
 ifeq ("$(TARGETOS)", "fuchsia")
 	# SOURCEDIR should point to zircon checkout.
-	GO = $(SOURCEDIR)/buildtools/go
+	GO = $(SOURCEDIR)/third_party/go/bin/go
+	export GOROOT=$(SOURCEDIR)/third_party/go
 	export CGO_ENABLED=1
 	ifeq ("$(TARGETARCH)", "amd64")
-		export GOROOT=$(SOURCEDIR)/out/debug-x64/goroot
 		# Required by the goroot.
 		export ZIRCON_BUILD_DIR=$(SOURCEDIR)/out/build-zircon/build-x64
+		export CGO_LDFLAGS=--target=x86_64-fuchsia --sysroot $(SOURCEDIR)/out/build-zircon/build-x64/sysroot -L $(SOURCEDIR)/out/x64/x64-shared -L $(SOURCEDIR)/out/x64/sdks/zircon_sysroot/sysroot/lib
+		export CGO_CFLAGS=--target=x86_64-fuchsia --sysroot $(SOURCEDIR)/out/build-zircon/build-x64/sysroot
 	else ifeq ("$(TARGETARCH)", "arm64")
-		export GOROOT=$(SOURCEDIR)/out/debug-arm64/goroot
 		# Required by the goroot.
 		export ZIRCON_BUILD_DIR=$(SOURCEDIR)/out/build-zircon/build-arm64
 	endif
