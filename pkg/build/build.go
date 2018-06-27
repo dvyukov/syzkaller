@@ -60,6 +60,9 @@ func getBuilder(targetOS, targetArch, vmType string) (builder, error) {
 }
 
 func CompilerIdentity(compiler string) (string, error) {
+	if compiler == "" {
+		return "", nil
+	}
 	arg := "--version"
 	if strings.HasSuffix(compiler, "bazel") {
 		arg = ""
