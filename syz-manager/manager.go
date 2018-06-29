@@ -144,7 +144,7 @@ func RunManager(cfg *mgrconfig.Config, target *prog.Target, syscalls map[int]boo
 	// and start syz-fuzzer there.
 	if cfg.Type != "none" {
 		var err error
-		vmPool, err = vm.Create(cfg, *flagDebug)
+		vmPool, err = vm.Create(cfg, true)
 		if err != nil {
 			log.Fatalf("%v", err)
 		}

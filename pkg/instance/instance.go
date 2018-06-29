@@ -155,7 +155,7 @@ func (env *Env) Test(numVMs int, reproSyz, reproOpts, reproC []byte) ([]error, e
 	if err != nil {
 		return nil, err
 	}
-	vmPool, err := vm.Create(env.cfg, false)
+	vmPool, err := vm.Create(env.cfg, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VM pool: %v", err)
 	}
