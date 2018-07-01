@@ -1,0 +1,51 @@
+# Copyright 2018 syzkaller project authors. All rights reserved.
+# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
+
+include <linux/fs.h>
+
+# tcp -> ip address + port opt
+# rdma -> ip address + port opt
+# unix -> sun path
+# fd -> rfd/wfd
+# virtio -> virtio chan tag name
+# xen -> xen dev tag name
+
+mount$9p(src const[0], dst ptr[in, filename], type ptr[in, string["9p"]], flags flags[mount_flags], opts ptr[in, fs_options[fs9p_options]])
+
+fs9p_options [
+	trans_unix	stringnoz["trans=unix"]
+	trans_tcp	stringnoz["trans=tcp"]
+	trans_fd	stringnoz["trans=fd"]
+	trans_virtio	stringnoz["trans=virtio"]
+	trans_rdma	stringnoz["trans=rdma"]
+	trans_xen	stringnoz["trans=xen"]
+	uname		fs_opt_str["uname"]
+	aname		fs_opt_str["aname"]
+	cache_none	stringnoz["cache=none"]
+	cache_loose	stringnoz["cache=loose"]
+	cache_fscache	stringnoz["cache=fscache"]
+	cache_mmap	stringnoz["cache=mmap"]
+	debug		fs_opt_dec["fs_opt_dec"]
+	noextend	stringnoz["noextend"]
+	nodevmap	stringnoz["nodevmap"]
+	version_9p2000	stringnoz["version=9p2000"]
+	version_u	stringnoz["version=9p2000.u"]
+	version_L	stringnoz["version=9p2000.L"]
+	cachetag	fs_opt_str["cachetag"]
+	loose		stringnoz["loose"]
+	fscache		stringnoz["fscache"]
+	mmap		stringnoz["mmap"]
+	posixacl	stringnoz["posixacl"]
+	privport	stringnoz["privport"]
+	msize		fs_opt_dec["msize"]
+	dfltuid		fs_opt_dec["dfltuid"]
+	dfltgid		fs_opt_dec["dfltgid"]
+	afid		fs_opt_dec["afid"]
+	access_user	stringnoz["access=user"]
+	access_any	stringnoz["access=any"]
+	access_client	stringnoz["access=client"]
+	access_uid	fs_opt_dec["access"]
+	rfdno		fs_opt_dec["rfdno"]
+	wfdno		fs_opt_dec["wfdno"]
+	port		fs_opt_dec["port"]
+] [varlen]

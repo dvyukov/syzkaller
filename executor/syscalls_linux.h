@@ -2,13 +2,13 @@
 
 #if defined(__i386__) || 0
 #define GOARCH "386"
-#define SYZ_REVISION "b4050c8ea56e0fa6d944c424b5e03399e929745e"
+#define SYZ_REVISION "11c88048fb77e2615ca8506dca8d938807c19251"
 #define SYZ_EXECUTOR_USES_FORK_SERVER true
 #define SYZ_EXECUTOR_USES_SHMEM true
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-#define SYZ_SYSCALL_COUNT 1998
+#define SYZ_SYSCALL_COUNT 1999
 const call_t syscalls[] = {
     {"accept4", 364},
     {"accept4$alg", 364},
@@ -1264,6 +1264,7 @@ const call_t syscalls[] = {
     {"modify_ldt$write", 123},
     {"modify_ldt$write2", 123},
     {"mount", 21},
+    {"mount$9p", 21},
     {"move_pages", 317},
     {"mprotect", 125},
     {"mq_getsetattr", 282},
@@ -2014,13 +2015,13 @@ const call_t syscalls[] = {
 
 #if defined(__x86_64__) || 0
 #define GOARCH "amd64"
-#define SYZ_REVISION "fc69ece5307d371a63232a03bac964a9ede3c7d2"
+#define SYZ_REVISION "5cbc48c1005cd3e8bbfc3ecc11cd3dca6eec8de0"
 #define SYZ_EXECUTOR_USES_FORK_SERVER true
 #define SYZ_EXECUTOR_USES_SHMEM true
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-#define SYZ_SYSCALL_COUNT 2050
+#define SYZ_SYSCALL_COUNT 2051
 const call_t syscalls[] = {
     {"accept", 43},
     {"accept$alg", 43},
@@ -3290,6 +3291,7 @@ const call_t syscalls[] = {
     {"modify_ldt$write", 154},
     {"modify_ldt$write2", 154},
     {"mount", 165},
+    {"mount$9p", 165},
     {"move_pages", 279},
     {"mprotect", 10},
     {"mq_getsetattr", 245},
@@ -4078,13 +4080,13 @@ const call_t syscalls[] = {
 
 #if defined(__arm__) || 0
 #define GOARCH "arm"
-#define SYZ_REVISION "dd5ad897499c0d9a2e3cbc471197a813b506d043"
+#define SYZ_REVISION "ce57efcc3811ca03c04338f71e0523660fc71eed"
 #define SYZ_EXECUTOR_USES_FORK_SERVER true
 #define SYZ_EXECUTOR_USES_SHMEM true
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-#define SYZ_SYSCALL_COUNT 2006
+#define SYZ_SYSCALL_COUNT 2007
 const call_t syscalls[] = {
     {"accept", 285},
     {"accept$alg", 285},
@@ -5314,6 +5316,7 @@ const call_t syscalls[] = {
     {"mmap$binder", 192},
     {"mmap$xdp", 192},
     {"mount", 21},
+    {"mount$9p", 21},
     {"move_pages", 344},
     {"mprotect", 125},
     {"mq_getsetattr", 279},
@@ -6098,13 +6101,13 @@ const call_t syscalls[] = {
 
 #if defined(__aarch64__) || 0
 #define GOARCH "arm64"
-#define SYZ_REVISION "45ca78852b7500e7612287085dee2292ff1d6a8e"
+#define SYZ_REVISION "bca0fd8848926f2383a6e0c7b883b864d01b5ad0"
 #define SYZ_EXECUTOR_USES_FORK_SERVER true
 #define SYZ_EXECUTOR_USES_SHMEM true
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-#define SYZ_SYSCALL_COUNT 1978
+#define SYZ_SYSCALL_COUNT 1979
 const call_t syscalls[] = {
     {"accept", 202},
     {"accept$alg", 202},
@@ -7325,6 +7328,7 @@ const call_t syscalls[] = {
     {"mmap$binder", 222},
     {"mmap$xdp", 222},
     {"mount", 40},
+    {"mount$9p", 40},
     {"move_pages", 239},
     {"mprotect", 226},
     {"mq_getsetattr", 185},
@@ -8090,13 +8094,13 @@ const call_t syscalls[] = {
 
 #if defined(__ppc64__) || defined(__PPC64__) || defined(__powerpc64__) || 0
 #define GOARCH "ppc64le"
-#define SYZ_REVISION "fb8f49f6dceef512594c9f30fdc24bb287e02e4f"
+#define SYZ_REVISION "7533e7efaffaf68a424e7d247b542ac05bde50f0"
 #define SYZ_EXECUTOR_USES_FORK_SERVER true
 #define SYZ_EXECUTOR_USES_SHMEM true
 #define SYZ_PAGE_SIZE 4096
 #define SYZ_NUM_PAGES 4096
 #define SYZ_DATA_OFFSET 536870912
-#define SYZ_SYSCALL_COUNT 1868
+#define SYZ_SYSCALL_COUNT 1869
 const call_t syscalls[] = {
     {"accept", 330},
     {"accept$alg", 330},
@@ -9225,6 +9229,7 @@ const call_t syscalls[] = {
     {"modify_ldt$write", 123},
     {"modify_ldt$write2", 123},
     {"mount", 21},
+    {"mount$9p", 21},
     {"move_pages", 301},
     {"mprotect", 125},
     {"mq_getsetattr", 267},

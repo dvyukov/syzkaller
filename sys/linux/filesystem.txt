@@ -16,7 +16,7 @@ syz_mount_image$msdos(fs ptr[in, string["msdos"]], dir ptr[in, filename], size i
 
 syz_mount_image$bfs(fs ptr[in, string["bfs"]], dir ptr[in, filename], size intptr, nsegs len[segments], segments ptr[in, array[fs_image_segment]], flags flags[mount_flags], opts const[0])
 
-syz_mount_image$xfs(fs ptr[in, string["xfs"]], dir ptr[in, filename], size intptr, nsegs len[segments], segments ptr[in, array[fs_image_segment]], flags flags[mount_flags], opts ptr[in, xfs_options])
+syz_mount_image$xfs(fs ptr[in, string["xfs"]], dir ptr[in, filename], size intptr, nsegs len[segments], segments ptr[in, array[fs_image_segment]], flags flags[mount_flags], opts ptr[in, fs_options[xfs_options]])
 
 syz_mount_image$minix(fs ptr[in, string["minix"]], dir ptr[in, filename], size intptr, nsegs len[segments], segments ptr[in, array[fs_image_segment]], flags flags[mount_flags], opts const[0])
 
@@ -65,12 +65,12 @@ type fs_options[ELEMS] {
 
 type fs_opt_elem[ELEMS] {
 	elem	ELEMS
-	comma	const[44, int8]
+	comma	const[',', int8]
 } [packed]
 
 type fs_opt[NAME, TYPE] {
 	name	stringnoz[NAME]
-	eq	const[0x3d, int8]
+	eq	const['=', int8]
 	val	TYPE
 } [packed]
 
