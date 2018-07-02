@@ -25,6 +25,7 @@ func initHTTPHandlers() {
 	http.Handle("/", handlerWrapper(handleMain))
 	http.Handle("/bug", handlerWrapper(handleBug))
 	http.Handle("/text", handlerWrapper(handleText))
+	http.Handle("/search", handlerWrapper(handleSearch))
 	http.Handle("/x/.config", handlerWrapper(handleTextX(textKernelConfig)))
 	http.Handle("/x/log.txt", handlerWrapper(handleTextX(textCrashLog)))
 	http.Handle("/x/repro.syz", handlerWrapper(handleTextX(textReproSyz)))
@@ -256,6 +257,20 @@ func handleBug(c context.Context, w http.ResponseWriter, r *http.Request) error 
 		Crashes:      crashes,
 	}
 	return serveTemplate(w, "bug.html", data)
+}
+
+type uiSearchPage struct {
+	Header  *uiHeader
+	Results *uiCrash
+}
+
+// handleSearch serves report search.
+func handleSearch(c context.Context, w http.ResponseWriter, r *http.Request) error {
+	data := &uiSearchPage{
+		Header: commonHeader(c, r),
+	}
+	data.Header.Query = r.FormValue("query")
+	return serveTemplate(w, "search.html", data)
 }
 
 // handleText serves plain text blobs (crash logs, reports, reproducers, etc).

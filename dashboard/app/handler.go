@@ -78,6 +78,7 @@ func serveTemplate(w http.ResponseWriter, name string, data interface{}) error {
 type uiHeader struct {
 	LoginLink           string
 	AnalyticsTrackingID string
+	Query               string
 }
 
 func commonHeader(c context.Context, r *http.Request) *uiHeader {

@@ -1,0 +1,24 @@
+{{/*
+Copyright 2018 syzkaller project authors. All rights reserved.
+Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
+
+Report search results page.
+*/}}
+
+<!doctype html>
+<html>
+<head>
+	{{template "head" .Header}}
+	<title>syzbot</title>
+</head>
+<body>
+	{{template "header" .Header}}
+
+	{{if .Results}}
+		{{range $r := .Results}}
+		{{end}}
+	{{else}}
+		<b>No matches found</b>
+	{{end}}
+</body>
+</html>
