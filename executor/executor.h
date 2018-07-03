@@ -646,6 +646,7 @@ void handle_completion(thread_t* th)
 			reply.comps_size = 0;
 			if (write(kOutPipeFd, &reply, sizeof(reply)) != sizeof(reply))
 				fail("control pipe call write failed");
+			debug("out: index=%u num=%u errno=%d\n", th->call_index, th->call_num, reserrno);
 		}
 	}
 	th->handled = true;
@@ -668,6 +669,7 @@ void* worker_thread(void* arg)
 {
 	thread_t* th = (thread_t*)arg;
 
+	debug("#%d: started\n", th->id);
 	if (flag_cover)
 		cover_enable(th);
 	for (;;) {

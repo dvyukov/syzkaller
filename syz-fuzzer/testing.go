@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"io/ioutil"
 
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
@@ -92,7 +93,11 @@ func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
 
 func checkRevisions(args *checkArgs) error {
 	log.Logf(0, "checking revisions...")
-	out, err := osutil.RunCmd(time.Minute, "", args.ipcConfig.Executor, "version")
+	executorArgs := strings.Split(args.ipcConfig.Executor, " ")
+	executorArgs = append(executorArgs, "version")
+	cmd := osutil.Command(executorArgs[0], executorArgs[1:]...)
+	cmd.Stderr = ioutil.Discard
+	out, err := osutil.Run(time.Minute, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to run executor version: %v", err)
 	}

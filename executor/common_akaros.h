@@ -65,12 +65,12 @@ static void segv_handler(int sig, siginfo_t* info, void* ctx)
 	const uintptr_t prog_start = 1 << 20;
 	const uintptr_t prog_end = 100 << 20;
 	if (__atomic_load_n(&skip_segv, __ATOMIC_RELAXED) && (addr < prog_start || addr > prog_end)) {
-		debug("SIGSEGV on %p, skipping\n", addr);
+		debug("SIGSEGV on 0x%lx, skipping\n", addr);
 		struct user_context* uctx = (struct user_context*)ctx;
 		uctx->tf.hw_tf.tf_rip = (long)(void*)recover;
 		return;
 	}
-	debug("SIGSEGV on %p, exiting\n", addr);
+	debug("SIGSEGV on 0x%lx, exiting\n", addr);
 	doexit(sig);
 	for (;;) {
 	}

@@ -16,11 +16,19 @@
 
 uint32 output;
 
+static void child();
+
 int main(int argc, char** argv)
 {
+fprintf(stderr, "main argc=%d\n", argc);
+
 	if (argc == 2 && strcmp(argv[1], "version") == 0) {
 		puts(GOOS " " GOARCH " " SYZ_REVISION " " GIT_REVISION);
 		return 0;
+	}
+	if (argc == 2 && strcmp(argv[1], "child") == 0) {
+		child();
+		doexit(0);
 	}
 
 	if (mmap((void*)SYZ_DATA_OFFSET, SYZ_NUM_PAGES * SYZ_PAGE_SIZE, PROT_READ | PROT_WRITE,
@@ -30,23 +38,24 @@ int main(int argc, char** argv)
 	use_temporary_dir();
 	install_segv_handler();
 	main_init();
+debug("main_init\n");
 	reply_handshake();
 
 	for (;;) {
-		receive_execute();
 		char cwdbuf[128] = "/syz-tmpXXXXXX";
 		mkdtemp(cwdbuf);
+debug("forking...\n");
 		int pid = fork();
 		if (pid < 0)
 			fail("fork failed");
 		if (pid == 0) {
-			close(kInPipeFd);
-			close(kOutPipeFd);
+fprintf(stderr, "child fork\n");
 			if (chdir(cwdbuf))
 				fail("chdir failed");
-			execute_one();
-			doexit(0);
+			execl(argv[0], argv[0], "loop", NULL);
+			fail("execl failed");
 		}
+fprintf(stderr, "forked\n");
 		int status = 0;
 		uint64 start = current_time_ms();
 		for (;;) {
@@ -55,7 +64,7 @@ int main(int argc, char** argv)
 				break;
 			sleep_ms(10);
 			uint64 now = current_time_ms();
-			if (now - start < 3 * 1000)
+			if (now - start < 5 * 1000)
 				continue;
 			kill(pid, SIGKILL);
 			while (waitpid(pid, &status, 0) != pid) {
@@ -71,6 +80,16 @@ int main(int argc, char** argv)
 		reply_execute(0);
 	}
 	return 0;
+}
+
+static void child()
+{
+	flag_debug = true;
+	debug("child process started\n");
+	receive_execute();
+	debug("child received execute\n");
+	close(kInPipeFd);
+	execute_one();
 }
 
 long execute_syscall(const call_t* c, long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8)

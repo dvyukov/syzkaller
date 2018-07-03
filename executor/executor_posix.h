@@ -7,12 +7,12 @@ typedef pthread_t osthread_t;
 
 void thread_start(osthread_t* t, void* (*fn)(void*), void* arg)
 {
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setstacksize(&attr, 128 << 10);
-	if (pthread_create(t, &attr, fn, arg))
+	//pthread_attr_t attr;
+	//pthread_attr_init(&attr);
+	//pthread_attr_setstacksize(&attr, 128 << 10);
+	if (pthread_create(t, 0/*&attr*/, fn, arg))
 		exitf("pthread_create failed");
-	pthread_attr_destroy(&attr);
+	//pthread_attr_destroy(&attr);
 }
 
 struct event_t {
@@ -60,6 +60,20 @@ bool event_isset(event_t* ev)
 	pthread_mutex_unlock(&ev->mu);
 	return res;
 }
+
+/*
+bool event_timedwait(event_t* ev, uint64 timeout_ms)
+{
+	uint64 start = current_time_ms();
+	for (;;) {
+		if (__atomic_load_n(&ev->state, __ATOMIC_RELAXED))
+			return true;
+		if (current_time_ms() - start > timeout_ms)
+			return false;
+		usleep(200);
+	}
+}
+*/
 
 bool event_timedwait(event_t* ev, uint64 timeout_ms)
 {

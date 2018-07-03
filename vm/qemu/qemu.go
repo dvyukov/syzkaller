@@ -54,6 +54,7 @@ type instance struct {
 	workdir    string
 	sshkey     string
 	sshuser    string
+	fuzzerBin string
 	port       int
 	rpipe      io.ReadCloser
 	wpipe      io.WriteCloser
@@ -128,6 +129,11 @@ var archConfigs = map[string]*archConfig{
 			"kernel.serial=legacy",
 			"kernel.halt-on-panic=true",
 		},
+	},
+	"akaros/amd64": {
+		Qemu:      "qemu-system-x86_64",
+		QemuArgs:  "-enable-kvm -cpu host",
+		TargetDir: "/",
 	},
 }
 
@@ -292,10 +298,12 @@ func (inst *instance) Boot() error {
 			"-device", "virtio-9p-pci,fsdev=fsdev0,mount_tag=/dev/root",
 		)
 	} else {
+		/*
 		args = append(args,
 			"-"+inst.cfg.ImageDevice, inst.image,
 			"-snapshot",
 		)
+		*/
 	}
 	if inst.cfg.Initrd != "" {
 		args = append(args,
@@ -399,7 +407,8 @@ func (inst *instance) Boot() error {
 }
 
 func (inst *instance) Forward(port int) (string, error) {
-	return fmt.Sprintf("%v:%v", hostAddr, port), nil
+	//return fmt.Sprintf("%v:%v", hostAddr, port), nil
+	return fmt.Sprintf("127.0.0.1:%v", port), nil
 }
 
 func (inst *instance) targetDir() string {
@@ -410,7 +419,12 @@ func (inst *instance) targetDir() string {
 }
 
 func (inst *instance) Copy(hostSrc string) (string, error) {
-	vmDst := filepath.Join(inst.targetDir(), filepath.Base(hostSrc))
+	base := filepath.Base(hostSrc)
+	if base == "syz-fuzzer" {
+		inst.fuzzerBin = base
+		return hostSrc, nil
+	}
+	vmDst := filepath.Join(inst.targetDir(), base)
 	args := append(inst.sshArgs("-P"), hostSrc, inst.sshuser+"@localhost:"+vmDst)
 	cmd := osutil.Command("scp", args...)
 	if inst.debug {
@@ -445,11 +459,28 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 	}
 	inst.merger.Add("ssh", rpipe)
 
+	/*
 	args := append(inst.sshArgs("-p"), inst.sshuser+"@localhost", "cd "+inst.targetDir()+" && "+command)
 	if inst.debug {
 		log.Logf(0, "running command: ssh %#v", args)
 	}
 	cmd := osutil.Command("ssh", args...)
+	*/
+
+	args := strings.Split(command, " ")
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-executor=") {
+			args[i] = "-executor=" + "/usr/bin/ssh " + strings.Join(inst.sshArgs("-p"), " ") +
+				" " + inst.sshuser+"@localhost " + arg[len("-executor="):]
+			break
+		}
+	}
+	if inst.debug {
+		log.Logf(0, "running command: %#v", args)
+	}
+	cmd := osutil.Command(args[0], args[1:]...)
+	cmd.Dir = inst.workdir
+	
 	cmd.Stdout = wpipe
 	cmd.Stderr = wpipe
 	if err := cmd.Start(); err != nil {
