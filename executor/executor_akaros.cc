@@ -47,8 +47,25 @@ int main(int argc, char** argv)
 			return 0;
 		}
 		int status = 0;
+#if 1
 		while (waitpid(pid, &status, 0) != pid) {
 		}
+#else
+		uint64 start = current_time_ms();
+		for (;;) {
+			int res = waitpid(pid, &status, WNOHANG);
+			if (res == pid)
+				break;
+			sleep_ms(10);
+			uint64 now = current_time_ms();
+			if (now - start < 4 * 1000)
+				continue;
+			kill(pid, SIGKILL);
+			while (waitpid(pid, &status, 0) != pid) {
+			}
+			break;
+		}
+#endif
 		status = WEXITSTATUS(status);
 		if (status == kFailStatus)
 			fail("child failed");

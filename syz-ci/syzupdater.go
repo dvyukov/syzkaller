@@ -60,6 +60,7 @@ func NewSyzUpdater(cfg *Config) *SyzUpdater {
 
 	gopath := filepath.Join(wd, "gopath")
 	os.Setenv("GOROOT", cfg.Goroot)
+	os.Unsetenv("GOPATH")
 	os.Setenv("PATH", filepath.Join(cfg.Goroot, "bin")+
 		string(filepath.ListSeparator)+os.Getenv("PATH"))
 	syzkallerDir := filepath.Join(gopath, "src", "github.com", "google", "syzkaller")
@@ -219,13 +220,15 @@ func (upd *SyzUpdater) build(commit *vcs.Commit) error {
 	}
 	cmd := osutil.Command("make", "generate")
 	cmd.Dir = upd.syzkallerDir
-	cmd.Env = append([]string{"GOPATH=" + upd.gopathDir}, os.Environ()...)
+	cmd.Env = append([]string{}, os.Environ()...)
+	cmd.Env = append(cmd.Env, "GOPATH="+upd.gopathDir)
 	if _, err := osutil.Run(time.Hour, cmd); err != nil {
 		return fmt.Errorf("build failed: %v", err)
 	}
 	cmd = osutil.Command("make", "host", "ci")
 	cmd.Dir = upd.syzkallerDir
-	cmd.Env = append([]string{"GOPATH=" + upd.gopathDir}, os.Environ()...)
+	cmd.Env = append([]string{}, os.Environ()...)
+	cmd.Env = append(cmd.Env, "GOPATH="+upd.gopathDir)
 	if _, err := osutil.Run(time.Hour, cmd); err != nil {
 		return fmt.Errorf("build failed: %v", err)
 	}

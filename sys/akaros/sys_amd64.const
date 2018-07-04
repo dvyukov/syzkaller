@@ -57,7 +57,6 @@ SYS_chdir = 116
 SYS_close = 103
 SYS_fchdir = 124
 SYS_fcntl = 107
-SYS_fork = 15
 SYS_fstat = 104
 SYS_getcwd = 117
 SYS_link = 112

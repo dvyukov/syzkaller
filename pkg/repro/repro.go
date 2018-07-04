@@ -110,14 +110,14 @@ func Run(crashLog []byte, cfg *mgrconfig.Config, reporter report.Reporter, vmPoo
 					}
 					execprogBin, err := vmInst.Copy(cfg.SyzExecprogBin)
 					if err != nil {
-						ctx.reproLog(0, "failed to copy to VM: %v", err)
+						ctx.reproLog(0, "failed to copy execprog to VM: %v", err)
 						vmInst.Close()
 						time.Sleep(10 * time.Second)
 						continue
 					}
 					executorBin, err := vmInst.Copy(cfg.SyzExecutorBin)
 					if err != nil {
-						ctx.reproLog(0, "failed to copy to VM: %v", err)
+						ctx.reproLog(0, "failed to copy executor to VM: %v", err)
 						vmInst.Close()
 						time.Sleep(10 * time.Second)
 						continue
