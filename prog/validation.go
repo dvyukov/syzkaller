@@ -247,3 +247,10 @@ func (arg *PointerArg) validate(ctx *validCtx) error {
 	}
 	return nil
 }
+
+func (arg *FmtArg) validate(ctx *validCtx) error {
+	if _, ok := arg.Type().(*FmtType); !ok {
+		return fmt.Errorf("fmt arg %v has bad type %v", arg, arg.Type().Name())
+	}
+	return ctx.validateArg(arg.Value)
+}

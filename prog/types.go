@@ -303,6 +303,37 @@ func (t *PtrType) String() string {
 	return fmt.Sprintf("ptr[%v, %v]", t.Dir(), t.Type.String())
 }
 
+type FmtKind int
+
+const (
+	FmtDec FmtKind = iota
+	FmtHex
+	FmtOct
+)
+
+func (k FmtKind) String() string {
+	switch k {
+	case FmtDec:
+		return "dec"
+	case FmtHex:
+		return "hex"
+	case FmtOct:
+		return "oct"
+	default:
+		panic("bad fmt kind")
+	}
+}
+
+type FmtType struct {
+	TypeCommon
+	Kind      FmtKind
+	ValueType Type
+}
+
+func (t *FmtType) String() string {
+	return fmt.Sprintf("fmt[%v, %v]", t.Kind, t.ValueType)
+}
+
 type StructType struct {
 	Key     StructKey
 	FldName string

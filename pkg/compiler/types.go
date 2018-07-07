@@ -570,6 +570,45 @@ var typeArgStringFlags = &typeArg{
 	},
 }
 
+var typeFmt = &typeDesc{
+	Names:        []string{"fmt"},
+	CanBeTypedef: true,
+	Args:         []namedArg{{"format", typeFmtFormat}, {"value", typeArgType}},
+	Check: func(comp *compiler, t *ast.Type, args []*ast.Type, base prog.IntTypeCommon) {
+		desc, _, _ := comp.getArgsBase(args[1], "", base.TypeCommon.ArgDir, false)
+		switch desc {
+		case typeResource, typeInt, typeLen, typeFlags, typeProc:
+		default:
+			comp.error(t.Pos, "bad fmt value %v, expect an integer", args[1].Ident)
+			return
+		}
+	},
+	Gen: func(comp *compiler, t *ast.Type, args []*ast.Type, base prog.IntTypeCommon) prog.Type {
+		var kind prog.FmtKind
+		switch args[0].Ident {
+		case "dec":
+			kind = prog.FmtDec
+			base.TypeSize = 20
+		case "hex":
+			kind = prog.FmtHex
+			base.TypeSize = 18
+		case "oct":
+			kind = prog.FmtOct
+			base.TypeSize = 23
+		}
+		return &prog.FmtType{
+			TypeCommon: base.TypeCommon,
+			Kind:       kind,
+			ValueType:  comp.genType(args[1], "", base.TypeCommon.ArgDir, false),
+		}
+	},
+}
+
+var typeFmtFormat = &typeArg{
+	Names: []string{"dec", "hex", "oct"},
+	Kind:  kindIdent,
+}
+
 // typeArgType is used as placeholder for any type (e.g. ptr target type).
 var typeArgType = &typeArg{}
 

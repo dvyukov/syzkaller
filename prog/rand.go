@@ -674,6 +674,12 @@ func (a *PtrType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
 	return arg, calls
 }
 
+func (a *FmtType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
+	val, calls := r.generateArg(s, a.ValueType)
+	arg = MakeFmtArg(a, val)
+	return arg, calls
+}
+
 func (a *LenType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
 	// Updated later in assignSizesCall.
 	return MakeConstArg(a, 0), nil

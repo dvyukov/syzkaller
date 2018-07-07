@@ -74,6 +74,8 @@ func (target *Target) serialize(arg Arg, buf *bytes.Buffer, vars map[*ResultArg]
 			}
 			target.serialize(a.Res, buf, vars, varSeq)
 		}
+	case *FmtArg:
+		target.serialize(a.Value, buf, vars, varSeq)
 	case *DataArg:
 		if a.Type().Dir() == DirOut {
 			fmt.Fprintf(buf, "\"\"/%v", a.Size())
@@ -226,6 +228,13 @@ func (target *Target) Deserialize(data []byte) (prog *Prog, err error) {
 }
 
 func (target *Target) parseArg(typ Type, p *parser, vars map[string]*ResultArg) (Arg, error) {
+	if t, ok := typ.(*FmtType); ok {
+		val, err := target.parseArg(t.ValueType, p, vars)
+		if err != nil {
+			return nil, err
+		}
+		return MakeFmtArg(typ, val), nil
+	}
 	r := ""
 	if p.Char() == '<' {
 		p.Parse('<')

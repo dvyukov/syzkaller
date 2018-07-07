@@ -237,6 +237,19 @@ func (arg *UnionArg) Size() uint64 {
 	return arg.Option.Size()
 }
 
+type FmtArg struct {
+	ArgCommon
+	Value Arg
+}
+
+func MakeFmtArg(t Type, val Arg) *FmtArg {
+	return &FmtArg{ArgCommon: ArgCommon{typ: t}, Value: val}
+}
+
+func (arg *FmtArg) Size() uint64 {
+	return arg.typ.Size()
+}
+
 // Used for ResourceType.
 // This is the only argument that can be used as syscall return value.
 // Either holds constant value or reference another ResultArg.

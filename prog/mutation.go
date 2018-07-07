@@ -216,6 +216,10 @@ func (t *ProcType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*C
 	return regenerate(r, s, arg)
 }
 
+func (t *FmtType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
+	return t.ValueType.mutate(r, s, arg.(*FmtArg).Value, ctx)
+}
+
 func (t *BufferType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
 	a := arg.(*DataArg)
 	switch t.Kind {
