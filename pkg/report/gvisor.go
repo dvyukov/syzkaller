@@ -35,7 +35,7 @@ func (ctx *gvisor) ContainsCrash(output []byte) bool {
 }
 
 func (ctx *gvisor) Parse(output []byte) *Report {
-	rep := simpleLineParser(output, gvisorOopses, nil, ctx.ignores)
+	rep := simpleLineParser(output, gvisorOopses, nil, ctx.ignores, nil)
 	if rep == nil {
 		return nil
 	}

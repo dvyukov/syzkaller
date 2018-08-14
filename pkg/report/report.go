@@ -426,7 +426,7 @@ nextPart:
 	return "", corrupted
 }
 
-func simpleLineParser(output []byte, oopses []*oops, params *stackParams, ignores []*regexp.Regexp) *Report {
+func simpleLineParser(output []byte, oopses []*oops, params *stackParams, ignores []*regexp.Regexp, conv func([]byte) []byte) *Report {
 	rep := &Report{
 		Output: output,
 	}
@@ -439,6 +439,9 @@ func simpleLineParser(output []byte, oopses []*oops, params *stackParams, ignore
 			next = len(output)
 		}
 		line := output[pos:next]
+		if conv != nil {
+			line = conv(line)
+		}
 		for _, oops1 := range oopses {
 			match := matchOops(line, oops1, ignores)
 			if match != -1 {

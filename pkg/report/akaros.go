@@ -33,7 +33,7 @@ func (ctx *akaros) ContainsCrash(output []byte) bool {
 }
 
 func (ctx *akaros) Parse(output []byte) *Report {
-	rep := simpleLineParser(output, akarosOopses, akarosStackParams, ctx.ignores)
+	rep := simpleLineParser(output, akarosOopses, akarosStackParams, ctx.ignores, nil)
 	if rep == nil {
 		return nil
 	}

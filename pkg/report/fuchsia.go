@@ -25,6 +25,8 @@ var (
 	zirconPanic      = []byte("ZIRCON KERNEL PANIC")
 	zirconPanicShort = []byte("KERNEL PANIC")
 	zirconKernelHang = []byte("stopping other cpus")
+	zirconServiceCrash = []byte("<== fatal exception: process ")
+	zirconSyzPrefix = []byte("syz")
 	zirconRIP        = regexp.MustCompile(` RIP: (0x[0-9a-f]+) `)
 	zirconBT         = regexp.MustCompile(`^bt#[0-9]+: (0x[0-9a-f]+)`)
 	zirconReportEnd  = []byte("Halted")
@@ -58,11 +60,33 @@ func ctorFuchsia(kernelSrc, kernelObj string, ignores []*regexp.Regexp) (Reporte
 }
 
 func (ctx *fuchsia) ContainsCrash(output []byte) bool {
-	return bytes.Contains(output, zirconPanic) ||
-		bytes.Contains(output, zirconKernelHang)
+	if bytes.Contains(output, zirconPanic) ||
+		bytes.Contains(output, zirconKernelHang) {
+		return true
+	}
+	if pos := bytes.Index(output, zirconServiceCrash); pos != -1 {
+		end := pos + len(zirconServiceCrash) + 32
+		if end > len(output) {
+			end = len(output)
+		}
+		if !bytes.Contains(output[pos:end], zirconSyzPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctx *fuchsia) Parse(output []byte) *Report {
+	output = ctx.symbolize(output)
+
+	rep := simpleLineParser(output, zirconOopses, zirconStackParams, ctx.ignores, ctx.symbolizeLine)
+	if rep == nil {
+		return nil
+	}
+	return rep
+}
+
+	/*
 	rep := &Report{
 		Output: output,
 		EndPos: len(output),
@@ -75,6 +99,34 @@ func (ctx *fuchsia) Parse(output []byte) *Report {
 		rep.Title = string(zirconKernelHang)
 		rep.StartPos = pos
 		wantLocation = false // these tend to produce random locations
+	} else if pos := bytes.Index(output, zirconServiceCrash); pos != -1 {
+		lineEnd := pos + len(zirconServiceCrash) + 32
+		if lineEnd > len(output) {
+			lineEnd = len(output)
+		}
+		if !bytes.Contains(output[pos:lineEnd], zirconSyzPrefix) {
+			return nil
+		}
+		rep.StartPos = pos
+		endPos := bytes.Index(output[pos:], []byte(": end\n"))
+		if endPos != -1 {
+			rep.EndPos = pos + endPos
+		}
+		pos += len(zirconServiceCrash)
+		end := pos
+		for end < len(output) {
+			ch := output[end]
+			if ch >= 'a' && ch <= 'z' ||
+				ch >= 'A' && ch <= 'Z' ||
+				ch >= '0' && ch <= '9' ||
+				ch == '/' || ch == '-' || ch == '_' {
+				end++
+				continue
+			}
+			break
+		}
+		rep.Title = fmt.Sprintf("fatal exception in %s", output[pos:end])
+		return rep
 	} else {
 		return nil
 	}
@@ -115,20 +167,34 @@ func (ctx *fuchsia) Parse(output []byte) *Report {
 		rep.Title = fmt.Sprintf("%v in %v", rep.Title, where)
 	}
 	return rep
+	*/
+
+func (ctx *fuchsia) symbolize(output []byte) []byte {
+	if ctx.obj == "" {
+		return output
+	}
+	symb := symbolizer.NewSymbolizer()
+	defer symb.Close()
+	output = zirconRIP.ReplaceAllFunc(output, func(line []byte) []byte { return ctx.symbolizeLine(symb, line, false) }
+	output = zirconBT.ReplaceAllFunc(output, func(line []byte) []byte { return ctx.symbolizeLine(symb, line, true) }
+	return output
 }
 
-func (ctx *fuchsia) processPC(rep *Report, symb *symbolizer.Symbolizer,
-	line []byte, match []int, call bool, where *string) bool {
-	if ctx.obj == "" {
-		return false
-	}
-	prefix := line[match[0]:match[1]]
-	pcStart := match[2] - match[0]
-	pcEnd := match[3] - match[0]
-	pcStr := prefix[pcStart:pcEnd]
-	pc, err := strconv.ParseUint(string(pcStr), 0, 64)
+func (ctx *fuchsia) symbolizeLine(symb *symbolizer.Symbolizer, line []byte, call bool) []byte {
+
+	**********************************************
+	this will not work because we need to copy while RIP line, which we don't have here
+	**********************************************
+
+	pcStart := bytes.Index(line, []byte{'0', 'x'})
+	
+	//prefix := line[match[0]:match[1]]
+	//pcStart := match[2] - match[0]
+	//pcEnd := match[3] - match[0]
+	//pcStr := prefix[pcStart:pcEnd]
+	pc, err := strconv.ParseUint(string(line[pcStart:]), 0, 64)
 	if err != nil {
-		return false
+		return line
 	}
 	shortPC := pc & 0xfffffff
 	pc = 0xffffffff80000000 | shortPC
@@ -137,8 +203,9 @@ func (ctx *fuchsia) processPC(rep *Report, symb *symbolizer.Symbolizer,
 	}
 	frames, err := symb.Symbolize(ctx.obj, pc)
 	if err != nil || len(frames) == 0 {
-		return false
+		return line
 	}
+	out := new(bytes.Buffer)
 	for _, frame := range frames {
 		file := ctx.trimFile(frame.File)
 		name := demangle.Filter(frame.Func, demangle.NoParams, demangle.NoTemplateParams)
@@ -146,13 +213,11 @@ func (ctx *fuchsia) processPC(rep *Report, symb *symbolizer.Symbolizer,
 			// demangle produces super long (full) names for lambdas.
 			name = "lambda"
 		}
-		if *where == "" && !matchesAny([]byte(name), zirconSkip) {
-			*where = name
-		}
 		id := "[ inline ]"
 		if !frame.Inline {
 			id = fmt.Sprintf("0x%08x", shortPC)
 		}
+		
 		start := replace(append([]byte{}, prefix...), pcStart, pcEnd, []byte(id))
 		frameLine := fmt.Sprintf("%s %v %v:%v\n", start, name, file, frame.Line)
 		rep.Report = append(rep.Report, frameLine...)
@@ -175,5 +240,28 @@ func (ctx *fuchsia) trimFile(file string) string {
 }
 
 func (ctx *fuchsia) Symbolize(rep *Report) error {
+	// We symbolize in Parse because zircon stacktraces don't contain even function names.
 	return nil
+}
+
+var fuchsiaStackParams = &stackParams{
+	//stackStartRes: linuxStackKeywords,
+	frameRes: []*regexp.Regexp{
+		compile("^ +(?:{{PC}} )?{{FUNC}}"),
+	},
+	//skipPatterns: []string{}
+}
+
+var zirconOopses = []*oops{
+	{
+		[]byte("ZIRCON KERNEL PANIC"),
+		[]oopsFormat{
+			{
+				title:        compile("ZIRCON KERNEL PANIC"),
+				fmt:          "KERNEL PANIC in %[1]",
+				noStackTrace: true,
+			},
+		},
+		[]*regexp.Regexp{},
+	},
 }
