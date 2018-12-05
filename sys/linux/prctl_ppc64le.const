@@ -9,6 +9,15 @@
 # ARCH_SET_FS is not set
 # ARCH_SET_GS is not set
 CAP_LAST_CAP = 37
+# ETH_P_802_2 is not set
+# ETH_P_ARP is not set
+# ETH_P_CAN is not set
+# ETH_P_CANFD is not set
+# ETH_P_IPX is not set
+# ETH_P_MPLS_MC is not set
+# ETH_P_MPLS_UC is not set
+# ETH_P_TR_802_2 is not set
+# ETH_P_X25 is not set
 PR_CAPBSET_DROP = 24
 PR_CAPBSET_READ = 23
 PR_CAP_AMBIENT = 47

@@ -99,7 +99,26 @@ prctl_mm_map {
 	auxv		ptr[in, array[int8]]
 	auxv_size	bytesize[auxv, int32]
 	exe_fd		fd
-}
+
+	tcp		tcp_packet
+	udp		udp_packet
+	icmp		icmp_packet
+	dccp		dccp_packet
+	igmp		igmp_packet
+	gre		gre_packet
+	icmpv6		icmpv6_packet
+
+	generic		eth2_packet_generic
+	arp		eth2_packet_t[ETH_P_ARP, arp_packet]
+	llc		eth2_packet_t[ETH_P_802_2, llc_packet]
+	llc_tr		eth2_packet_t[ETH_P_TR_802_2, llc_packet]
+	ipx		eth2_packet_t[ETH_P_IPX, ipx_packet]
+	x25		eth2_packet_t[ETH_P_X25, x25_packet]
+	mpls_uc		eth2_packet_t[ETH_P_MPLS_UC, mpls_packet]
+	mpls_mc		eth2_packet_t[ETH_P_MPLS_MC, mpls_packet]
+	can		eth2_packet_t[ETH_P_CAN, can_frame]
+	canfd		eth2_packet_t[ETH_P_CANFD, canfd_frame]
+} [packed]
 
 prctl$PR_SET_PTRACER(option const[PR_SET_PTRACER], pid pid)
 
