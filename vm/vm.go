@@ -150,7 +150,7 @@ func (inst *Instance) MonitorExecution(outc <-chan []byte, errc <-chan error,
 		canExit:  canExit,
 	}
 	lastExecuteTime := time.Now()
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(tickerPeriod)
 	defer ticker.Stop()
 	for {
 		select {
@@ -165,7 +165,7 @@ func (inst *Instance) MonitorExecution(outc <-chan []byte, errc <-chan error,
 			default:
 				// Note: connection lost can race with a kernel oops message.
 				// In such case we want to return the kernel oops.
-				return mon.extractError("lost connection to test machine")
+				return mon.extractError(lostConnectionCrash)
 			}
 		case out := <-outc:
 			lastPos := len(mon.output)
@@ -197,14 +197,14 @@ func (inst *Instance) MonitorExecution(outc <-chan []byte, errc <-chan error,
 			// in 140-280s detection delay.
 			// So the current timeout is 5 mins (300s).
 			// We don't want it to be too long too because it will waste time on real hangs.
-			if time.Since(lastExecuteTime) < 5*time.Minute {
+			if time.Since(lastExecuteTime) < noOutputTimeout {
 				break
 			}
 			if inst.Diagnose() {
 				mon.waitForOutput()
 			}
 			rep := &report.Report{
-				Title:      "no output from test machine",
+				Title:      noOutputCrash,
 				Output:     mon.output,
 				Suppressed: report.IsSuppressed(mon.reporter, mon.output),
 			}
@@ -229,7 +229,7 @@ func (mon *monitor) extractError(defaultError string) *report.Report {
 	// Give it some time to finish writing the error message.
 	mon.inst.Diagnose()
 	mon.waitForOutput()
-	if bytes.Contains(mon.output, []byte("SYZ-FUZZER: PREEMPTED")) {
+	if bytes.Contains(mon.output, []byte(fuzzerPreemptedStr)) {
 		return nil
 	}
 	if !mon.reporter.ContainsCrash(mon.output[mon.matchPos:]) {
@@ -237,7 +237,7 @@ func (mon *monitor) extractError(defaultError string) *report.Report {
 			if mon.canExit {
 				return nil
 			}
-			defaultError = "lost connection to test machine"
+			defaultError = lostConnectionCrash
 		}
 		rep := &report.Report{
 			Title:      defaultError,
@@ -264,8 +264,58 @@ func (mon *monitor) extractError(defaultError string) *report.Report {
 	return rep
 }
 
+/*
+func (mon *monitor) extractError(defaultError string) *report.Report {
+	crashed := defaultError != "" || !mon.canExit
+	if crashed {
+		mon.inst.Diagnose()
+	}
+	// Give it some time to finish writing the error message.
+	mon.waitForOutput()
+	if bytes.Contains(mon.output, []byte("SYZ-FUZZER: PREEMPTED")) {
+		return nil
+	}
+	gotCrash := mon.reporter.ContainsCrash(mon.output[mon.matchPos:])
+	if !crashed && gotCrash {
+		if mon.inst.Diagnose() {
+			mon.waitForOutput()
+		}
+	}
+	if !gotCrash {
+		if defaultError == "" {
+			if mon.canExit {
+				return nil
+			}
+			defaultError = lostConnectionCrash
+		}
+		rep := &report.Report{
+			Title:      defaultError,
+			Output:     mon.output,
+			Suppressed: report.IsSuppressed(mon.reporter, mon.output),
+		}
+		return rep
+	}
+	rep := mon.reporter.Parse(mon.output[mon.matchPos:])
+	if rep == nil {
+		panic(fmt.Sprintf("reporter.ContainsCrash/Parse disagree:\n%s", mon.output[mon.matchPos:]))
+	}
+	start := mon.matchPos + rep.StartPos - beforeContext
+	if start < 0 {
+		start = 0
+	}
+	end := mon.matchPos + rep.EndPos + afterContext
+	if end > len(mon.output) {
+		end = len(mon.output)
+	}
+	rep.Output = mon.output[start:end]
+	rep.StartPos += mon.matchPos - start
+	rep.EndPos += mon.matchPos - start
+	return rep
+}
+*/
+
 func (mon *monitor) waitForOutput() {
-	timer := time.NewTimer(10 * time.Second)
+	timer := time.NewTimer(waitForOutputTimeout)
 	for {
 		select {
 		case out, ok := <-mon.outc:
@@ -286,9 +336,19 @@ const (
 	beforeContext  = 1024 << 10
 	afterContext   = 128 << 10
 	maxErrorLength = 512
+
+	lostConnectionCrash  = "lost connection to test machine"
+	noOutputCrash        = "no output from test machine"
+	executingProgramStr1 = "executing program"  // syz-fuzzer output
+	executingProgramStr2 = "executed programs:" // syz-execprog output
+	fuzzerPreemptedStr   = "SYZ-FUZZER: PREEMPTED"
 )
 
 var (
-	executingProgram1 = []byte("executing program")  // syz-fuzzer output
-	executingProgram2 = []byte("executed programs:") // syz-execprog output
+	executingProgram1 = []byte(executingProgramStr1)
+	executingProgram2 = []byte(executingProgramStr2)
+
+	tickerPeriod         = 10 * time.Second
+	noOutputTimeout      = 5 * time.Minute
+	waitForOutputTimeout = 10 * time.Second
 )
