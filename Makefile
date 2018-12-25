@@ -122,7 +122,7 @@ else
 endif
 
 manager:
-	GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(HOSTGO) build $(GOHOSTFLAGS) -o ./bin/syz-manager github.com/google/syzkaller/syz-manager
+	GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) CGO_ENABLED=1 $(HOSTGO) build -race $(GOHOSTFLAGS) -o ./bin/syz-manager github.com/google/syzkaller/syz-manager
 
 runtest:
 	GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(HOSTGO) build $(GOHOSTFLAGS) -o ./bin/syz-runtest github.com/google/syzkaller/tools/syz-runtest
