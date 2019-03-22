@@ -60,6 +60,7 @@ type Build struct {
 	Arch              string
 	VMArch            string
 	SyzkallerCommit   string
+	SyzkallerCommitDate    time.Time
 	CompilerID        string
 	KernelRepo        string
 	KernelBranch      string

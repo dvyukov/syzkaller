@@ -66,7 +66,6 @@ type Manager struct {
 	currentDir      string
 	latestDir       string
 	compilerID      string
-	syzkallerCommit string
 	configTag       string
 	configData      []byte
 	cfg             *Config
@@ -103,10 +102,6 @@ func createManager(cfg *Config, mgrcfg *ManagerConfig, stop chan struct{}) (*Man
 			return nil, err
 		}
 	}
-	syzkallerCommit, _ := readTag(filepath.FromSlash("syzkaller/current/tag"))
-	if syzkallerCommit == "" {
-		log.Fatalf("no tag in syzkaller/current/tag")
-	}
 	kernelDir := filepath.Join(dir, "kernel")
 	repo, err := vcs.NewRepo(mgrcfg.managercfg.TargetOS, mgrcfg.managercfg.Type, kernelDir)
 	if err != nil {
@@ -120,7 +115,6 @@ func createManager(cfg *Config, mgrcfg *ManagerConfig, stop chan struct{}) (*Man
 		currentDir:      filepath.Join(dir, "current"),
 		latestDir:       filepath.Join(dir, "latest"),
 		compilerID:      compilerID,
-		syzkallerCommit: syzkallerCommit,
 		configTag:       hash.String(configData),
 		configData:      configData,
 		cfg:             cfg,
@@ -522,7 +516,7 @@ func (mgr *Manager) createDashboardBuild(info *BuildInfo, imageDir, typ string) 
 	// Also mix in build type, so that image error builds are not merged into normal builds.
 	var tagData []byte
 	tagData = append(tagData, info.Tag...)
-	tagData = append(tagData, mgr.syzkallerCommit...)
+	tagData = append(tagData, sys.GitRevision...)
 	tagData = append(tagData, typ...)
 	build := &dashapi.Build{
 		Manager:           mgr.name,
@@ -530,7 +524,8 @@ func (mgr *Manager) createDashboardBuild(info *BuildInfo, imageDir, typ string) 
 		OS:                mgr.managercfg.TargetOS,
 		Arch:              mgr.managercfg.TargetArch,
 		VMArch:            mgr.managercfg.TargetVMArch,
-		SyzkallerCommit:   mgr.syzkallerCommit,
+		SyzkallerCommit:   sys.GitRevision,
+		SyzkallerCommitDate:   sys.GitRevisionDate,
 		CompilerID:        info.CompilerID,
 		KernelRepo:        info.KernelRepo,
 		KernelBranch:      info.KernelBranch,

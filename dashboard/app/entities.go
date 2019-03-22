@@ -243,21 +243,37 @@ const (
 	BisectYes
 )
 
+func mgrKey(c context.Context, ns, name string) *db.Key {
+	return db.NewKey(c, "Manager", fmt.Sprintf("%v-%v", ns, name), 0, nil)
+}
+
+func (mgr *Manager) key(c context.Context) *db.Key {
+	return mgrKey(c, mgr.Namespace, mgr.Name)
+}
+
+func loadManager(c context.Context, ns, name string) (*Manager, error) {
+	mgr := new(Manager)
+	if err := db.Get(c, mgrKey(c, ns, name), mgr); err != nil {
+		if err != db.ErrNoSuchEntity {
+			return nil, fmt.Errorf("failed to get manager %v/%v: %v", ns, name, err)
+		}
+		mgr = &Manager{
+			Namespace: ns,
+			Name:      name,
+		}
+	}
+	return mgr, nil
+}
+
 // updateManager does transactional compare-and-swap on the manager and its current stats.
 func updateManager(c context.Context, ns, name string, fn func(mgr *Manager, stats *ManagerStats)) error {
 	date := timeDate(timeNow(c))
 	tx := func(c context.Context) error {
-		mgr := new(Manager)
-		mgrKey := db.NewKey(c, "Manager", fmt.Sprintf("%v-%v", ns, name), 0, nil)
-		if err := db.Get(c, mgrKey, mgr); err != nil {
-			if err != db.ErrNoSuchEntity {
-				return fmt.Errorf("failed to get manager %v/%v: %v", ns, name, err)
-			}
-			mgr = &Manager{
-				Namespace: ns,
-				Name:      name,
-			}
+		mgr, err := loadManager(c, ns, name)
+		if err != nil {
+			return err
 		}
+		mgrKey := mgr.key(c)
 		stats := new(ManagerStats)
 		statsKey := db.NewKey(c, "ManagerStats", "", int64(date), mgrKey)
 		if err := db.Get(c, statsKey, stats); err != nil {

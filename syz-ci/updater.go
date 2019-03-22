@@ -112,11 +112,9 @@ func NewSyzUpdater(cfg *Config) *SyzUpdater {
 //  - ensures that we have a working syzkaller build in current
 func (upd *SyzUpdater) UpdateOnStart(autoupdate bool, shutdown chan struct{}) {
 	os.RemoveAll(upd.currentDir)
-	exeTag, exeMod := readTag(upd.exe + ".tag")
 	latestTag := upd.checkLatest()
 	if latestTag != "" {
-		uptodate := exeTag == latestTag && time.Since(exeMod) < time.Minute
-		if uptodate || !autoupdate {
+		if sys.GitRevision == latestTag || !autoupdate {
 			if uptodate {
 				// Have a fresh up-to-date build, probably just restarted.
 				log.Logf(0, "current executable is up-to-date (%v)", latestTag)
@@ -129,15 +127,11 @@ func (upd *SyzUpdater) UpdateOnStart(autoupdate bool, shutdown chan struct{}) {
 			return
 		}
 	}
-	if exeTag == "" {
-		log.Logf(0, "current executable is bootstrap")
-	} else {
-		log.Logf(0, "current executable is on %v", exeTag)
-		log.Logf(0, "latest syzkaller build is on %v", latestTag)
-	}
+	log.Logf(0, "current executable is on %v", sys.GitRevision)
+	log.Logf(0, "latest syzkaller build is on %v", latestTag)
 
 	// No syzkaller build or executable is stale.
-	lastCommit := exeTag
+	lastCommit := sys.GitRevision
 	for {
 		lastCommit = upd.pollAndBuild(lastCommit)
 		latestTag := upd.checkLatest()
@@ -148,7 +142,7 @@ func (upd *SyzUpdater) UpdateOnStart(autoupdate bool, shutdown chan struct{}) {
 			if err := osutil.LinkFiles(upd.latestDir, upd.currentDir, upd.syzFiles); err != nil {
 				log.Fatal(err)
 			}
-			if autoupdate && exeTag != latestTag {
+			if autoupdate && sys.GitRevision != latestTag {
 				upd.UpdateAndRestart()
 			}
 			return
@@ -185,11 +179,7 @@ func (upd *SyzUpdater) WaitForUpdate() {
 func (upd *SyzUpdater) UpdateAndRestart() {
 	log.Logf(0, "restarting executable for update")
 	latestBin := filepath.Join(upd.latestDir, "bin", upd.exe)
-	latestTag := filepath.Join(upd.latestDir, "tag")
 	if err := osutil.CopyFile(latestBin, upd.exe); err != nil {
-		log.Fatal(err)
-	}
-	if err := osutil.CopyFile(latestTag, upd.exe+".tag"); err != nil {
 		log.Fatal(err)
 	}
 	if err := syscall.Exec(upd.exe, os.Args, os.Environ()); err != nil {
@@ -303,12 +293,10 @@ func (upd *SyzUpdater) uploadBuildError(commit *vcs.Commit, buildErr error) {
 			Arch:              managercfg.TargetArch,
 			VMArch:            managercfg.TargetVMArch,
 			SyzkallerCommit:   commit.Hash,
+			SyzkallerCommitDate:   commit.Date,
 			CompilerID:        upd.compilerID,
 			KernelRepo:        upd.repoAddress,
 			KernelBranch:      upd.branch,
-			KernelCommit:      commit.Hash,
-			KernelCommitTitle: commit.Title,
-			KernelCommitDate:  commit.Date,
 		},
 		Crash: dashapi.Crash{
 			Title: title,

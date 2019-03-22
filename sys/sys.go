@@ -4,6 +4,8 @@
 package sys
 
 import (
+	"time"
+
 	// Import all targets, so that users only need to import sys.
 	_ "github.com/google/syzkaller/sys/akaros/gen"
 	_ "github.com/google/syzkaller/sys/freebsd/gen"
@@ -15,5 +17,16 @@ import (
 	_ "github.com/google/syzkaller/sys/windows/gen"
 )
 
-// Emitted by Makefile.
-var GitRevision string
+
+var (
+	GitRevision string // emitted by Makefile
+	gitRevisionDate string // emitted by Makefile
+	GitRevisionDate time.Time // parsed from gitRevisionDate
+)
+
+func init() {
+	var err error
+	if GitRevisionDate, err = time.Parse("Mon Jan 2 15:04:05 2006 -0700", gitRevisionDate); err != nil {
+		panic(err)
+	}
+}

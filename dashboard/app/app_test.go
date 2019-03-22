@@ -416,3 +416,56 @@ func TestPurgeOldCrashes(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerFailedBuild(t *testing.T) {
+	c := NewCtx(t)
+	defer c.Close()
+
+	build := testBuild(1)
+	c.client.UploadBuild(build)
+
+	// Upload and check first build.
+	mgr, dbBuild := c.loadManager("test1", build.Manager)
+	c.expectEQ(mgr.CurrentBuild, build.ID)
+	c.expectEQ(dbBuild.ID, build.ID)
+	c.expectEQ(dbBuild.KernelCommit, build.KernelCommit)
+	c.expectEQ(dbBuild.SyzkallerCommit, build.SyzkallerCommit)
+
+	// Upload and check second build.
+	build.ID = "id1"
+	build.KernelCommit = "kern1"
+	build.SyzkallerCommit = "syz1"
+	c.client.UploadBuild(build)
+
+	mgr, dbBuild = c.loadManager("test1", build.Manager)
+	c.expectEQ(mgr.CurrentBuild, build.ID)
+	c.expectEQ(dbBuild.ID, build.ID)
+	c.expectEQ(dbBuild.KernelCommit, build.KernelCommit)
+	c.expectEQ(dbBuild.SyzkallerCommit, build.SyzkallerCommit)
+
+	// Upload failed build.
+	var failedBuild dashapi.Build
+	failedBuild = *build
+	failedBuild.ID = "id2"
+	failedBuild.KernelCommit = "kern2"
+	failedBuild.SyzkallerCommit = "syz2"
+	c.expectOK(c.client.ReportBuildError(&dashapi.BuildErrorReq{
+		Build: failedBuild,
+		Crash: dashapi.Crash{
+			Title: "failed build 1",
+		},
+	}))
+
+	mgr, dbBuild = c.loadManager("test1", build.Manager)
+	c.expectEQ(mgr.CurrentBuild, build.ID)
+	c.expectEQ(dbBuild.ID, build.ID)
+	c.expectEQ(dbBuild.KernelCommit, build.KernelCommit)
+	c.expectEQ(dbBuild.SyzkallerCommit, build.SyzkallerCommit)
+
+	c.expectNE(mgr.FailedBuildBug, "")
+	bug, _, dbBuildFailed := c.loadBugByHash(mgr.FailedBuildBug)
+	c.expectEQ(bug.Title, "failed build 1")
+	c.expectEQ(dbBuildFailed.ID, failedBuild.ID)
+	c.expectEQ(dbBuildFailed.KernelCommit, failedBuild.KernelCommit)
+	c.expectEQ(dbBuildFailed.SyzkallerCommit, failedBuild.SyzkallerCommit)
+}

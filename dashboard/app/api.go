@@ -439,8 +439,8 @@ func uploadBuild(c context.Context, now time.Time, ns string, req *dashapi.Build
 	if len(req.CompilerID) > MaxStringLen {
 		return nil, false, fmt.Errorf("Build.CompilerID is too long (%v)", len(req.CompilerID))
 	}
-	if err := checkStrLen(req.KernelCommit, "Build.KernelCommit", MaxStringLen); err != nil {
-		return nil, false, err
+	if len(req.KernelCommit) > MaxStringLen) {
+		return nil, false, fmt.Errorf("Build.KernelCommit is too long (%v)", len(req.KernelCommit))
 	}
 	configID, err := putText(c, ns, textKernelConfig, req.KernelConfig, true)
 	if err != nil {
