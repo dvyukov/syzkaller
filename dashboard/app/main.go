@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ func initHTTPHandlers() {
 	http.Handle("/", handlerWrapper(handleMain))
 	http.Handle("/bug", handlerWrapper(handleBug))
 	http.Handle("/text", handlerWrapper(handleText))
+	http.Handle("/bisect_info", handlerWrapper(handleBisectInfo))
 	http.Handle("/x/.config", handlerWrapper(handleTextX(textKernelConfig)))
 	http.Handle("/x/log.txt", handlerWrapper(handleTextX(textCrashLog)))
 	http.Handle("/x/report.txt", handlerWrapper(handleTextX(textCrashReport)))
@@ -182,6 +184,386 @@ type uiJob struct {
 	Commits         []*uiCommit // for inconclusive bisection
 	Crash           *uiCrash
 	Reported        bool
+}
+
+var bisectInfo = map[string]struct {
+	correct          bool
+	hardToReproduce  bool
+	multipleCrashes  bool
+	unrealtedCrashes bool
+	skipInterfere    bool
+	disabledConfig   bool
+}{
+	"0264f823322ea8600fbe3fb7e9e016569ca542d8": {false, false, true, true, false, false},
+	"02bde0600a225e8efa31bdce2e7f1b822542fef1": {true, false, false, false, false, false},
+	"106319f5d94ac049166744eee79e455ce4d0435c": {true, false, false, false, false, false},
+	"4db14afc80049c484903a7cf4d36d9cb1618469f": {true, false, false, false, false, false},
+	"cf86490d75109a7648fc749a4c9a8d59fabe398d": {true, false, false, false, false, false},
+	"04933ddeeb1b542edf54b88ceccdac34de747a40": {true, false, true, false, false, false},
+	"0519bd00ced4ae7f7c6f20bbfa5c0dfa4df51739": {true, false, true, false, false, false},
+	"08e669746c0679bba6b119c2ffacff3bc6a5ce49": {false, true, false, true, false, false},
+	"0c963236471bc9561fd3b38da03cd09482e90c72": {false, false, true, true, false, false},
+	"10cd2ff2ccd320618b127ec50ea6e5a55461cd76": {false, false, false, true, false, false},
+	"13de4605e86ebcf39093017dc255aa0fd6c2f12d": {false, false, false, true, false, false},
+	"163388d1fb80146cd3ba22a11a5a1995c3eaaafe": {false, false, false, true, false, false},
+	"16c9389ff3e0a921ddc98957e9a94c0913ad4669": {true, false, true, false, false, false},
+	"17535f4bf5b322437f7c639b59161ce343fc55a9": {true, false, true, false, false, false},
+	"17b1ffc681bc9f575cafe1ff72117b01d8c212fb": {false, true, true, false, false, false},
+	"1b42faa2848963564a5b1b7f8c837ea7b55ffa50": {true, false, true, false, false, false},
+	"1f5af6cb9a265f1d394769ba75542f756b489f1b": {true, false, true, false, false, false},
+	"2109fb7c8fb7f76e8269485c0ca0f04e2e1ac3fc": {false, false, true, false, true, false},
+	"229e0b718232b004dfddaeac61d8d66990ed247a": {true, true, true, false, false, false},
+	"2318b559efec9fda6c77bd5c3d57c8fc3255d922": {true, true, true, false, false, false},
+	"2410d22f1d8e5984217329dd0884b01d99e3e48d": {true, false, false, false, false, false},
+	"24b68e26f36aefc69e86e97dc731558c6965115a": {true, false, true, true, false, false},
+	"28b6bf730a5e8d288db5c794d5c6ccc49f746d74": {true, false, false, false, false, false},
+	"2d6a9427fceb9941d6d87128130babe7e40baba0": {false, true, true, true, false, false},
+	"2ec99b05d1b07c30c8e5d307e40651b106b20368": {true, false, false, false, false, false},
+	"31b84e77557158a1031ca8c9476230bb186fb88c": {false, true, false, true, false, false},
+	"32ab41bbdc0c28643c507dd0cf1eea1a9ce67837": {true, false, false, false, false, false},
+	"342beb2b368a43cbb6533c00d758759b10fbc8d8": {false, true, true, true, false, false},
+	"362d37ea5c9445929e633e81565b20e77d317b4f": {true, false, false, false, false, false},
+	"36b975e34252647b1b3d5d8a164e4aae45bf6d60": {true, false, false, false, false, false},
+	"38d36d1b26b4299bf964d50af4d79688d39ab960": {true, false, true, false, false, false},
+	"3acd1155d48a5acc5d76711568b04926945a6885": {false, false, true, false, false, true},
+	"47befb59c610a69f024db20b927dea80c88fc045": {false, false, true, false, false, true},
+	"d708485af9edc3af35f3b4d554e827c6c8bf6b0f": {false, false, true, false, false, true},
+	"4d03c161c6cc140b6234f534c6009d8c9da39f6c": {false, false, true, false, false, true},
+	"3b87dcf5e5ba9a2043ee6ed716cb1de4e3ffa1f1": {true, false, true, false, false, false},
+	"5a087c49cb6997c9e4544203afc1adbb289879a5": {true, false, true, false, false, false},
+	"72c29c8d4d19164497518992e91cac2123fc083e": {true, false, true, false, false, false},
+	"80a29a2cc44c85f71c3019d334592035b7299029": {true, false, true, false, false, false},
+	"93e67d1ae66524b264d8308b7e275edc84d70ff7": {true, false, true, false, false, false},
+	"9f65f4ff5604c1b1595452c46c31dcfb08515d57": {true, false, true, false, false, false},
+	"3c9259df279d84b845e9708f0e51e35e4d02e1b0": {true, false, false, false, false, false},
+	"3fd2badc3dc77e680e01b9330b217a361014a4f2": {true, false, false, false, false, false},
+	"40cdeb3bf27f6ec1fa468f8d7fff780368704d67": {true, false, true, false, false, false},
+	"41872265f1e3e0489eb0cc8762f8d48b3667afdb": {true, false, false, false, false, false},
+	"44ae4b4fa7e6c6e92aa921d2ec20ce9fbee97939": {true, false, true, false, false, false},
+	"4ad312cd74149ae58624039b5b3003faf6974e08": {true, false, true, false, false, false},
+	"4b9e5e6290e3fdee367ea37949f3bda8d4ec87bd": {false, true, true, true, false, false},
+	"4c0ccb254972cc51bdf6838cb1eff4fcc00de597": {true, false, true, false, false, false},
+	"4cf5ee79b52a4797c5bd40a58bd6ab243d40de48": {true, false, true, false, false, false},
+	"506214c97a1af183589a4caf4a8fa162a9f56cbd": {true, false, true, true, false, false},
+	"573d37f073c715dbcb403479b2458105679b58b2": {true, false, true, false, false, false},
+	"7cd3db70971bc10523485d12d95fdefa301fb819": {true, false, true, false, false, false},
+	"7f79b2bbcf1a6057a25d5557562141d90624d5da": {false, true, true, false, false, false},
+	"5df4f85d764ee89863d0294b4e0c87ef2fd2c624": {true, false, true, false, false, false},
+	"6080a070da766e6f046055bb90af40df73a5d3ae": {false, true, false, true, false, false},
+	"623c2e176b9d80b1872e7559e5b823b1ec4911b6": {false, true, true, false, false, false},
+	"62aaa13b8b6bba7f5bca8c0defef34b9a1623135": {false, false, true, true, false, false},
+	"6408a8ba0fa0e3940c5c2dfa40e808cbf4228689": {true, false, true, false, false, false},
+	"163414c0fc6f717973e0a832acfba3dfc184707b": {false, false, false, true, false, false},
+	"0ba17d70d062b2595e1f061231474800f076c7cb": {true, false, false, false, false, false},
+	"55d929463ecf8859c0c4836a4f8f004cfec28cf7": {true, false, true, false, false, false},
+	"6a6553c3d34bb00172b5cbd32f4912151b6133dc": {false, true, true, true, false, false},
+	"6c137905024f86513297b035845acecb55fa9dab": {false, true, true, true, false, false},
+	"6d5c55bc531f0ef83e8faca014cc123b4498f7a6": {false, false, false, true, false, false},
+	"6d600a0ff2cc263bc4edbddf0f597e456e303978": {true, false, false, false, false, false},
+	"7022420cc54310220ebad2da89e499bdb1f0f5e8": {true, false, false, false, false, false},
+	"7250aa28cb43ada4cba944fe46d80f67435022ef": {true, false, false, true, false, false},
+	"72dff36edffc3e8a3a0895aaf03b46d545a5dd5d": {true, false, true, false, false, false},
+	"788ed2c7e973b69fd551ba6b5e21848dba2c1670": {true, false, true, false, false, false},
+	"79994e7a1da2d2a0697da38e29910780fa320071": {false, false, true, true, true, false},
+	"7f47ce544bdaed1a1c5d0b0adac201d136d5fc79": {false, true, true, true, true, false},
+	"82425f52b09843fe8da85de87f9d590920bbe1fe": {false, true, true, false, false, false},
+	"8340d4b8c7304ff0b43490a1b69ab3833dd7ad20": {true, false, false, false, false, false},
+	"854553af64ddcb546a94e37dec96bca877d1d569": {true, false, false, false, false, false},
+	"873d6bcb9c5df3932a42b4a4347fda2061bf0a64": {true, false, true, false, false, false},
+	"8c04c0b0e814e1a2c5ae60f8b6ece3701bf561da": {false, false, true, true, false, false},
+	"91cbd2d4963aa0a7fe7b94d1a5c2ec1e36fa67a1": {false, true, false, true, false, false},
+	"fb195f91dc044978c1b186f1288b1eff61edcc20": {false, false, false, false, true, false},
+	"f9cfa5c5564ffc453258d835293bf6e9881c5b1c": {true, false, false, false, false, false},
+	"f620d34965777e9d309c58394ade94dbd3e3b0a8": {false, false, true, true, true, false},
+	"f46c94afb217ab49c75350adbd467d86ae2b59a6": {true, false, true, false, false, false},
+	"924b5574f42ebeddc94fad06f2fa329b199d58d3": {false, false, false, true, false, false},
+	"979d00397272e11bc334ec842074d314bde41b90": {false, false, false, true, false, false},
+	"99873243a442fffe0c5c6d9983e2d17b4680a60c": {true, false, false, false, false, false},
+	"9abc0fdcdea0effb7b27984dbc1f336155cdad3f": {false, true, true, false, false, false},
+	"9c65accb85b71ee72e58b2874fc7608a28e4d641": {true, false, true, false, false, false},
+	"9f86fabfdd07b7257ccd37a8c105a58b162fa356": {true, false, true, false, false, false},
+	"a1c27d97870876dcccbac41a965e46f672fc3855": {true, false, true, false, false, false},
+	"a421ee23a2b5b657ab5b958226ee885a9113ac7a": {false, true, true, false, false, false},
+	"a9796acbdecc1b2ba927578917755899c63c48af": {false, false, false, true, false, false},
+	"aa17edc076b9f096667fb68bd5fec33a80038154": {true, false, false, false, false, false},
+	"aaf17ca3f8ef677356e61bbe7e2c1af7f4398ec3": {true, false, false, false, false, false},
+	"acdcbdeef8c25f03c392005e553773b19ab540e8": {true, false, false, false, false, false},
+	"afc5098c1a0cb7cda8aa7fdb402153ff24fcf31c": {false, false, false, true, false, false},
+	"b0192a79bb2d222d3e723d7db60dfb5e0ec0e570": {true, false, true, false, false, false},
+	"b5d36424a183538dad060d0bef3ebc375e7a94eb": {false, true, true, true, false, false},
+	"b61c24317d9e0a189c4fe3373273f43e29999b5a": {false, true, false, false, false, false},
+	"b658eb696c8279d9951a4ceea79efba8a1d12467": {false, false, false, true, false, false},
+	"b962be759f1c186a76fe71ba99eda6e23708dcd9": {false, false, false, true, false, false},
+	"bc195cf62ac17381792072c72a692bf133c528d4": {true, false, true, false, false, false},
+	"be0232f1d0792f426874fc0cf149fb1721a62d42": {false, true, true, true, false, false},
+	"c14d620a28ea77843c2632f5b05b315c44a2dd06": {true, false, false, false, false, false},
+	"c670fb9da2ce08f7b5101baa9426083b39ee9f90": {true, false, true, false, false, false},
+	"c7e819884ddc3e9e16b0ed14d94c8c090ef53992": {true, false, true, false, false, false},
+	"c97097e0408c6c6f60ac89b78faaf0e42663cbac": {false, true, false, false, false, false},
+	"ca98e815aabdd1494eacb048d649ffd4fc916e2e": {true, false, false, false, false, false},
+	"cb3b80ba8aa00f25e4fe8ddf1a381a6686803e28": {false, false, false, false, true, false},
+	"cc7bc687e2a27a595a9e5a86e0f820f3d06b74a3": {true, false, false, false, false, false},
+	"db947ce523c1649ed8917fd831b996bec8687c9f": {true, false, false, false, false, false},
+	"dbd70f0407487a061d2d46fdc6bccc94b95ce3c0": {true, false, true, false, false, false},
+	"dd5aa153a2344f5f39e656692bc58dfe86e0423f": {false, false, false, true, false, false},
+	"e1d2492507fca6102dbce03c16b40a21130c8dbf": {false, false, true, true, false, false},
+	"ea46a31df5253b18deb1e18c429c1483b111cbce": {false, true, false, true, false, false},
+	"ee7cf202a47281cda2e5a76bd1ba0683a10c2a65": {false, true, false, true, false, false},
+	"eff432af8dea9e5e0d14acdae66b51ef49ccb5ee": {false, true, true, false, false, false},
+	/*
+		"XXXXXXXXX": {xxxxxxxxx, false, false, false, false, false},
+	*/
+}
+
+func handleBisectInfo(c context.Context, w http.ResponseWriter, r *http.Request) error {
+	var jobs []*Job
+	keys, err := db.NewQuery("Job").
+		Filter("Type=", JobBisectCause).
+		GetAll(c, &jobs)
+	if err != nil {
+		return err
+	}
+	rows := [][]string{
+		[]string{
+			"ID",
+			"Bug link",
+			"Bisect log",
+			"Start",
+			"Skip",
+			"Commits",
+			"Correct",
+			"Racy/flaky",
+			"Different manifestations",
+			"Unrelated crashes",
+			"Skip interference",
+			"Disabled config",
+			"Cause commit",
+			"Crash title",
+			"Final crash",
+			"Other crashes",
+		},
+	}
+	const numBuckets = 6
+	buckets := [numBuckets]string{
+		"v5.0..v4.18",
+		"v4.17..v4.14",
+		"v4.13..v4.10",
+		"v4.9..v4.6",
+		"v4.5..v4.1",
+		"total",
+	}
+	bucketMap := map[string]int{
+		"v5.0":  0,
+		"v4.20": 0,
+		"v4.19": 0,
+		"v4.18": 0,
+		"v4.17": 1,
+		"v4.16": 1,
+		"v4.15": 1,
+		"v4.14": 1,
+		"v4.13": 2,
+		"v4.12": 2,
+		"v4.11": 2,
+		"v4.10": 2,
+		"v4.9":  3,
+		"v4.8":  3,
+		"v4.7":  3,
+		"v4.6":  3,
+		"v4.5":  4,
+		"v4.4":  4,
+		"v4.3":  4,
+		"v4.2":  4,
+		"v4.1":  4,
+	}
+	var (
+		bisectCrashRe   = regexp.MustCompile("(?:run #[0-9]|all runs): crashed: (.*?)\n")
+		skipOther       = []byte("git bisect skip")
+		bucketTotal     [numBuckets]int
+		bucketCorrect   [numBuckets]int
+		bucketFlaky     [numBuckets]int
+		bucketMulti     [numBuckets]int
+		bucketUnrelated [numBuckets]int
+		bucketSkip      [numBuckets]int
+		bucketConfig    [numBuckets]int
+	)
+	for i, job := range jobs {
+		if job.Finished.IsZero() || job.Error != 0 {
+			continue
+		}
+		bisectLog, _, err := getText(c, textLog, job.Log)
+		if err != nil {
+			return err
+		}
+		startCommit := "-"
+		const bisectStart = "# git bisect start "
+		if pos := bytes.Index(bisectLog, []byte(bisectStart)); pos != -1 {
+			pos += len(bisectStart)
+			end := bytes.IndexByte(bisectLog[pos:], '\n')
+			if end != -1 {
+				end += pos
+			} else {
+				end = len(bisectLog)
+			}
+			startCommit = strings.Split(string(bisectLog[pos:end]), " ")[1]
+		}
+		title := job.BugTitle
+		if ln := len(title); ln > 5 && title[ln-1] == ')' && title[ln-3] == '(' && title[ln-4] == ' ' {
+			title = title[:ln-4]
+		}
+		dedup := map[string]bool{
+			title:          true,
+			job.CrashTitle: true,
+		}
+		var allCrashes []string
+		for _, res := range bisectCrashRe.FindAllSubmatch(bisectLog, -1) {
+			crash := string(res[1])
+			if dedup[crash] {
+				continue
+			}
+			dedup[crash] = true
+			allCrashes = append(allCrashes, crash)
+		}
+		if len(allCrashes) == 0 {
+			allCrashes = append(allCrashes, "-")
+		}
+		skip := "-"
+		if bytes.Contains(bisectLog, skipOther) {
+			skip = "Y"
+		}
+		commit := "-"
+		if len(job.Commits) == 1 {
+			commit = job.Commits[0].Title
+		}
+		Y := func(f bool) string {
+			if f {
+				return "Y"
+			}
+			return "-"
+		}
+		ID := keys[i].Parent().StringID()
+		info, haveInfo := bisectInfo[ID]
+		correct := Y(info.correct)
+		if !haveInfo {
+			correct = "TODO"
+		}
+		rows = append(rows, []string{
+			ID, // ID
+			fmt.Sprintf("%v/bug?id=%v", appURL(c), ID), // Bug link
+			externalLink(c, textLog, job.Log),          // Bisect log
+			startCommit,                                // Start commit
+			skip,                                       // Skip
+			fmt.Sprintf("%v", len(job.Commits)),        // Commits
+			correct,
+			Y(info.hardToReproduce),
+			Y(info.multipleCrashes),
+			Y(info.unrealtedCrashes),
+			Y(info.skipInterfere),
+			Y(info.disabledConfig),
+			commit,                         // Commit
+			title,                          // Crash title
+			job.CrashTitle,                 // Final crash
+			strings.Join(allCrashes, ", "), // Other crashes
+		})
+		if !haveInfo {
+			continue
+		}
+		if info.correct && startCommit == "-" {
+			continue
+		}
+		if startCommit == "-" {
+			startCommit = "v4.1"
+		}
+		bucketIdx, ok := bucketMap[startCommit]
+		if !ok {
+			return fmt.Errorf("no bucket for commit %q", startCommit)
+		}
+		const total = numBuckets - 1
+		bucketTotal[total]++
+		bucketTotal[bucketIdx]++
+		if info.multipleCrashes {
+			bucketMulti[total]++
+			bucketMulti[bucketIdx]++
+		}
+		if info.correct {
+			bucketCorrect[total]++
+			bucketCorrect[bucketIdx]++
+		}
+		if info.hardToReproduce && !info.correct {
+			bucketFlaky[total]++
+			bucketFlaky[bucketIdx]++
+		}
+		if info.unrealtedCrashes && !info.correct {
+			bucketUnrelated[total]++
+			bucketUnrelated[bucketIdx]++
+		}
+		if info.skipInterfere && !info.correct {
+			bucketSkip[total]++
+			bucketSkip[bucketIdx]++
+		}
+		if info.disabledConfig && !info.correct {
+			bucketConfig[total]++
+			bucketConfig[bucketIdx]++
+		}
+	}
+	buf := new(bytes.Buffer)
+	for _, row := range rows {
+		for _, s := range row {
+			fmt.Fprintf(buf, "\"%v\"\t", s)
+		}
+		fmt.Fprintf(buf, "\n")
+	}
+	fmt.Fprintf(buf, "\n\n\n")
+	fmt.Fprintf(buf, "-")
+	for _, name := range buckets {
+		fmt.Fprintf(buf, "\t%v", name)
+	}
+	fmt.Fprintf(buf, "\n")
+	fmt.Fprintf(buf, "correct, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f",
+			float64(bucketCorrect[i])/float64(bucketTotal[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "correct")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%v", bucketCorrect[i])
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "multiple manifestations, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f", float64(bucketMulti[i])/float64(bucketTotal[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "failed due to racy/flaky, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f", float64(bucketFlaky[i])/float64(bucketTotal[i]-bucketCorrect[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "failed due to unrelated crashes, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f", float64(bucketUnrelated[i])/float64(bucketTotal[i]-bucketCorrect[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "failed due to skipped commits, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f", float64(bucketSkip[i])/float64(bucketTotal[i]-bucketCorrect[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	fmt.Fprintf(buf, "failed due to disabled configs, %%")
+	for i := range buckets {
+		fmt.Fprintf(buf, "\t%.2f", float64(bucketConfig[i])/float64(bucketTotal[i]-bucketCorrect[i])*100)
+	}
+	fmt.Fprintf(buf, "\n")
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(buf.Bytes())
+	return nil
 }
 
 // handleMain serves main page.
