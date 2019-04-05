@@ -53,10 +53,31 @@ func TestAccess(t *testing.T) {
 		url   string      // url at which this entity can be requested.
 	}
 	entities := []entity{
+		// Main pages.
 		{
-			// Main page.
-			level: config.AccessLevel,
-			url:   "/",
+			level: config.AccessPublic,
+			url:   "/access-public",
+		},
+		{
+			level: config.AccessPublic,
+			url:   "/access-public/fixed",
+		},
+		{
+			level: config.AccessUser,
+			url:   "/access-user",
+		},
+		{
+			level: config.AccessUser,
+			url:   "/access-user/fixed",
+		},
+
+		{
+			level: config.AccessAdmin,
+			url:   "/access-admin",
+		},
+		{
+			level: config.AccessAdmin,
+			url:   "/access-admin/fixed",
 		},
 		{
 			// Any references to namespace, reporting, links, etc.

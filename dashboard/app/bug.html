@@ -14,7 +14,7 @@ Page with details about a single bug.
 <body>
 	{{template "header" .Header}}
 
-	<b>[{{.Bug.Namespace}}] {{.Bug.Title}}</b><br>
+	<b>{{.Bug.Title}}</b><br>
 	Status: {{if .Bug.ExternalLink}}<a href="{{.Bug.ExternalLink}}">{{.Bug.Status}}</a>{{else}}{{.Bug.Status}}{{end}}<br>
 	Reported-by: {{.Bug.CreditEmail}}<br>
 	{{if .Bug.Commits}}
