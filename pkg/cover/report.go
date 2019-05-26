@@ -15,23 +15,27 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/syzkaller/pkg/hash"
+	//"github.com/google/syzkaller/pkg/hash"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/symbolizer"
 )
 
 type ReportGenerator struct {
-	vmlinux  string
-	srcDir   string
-	arch     string
-	symbols  []symbol
-	coverPCs []uint64
+	//vmlinux  string
+	src     string
+	arch    string
+	prefix  string
+	symbols []symbol
+	pcs     map[uint64][]symbolizer.Frame
+	//files map[string]uint64
+	//coverPCs []uint64
 }
 
 type symbol struct {
 	start uint64
 	end   uint64
-	name  string
+	//name  string
+	//pcs []symbolizer.Frame
 }
 
 type coverage struct {
@@ -39,209 +43,355 @@ type coverage struct {
 	covered bool
 }
 
-func MakeReportGenerator(vmlinux, srcDir, arch string) (*ReportGenerator, error) {
+func MakeReportGenerator(vmlinux, src, arch string) (*ReportGenerator, error) {
 	rg := &ReportGenerator{
-		vmlinux: vmlinux,
-		srcDir:  srcDir,
-		arch:    arch,
+		src:  src,
+		arch: arch,
+		pcs:  make(map[uint64][]symbolizer.Frame),
+		//files: make(map[string]uint64),
 	}
-	if err := rg.readSymbols(); err != nil {
+	errc := make(chan error)
+	go func() {
+		var err error
+		rg.symbols, err = readSymbols(vmlinux)
+		errc <- err
+	}()
+	frames, err := objdumpAndSymbolize(vmlinux, arch)
+	if err != nil {
 		return nil, err
 	}
-	if err := rg.readPCs(); err != nil {
+	if len(frames) == 0 {
+		return nil, fmt.Errorf("%v does not have debug info (set CONFIG_DEBUG_INFO=y)", vmlinux)
+	}
+	if err := <-errc; err != nil {
 		return nil, err
+	}
+	for _, frame := range frames {
+		if rg.prefix == "" {
+			rg.prefix = frame.File
+		} else {
+			rg.prefix = combinePrefix(rg.prefix, frame.File)
+			if rg.prefix == "" {
+				break
+			}
+		}
+	}
+	for _, frame := range frames {
+		rg.pcs[frame.PC] = append(rg.pcs[frame.PC], frame)
 	}
 	return rg, nil
+}
+
+type file struct {
+	lines       map[int]line
+	totalPCs    map[uint64]bool
+	coverPCs    map[uint64]bool
+	totalInline map[int]bool
+	coverInline map[int]bool
+}
+
+type line struct {
+	count         int
+	uncovered     bool
+	symbolCovered bool
 }
 
 func (rg *ReportGenerator) Do(w io.Writer, pcs []uint64) error {
 	if len(pcs) == 0 {
 		return fmt.Errorf("no coverage data available")
 	}
-	for i, pc := range pcs {
-		pcs[i] = PreviousInstructionPC(rg.arch, pc)
+	coveredPCs := make(map[uint64]bool)
+	symbols := make(map[uint64]bool)
+	files := make(map[string]*file)
+	for _, pc := range pcs {
+		pc = PreviousInstructionPC(rg.arch, pc)
+		symbols[rg.findSymbol(pc)] = true
+		frames, ok := rg.pcs[pc]
+		if !ok {
+			//fmt.Printf("pc=0x%x missing\n", pc)
+			continue
+		}
+		coveredPCs[pc] = true
+		for _, frame := range frames {
+			f := getFile(files, frame.File)
+			if base := filepath.Base(frame.File); base == "binfmt_script.c" {
+				fmt.Printf("%v line=%v COVERED\n", base, frame.Line)
+			}
+			ln := f.lines[frame.Line]
+			ln.count++
+			f.lines[frame.Line] = ln
+		}
 	}
-	covered, prefix, err := rg.symbolize(pcs)
-	if err != nil {
-		return err
+	for pc, frames := range rg.pcs {
+		covered := coveredPCs[pc]
+		for _, frame := range frames {
+			f := getFile(files, frame.File)
+			if base := filepath.Base(frame.File); base == "binfmt_script.c" {
+				fmt.Printf("%v inline=%v line=%v pc 0x%x covered=%v\n", base, frame.Inline, frame.Line, pc, covered)
+			}
+			if frame.Inline {
+				f.totalInline[frame.Line] = true
+				if covered {
+					f.coverInline[frame.Line] = true
+				}
+			} else {
+				f.totalPCs[pc] = true
+				if covered {
+					f.coverPCs[pc] = true
+				}
+			}
+			if !covered && frame.Top {
+				ln := f.lines[frame.Line]
+				ln.uncovered = true
+				ln.symbolCovered = symbols[rg.findSymbol(pc)]
+				f.lines[frame.Line] = ln
+			}
+		}
 	}
-	if len(covered) == 0 {
-		return fmt.Errorf("'%s' does not have debug info (set CONFIG_DEBUG_INFO=y)", rg.vmlinux)
-	}
-	uncoveredPCs := rg.uncoveredPcsInFuncs(pcs)
-	uncovered, prefix2, err := rg.symbolize(uncoveredPCs)
-	if err != nil {
-		return err
-	}
-	if len(uncoveredPCs) != 0 {
-		prefix = combinePrefix(prefix, prefix2)
-	}
-	return rg.generate(w, prefix, covered, uncovered)
+	return rg.generate(w, files)
 }
 
-func (rg *ReportGenerator) generate(w io.Writer, prefix string, covered, uncovered []symbolizer.Frame) error {
-	var d templateData
-	for f, covered := range fileSet(covered, uncovered) {
-		remain := filepath.Clean(strings.TrimPrefix(f, prefix))
-		if rg.srcDir != "" && !strings.HasPrefix(remain, rg.srcDir) {
-			f = filepath.Join(rg.srcDir, remain)
+func getFile(files map[string]*file, name string) *file {
+	f := files[name]
+	if f == nil {
+		f = &file{
+			lines:       make(map[int]line),
+			totalPCs:    make(map[uint64]bool),
+			coverPCs:    make(map[uint64]bool),
+			totalInline: make(map[int]bool),
+			coverInline: make(map[int]bool),
 		}
-		lines, err := parseFile(f)
+		files[name] = f
+	}
+	return f
+}
+
+func (rg *ReportGenerator) generate(w io.Writer, files map[string]*file) error {
+	d := &templateData{
+		Root: new(templateDir),
+	}
+	for fname, file := range files {
+		remain := filepath.Clean(strings.TrimPrefix(fname, rg.prefix))
+		if rg.src != "" && !strings.HasPrefix(remain, rg.src) {
+			fname = filepath.Join(rg.src, remain)
+		}
+		pos := d.Root
+		path := ""
+		for {
+			if path != "" {
+				path += "/"
+			}
+			sep := strings.IndexByte(remain, filepath.Separator)
+			if sep == -1 {
+				path += remain
+				break
+			}
+			dir := remain[:sep]
+			path += dir
+			if pos.Dirs == nil {
+				pos.Dirs = make(map[string]*templateDir)
+			}
+			if pos.Dirs[dir] == nil {
+				pos.Dirs[dir] = &templateDir{
+					Path: path,
+					Name: dir,
+				}
+			}
+			pos = pos.Dirs[dir]
+			remain = remain[sep+1:]
+		}
+		f := &templateFile{
+			Path:    path,
+			Name:    remain,
+			Total:   len(file.totalPCs) + len(file.totalInline),
+			Covered: len(file.coverPCs) + len(file.coverInline),
+		}
+		if f.Total == 0 {
+			return fmt.Errorf("%v: file does not have any coverage", fname)
+		}
+		pos.Files = append(pos.Files, f)
+		if len(file.lines) == 0 || f.Covered == 0 {
+			continue
+		}
+		lines, err := parseFile(fname)
 		if err != nil {
 			return err
 		}
-		coverage := 0
 		var buf bytes.Buffer
 		for i, ln := range lines {
-			if len(covered) > 0 && covered[0].line == i+1 {
-				if covered[0].covered {
-					buf.Write([]byte("<span id='covered'>"))
-					buf.Write(ln)
-					buf.Write([]byte("</span> /*covered*/\n"))
-					coverage++
+			cov, ok := file.lines[i+1]
+			class, count := "", "     "
+			if ok {
+				if cov.count > 0 {
+					count = fmt.Sprintf("% 5v", cov.count)
+					class = "covered"
+					if cov.uncovered {
+						class = "both"
+					}
 				} else {
-					buf.Write([]byte("<span id='uncovered'>"))
-					buf.Write(ln)
-					buf.Write([]byte("</span>\n"))
+					class = "weak-uncovered"
+					if cov.symbolCovered {
+						class = "uncovered"
+					}
 				}
-				covered = covered[1:]
-			} else {
+			}
+			buf.WriteString(fmt.Sprintf("<span class='count'>%v</span>", count))
+			if class == "" {
+				buf.WriteByte(' ')
 				buf.Write(ln)
-				buf.Write([]byte{'\n'})
+				buf.WriteByte('\n')
+			} else {
+				buf.WriteString(fmt.Sprintf("<span class='%v'> ", class))
+				buf.Write(ln)
+				buf.WriteString("</span>\n")
 			}
 		}
-		f = filepath.Clean(remain)
-		d.Files = append(d.Files, &templateFile{
-			ID:       hash.String([]byte(f)),
-			Name:     f,
-			Body:     template.HTML(buf.String()),
-			Coverage: coverage,
-		})
+		d.Contents = append(d.Contents, template.HTML(buf.String()))
+		f.Index = len(d.Contents) - 1
 	}
-	sort.Sort(templateFileArray(d.Files))
+	processDir(d.Root)
 	return coverTemplate.Execute(w, d)
 }
 
-func (rg *ReportGenerator) readSymbols() error {
-	symbols, err := symbolizer.ReadSymbols(rg.vmlinux)
-	if err != nil {
-		return fmt.Errorf("failed to run nm on %v: %v", rg.vmlinux, err)
+func processDir(dir *templateDir) {
+	for len(dir.Dirs) == 1 && len(dir.Files) == 0 {
+		for _, child := range dir.Dirs {
+			dir.Name += "/" + child.Name
+			dir.Files = child.Files
+			dir.Dirs = child.Dirs
+		}
 	}
-	for name, ss := range symbols {
+	sort.Slice(dir.Files, func(i, j int) bool {
+		return dir.Files[i].Name < dir.Files[j].Name
+	})
+	for _, f := range dir.Files {
+		dir.Total += f.Total
+		dir.Covered += f.Covered
+		f.Percent = float64(f.Covered) / float64(f.Total) * 100
+	}
+	for _, child := range dir.Dirs {
+		processDir(child)
+		dir.Total += child.Total
+		dir.Covered += child.Covered
+	}
+	dir.Percent = float64(dir.Covered) / float64(dir.Total) * 100
+	if dir.Covered == 0 {
+		dir.Dirs = nil
+		dir.Files = nil
+	}
+}
+
+func (rg *ReportGenerator) findSymbol(pc uint64) uint64 {
+	idx := sort.Search(len(rg.symbols), func(i int) bool {
+		return pc < rg.symbols[i].end
+	})
+	if idx == len(rg.symbols) {
+		return 0
+	}
+	s := rg.symbols[idx]
+	if pc < s.start || pc > s.end {
+		return 0
+	}
+	return s.start
+}
+
+func readSymbols(obj string) ([]symbol, error) {
+	raw, err := symbolizer.ReadSymbols(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to run nm on %v: %v", obj, err)
+	}
+	var symbols []symbol
+	for _, ss := range raw {
 		for _, s := range ss {
-			rg.symbols = append(rg.symbols, symbol{
+			symbols = append(symbols, symbol{
 				start: s.Addr,
 				end:   s.Addr + uint64(s.Size),
-				name:  name,
+				//name:  name,
 			})
 		}
 	}
-	sort.Slice(rg.symbols, func(i, j int) bool {
-		return rg.symbols[i].start < rg.symbols[j].start
+	sort.Slice(symbols, func(i, j int) bool {
+		return symbols[i].start < symbols[j].start
 	})
-	return nil
+	return symbols, nil
 }
 
-// readPCs collects list of PCs of __sanitizer_cov_trace_pc calls in the kernel.
-func (rg *ReportGenerator) readPCs() error {
-	cmd := osutil.Command("objdump", "-d", "--no-show-raw-insn", rg.vmlinux)
+// objdumpAndSymbolize collects list of PCs of __sanitizer_cov_trace_pc calls
+// in the kernel and symbolizes them.
+func objdumpAndSymbolize(obj, arch string) ([]symbolizer.Frame, error) {
+	errc := make(chan error)
+	pcchan := make(chan []uint64, 10)
+	var frames []symbolizer.Frame
+	go func() {
+		symb := symbolizer.NewSymbolizer()
+		defer symb.Close()
+		var err error
+		for pcs := range pcchan {
+			if err != nil {
+				continue
+			}
+			frames1, err1 := symb.SymbolizeArray(obj, pcs)
+			if err1 != nil {
+				err = fmt.Errorf("failed to symbolize: %v", err1)
+			}
+			frames = append(frames, frames1...)
+		}
+		errc <- err
+	}()
+	cmd := osutil.Command("objdump", "-d", "--no-show-raw-insn", obj)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stdout.Close()
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to run objdump on %v: %v", rg.vmlinux, err)
+		return nil, fmt.Errorf("failed to run objdump on %v: %v", obj, err)
 	}
 	defer cmd.Wait()
 	s := bufio.NewScanner(stdout)
-	callInsnS, traceFuncS := archCallInsn(rg.arch)
+	callInsnS, traceFuncS := archCallInsn(arch)
 	callInsn, traceFunc := []byte(callInsnS), []byte(traceFuncS)
+	var pcs []uint64
 	for s.Scan() {
 		ln := s.Bytes()
 		if pos := bytes.Index(ln, callInsn); pos == -1 {
+			//fmt.Printf("LINE=%s (no call)\n", ln)
 			continue
 		} else if !bytes.Contains(ln[pos:], traceFunc) {
+			//fmt.Printf("LINE=%s (no func)\n", ln)
 			continue
+		}
+		for len(ln) != 0 && ln[0] == ' ' {
+			ln = ln[1:]
 		}
 		colon := bytes.IndexByte(ln, ':')
 		if colon == -1 {
+			//fmt.Printf("LINE=%s (no colon)\n", ln)
 			continue
 		}
 		pc, err := strconv.ParseUint(string(ln[:colon]), 16, 64)
 		if err != nil {
+			//fmt.Printf("LINE=%s (no int %v)\n", ln, err)
 			continue
 		}
-		rg.coverPCs = append(rg.coverPCs, pc)
+		//fmt.Printf("PC=0x%x LINE=%s\n", pc, ln)
+		pcs = append(pcs, pc)
+		if len(pcs) == 100 {
+			pcchan <- pcs
+			pcs = nil
+		}
 	}
+	if len(pcs) != 0 {
+		pcchan <- pcs
+	}
+	close(pcchan)
 	if err := s.Err(); err != nil {
-		return fmt.Errorf("failed to run objdump output: %v", err)
+		return nil, fmt.Errorf("failed to run objdump output: %v", err)
 	}
-	sort.Slice(rg.coverPCs, func(i, j int) bool {
-		return rg.coverPCs[i] < rg.coverPCs[j]
-	})
-	return nil
-}
-
-// uncoveredPcsInFuncs returns uncovered PCs with __sanitizer_cov_trace_pc calls in functions containing pcs.
-func (rg *ReportGenerator) uncoveredPcsInFuncs(pcs []uint64) []uint64 {
-	handledFuncs := make(map[uint64]bool)
-	uncovered := make(map[uint64]bool)
-	for _, pc := range pcs {
-		idx := sort.Search(len(rg.symbols), func(i int) bool {
-			return pc < rg.symbols[i].end
-		})
-		if idx == len(rg.symbols) {
-			continue
-		}
-		s := rg.symbols[idx]
-		if pc < s.start || pc > s.end {
-			continue
-		}
-		if !handledFuncs[s.start] {
-			handledFuncs[s.start] = true
-			startPC := sort.Search(len(rg.coverPCs), func(i int) bool {
-				return s.start <= rg.coverPCs[i]
-			})
-			endPC := sort.Search(len(rg.coverPCs), func(i int) bool {
-				return s.end < rg.coverPCs[i]
-			})
-			for _, pc1 := range rg.coverPCs[startPC:endPC] {
-				uncovered[pc1] = true
-			}
-		}
-		delete(uncovered, pc)
+	if err := <-errc; err != nil {
+		return nil, err
 	}
-	uncoveredPCs := make([]uint64, 0, len(uncovered))
-	for pc := range uncovered {
-		uncoveredPCs = append(uncoveredPCs, pc)
-	}
-	return uncoveredPCs
-}
-
-func (rg *ReportGenerator) symbolize(pcs []uint64) ([]symbolizer.Frame, string, error) {
-	symb := symbolizer.NewSymbolizer()
-	defer symb.Close()
-
-	frames, err := symb.SymbolizeArray(rg.vmlinux, pcs)
-	if err != nil {
-		return nil, "", err
-	}
-
-	prefix := ""
-	for i := range frames {
-		frame := &frames[i]
-		frame.PC--
-		if prefix == "" {
-			prefix = frame.File
-		} else {
-			prefix = combinePrefix(prefix, frame.File)
-			if prefix == "" {
-				break
-			}
-		}
-	}
-	return frames, prefix, nil
+	return frames, nil
 }
 
 func combinePrefix(prefix, prefix2 string) string {
@@ -273,41 +423,6 @@ func parseFile(fn string) ([][]byte, error) {
 		lines = append(lines, data)
 	}
 	return lines, nil
-}
-
-func fileSet(covered, uncovered []symbolizer.Frame) map[string][]coverage {
-	files := make(map[string]map[int]bool)
-	funcs := make(map[string]bool)
-	for _, frame := range covered {
-		if files[frame.File] == nil {
-			files[frame.File] = make(map[int]bool)
-		}
-		files[frame.File][frame.Line] = true
-		funcs[frame.Func] = true
-	}
-	for _, frame := range uncovered {
-		if !funcs[frame.Func] {
-			continue
-		}
-		if files[frame.File] == nil {
-			files[frame.File] = make(map[int]bool)
-		}
-		if !files[frame.File][frame.Line] {
-			files[frame.File][frame.Line] = false
-		}
-	}
-	res := make(map[string][]coverage)
-	for f, lines := range files {
-		sorted := make([]coverage, 0, len(lines))
-		for ln, covered := range lines {
-			sorted = append(sorted, coverage{ln, covered})
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].line < sorted[j].line
-		})
-		res[f] = sorted
-	}
-	return res
 }
 
 func PreviousInstructionPC(arch string, pc uint64) uint64 {
@@ -353,34 +468,28 @@ func archCallInsn(arch string) (string, string) {
 }
 
 type templateData struct {
-	Files []*templateFile
+	Root     *templateDir
+	Contents []template.HTML
+}
+
+type templateDir struct {
+	Name    string
+	Path    string
+	Total   int
+	Covered int
+	Percent float64
+	Dirs    map[string]*templateDir
+	Files   []*templateFile
 }
 
 type templateFile struct {
-	ID       string
-	Name     string
-	Body     template.HTML
-	Coverage int
+	Index   int
+	Name    string
+	Path    string
+	Total   int
+	Covered int
+	Percent float64
 }
-
-type templateFileArray []*templateFile
-
-func (a templateFileArray) Len() int { return len(a) }
-func (a templateFileArray) Less(i, j int) bool {
-	n1 := a[i].Name
-	n2 := a[j].Name
-	// Move include files to the bottom.
-	if len(n1) != 0 && len(n2) != 0 {
-		if n1[0] != '.' && n2[0] == '.' {
-			return true
-		}
-		if n1[0] == '.' && n2[0] != '.' {
-			return false
-		}
-	}
-	return n1 < n2
-}
-func (a templateFileArray) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 
 var coverTemplate = template.Must(template.New("").Parse(`
 <!DOCTYPE html>
@@ -388,76 +497,157 @@ var coverTemplate = template.Must(template.New("").Parse(`
 	<head>
 		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 		<style>
-			body {
-				background: white;
+			.file {
+				display: none;
+				margin: 0;
+				padding: 0;
 			}
-			#topbar {
-				background: black;
+			.count {
+				font-weight: bold;
+				border-right: 1px solid #ddd;
+				padding-right: 4px;
+			}
+			.split {
+				height: 100%;
 				position: fixed;
-				top: 0; left: 0; right: 0;
-				height: 42px;
-				border-bottom: 1px solid rgb(70, 70, 70);
+				z-index: 1;
+				top: 0;
+				overflow-x: hidden;
 			}
-			#nav {
-				float: left;
-				margin-left: 10px;
-				margin-top: 10px;
+			.tree {
+				left: 0;
+				width: 24%;
 			}
-			#content {
+			.left {
+				border-left: 1px solid #444;
+				right: 0;
+				width: 76%;
 				font-family: 'Courier New', Courier, monospace;
-				color: rgb(70, 70, 70);
-				margin-top: 50px;
+				color: rgb(80, 80, 80);
 			}
-			#covered {
+			.cover {
+				float: right;
+				width: 120px;
+				padding-right: 4px;
+			}
+			.cover-right {
+				float: right;
+			}
+			.covered {
 				color: rgb(0, 0, 0);
 				font-weight: bold;
 			}
-			#uncovered {
+			.uncovered {
 				color: rgb(255, 0, 0);
 				font-weight: bold;
+			}
+			.weak-uncovered {
+				color: rgb(200, 0, 0);
+			}
+			.both {
+				color: rgb(200, 100, 0);
+				font-weight: bold;
+			}
+			ul, #dir_list {
+				list-style-type: none;
+				padding-left: 16px;
+			}
+			#dir_list {
+				margin: 0;
+				padding: 0;
+			}
+			.hover:hover {
+				background: #ffff99;
+			}
+			.caret {
+				cursor: pointer;
+				user-select: none;
+			}
+			.caret::before {
+				color: black;
+				content: "\25B6";
+				display: inline-block;
+				margin-right: 3px;
+			}
+			.caret-down::before {
+				transform: rotate(90deg);
+			}
+			.nested {
+				display: none;
+			}
+			.active {
+				display: block;
 			}
 		</style>
 	</head>
 	<body>
-		<div id="topbar">
-			<div id="nav">
-				<select id="files">
-				{{range $f := .Files}}
-				<option value="{{$f.ID}}">{{$f.Name}} ({{$f.Coverage}})</option>
-				{{end}}
-				</select>
-			</div>
+		<div class="split tree">
+			<ul id="dir_list">
+				{{template "dir" .Root}}
+			</ul>
 		</div>
-		<div id="content">
-		{{range $i, $f := .Files}}
-		<pre class="file" id="{{$f.ID}}" {{if $i}}style="display: none;"{{end}}>{{$f.Body}}</pre>{{end}}
+		<div id="left_pane" class="split left">
+			{{range $i, $f := .Contents}}
+				<pre class="file" id="contents_{{$i}}">{{$f}}</pre>
+			{{end}}
 		</div>
 	</body>
 	<script>
 	(function() {
-		var files = document.getElementById('files');
-		var visible = document.getElementById(files.value);
+		var toggler = document.getElementsByClassName("caret");
+		for (var i = 0; i < toggler.length; i++) {
+			toggler[i].addEventListener("click", function() {
+				this.parentElement.querySelector(".nested").classList.toggle("active");
+				this.classList.toggle("caret-down");
+			});
+		}
 		if (window.location.hash) {
-			var hash = window.location.hash.substring(1);
-			for (var i = 0; i < files.options.length; i++) {
-				if (files.options[i].value === hash) {
-					files.selectedIndex = i;
-					visible.style.display = 'none';
-					visible = document.getElementById(files.value);
-					visible.style.display = 'block';
-					break;
-				}
+			var hash = decodeURIComponent(window.location.hash.substring(1)).split("/");
+			var path = "path";
+			for (var i = 0; i < hash.length; i++) {
+				path += "/" + hash[i];
+				var elem = document.getElementById(path);
+				if (elem)
+					elem.click();
 			}
 		}
-		files.addEventListener('change', onChange, false);
-		function onChange() {
-			visible.style.display = 'none';
-			visible = document.getElementById(files.value);
-			visible.style.display = 'block';
-			window.scrollTo(0, 0);
-			window.location.hash = files.value;
-		}
 	})();
+	var visible;
+	function onFileClick(index) {
+		if (visible)
+			visible.style.display = 'none';
+		visible = document.getElementById("contents_" + index);
+		visible.style.display = 'block';
+		document.getElementById("left_pane").scrollTo(0, 0);
+	}
 	</script>
 </html>
+
+{{define "dir"}}
+	{{range $dir := .Dirs}}
+		<li>
+			<span id="path/{{$dir.Path}}" class="caret hover">
+				{{$dir.Name}}
+				<span class="cover hover">
+					{{if $dir.Covered}}{{printf "%.1f" $dir.Percent}}%{{else}}---{{end}}
+					<span class="cover-right">of {{$dir.Total}}</span>
+				</span>
+			</span>
+			<ul class="nested">
+				{{template "dir" $dir}}
+			</ul>
+		</li>
+	{{end}}
+	{{range $file := .Files}}
+		<li><span class="hover">
+			{{if $file.Covered}}
+				<a href="#{{$file.Path}}" id="path/{{$file.Path}}" onclick="onFileClick({{$file.Index}})">
+					{{$file.Name}}<span class="cover hover">{{printf "%.1f" $file.Percent}}%<span class="cover-right">of {{$file.Total}}</span></span>
+				</a>
+			{{else}}
+					{{$file.Name}}<span class="cover hover">---<span class="cover-right">of {{$file.Total}}</span></span>
+			{{end}}
+		</span></li>
+	{{end}}
+{{end}}
 `))

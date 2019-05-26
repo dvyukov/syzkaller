@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type Frame struct {
 	Func   string
 	File   string
 	Line   int
+	Top    bool
 	Inline bool
 }
 
@@ -70,6 +72,7 @@ func (s *Symbolizer) getSubprocess(bin string) (*subprocess, error) {
 	if err != nil {
 		return nil, err
 	}
+	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stdin.Close()
@@ -102,9 +105,10 @@ func symbolize(input *bufio.Writer, scanner *bufio.Scanner, pcs []uint64) ([]Fra
 		defer func() {
 			done <- err
 		}()
+
 		if !scanner.Scan() {
 			if err = scanner.Err(); err == nil {
-				err = io.EOF
+				err = io.ErrUnexpectedEOF
 			}
 			return
 		}
@@ -187,6 +191,7 @@ func parse(s *bufio.Scanner) ([]Frame, error) {
 		return nil, err
 	}
 	if len(frames) != 0 {
+		frames[0].Top = true
 		frames[len(frames)-1].Inline = false
 	}
 	return frames, nil

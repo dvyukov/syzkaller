@@ -1444,3 +1444,5 @@ void debug_dump_data(const char* data, int length)
 	}
 	debug("\n");
 }
+
+extern "C" void __sanitizer_cov_trace_pc() {}

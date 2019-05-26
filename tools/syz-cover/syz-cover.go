@@ -58,16 +58,16 @@ func main() {
 	}
 	pcs, err := readPCs(flag.Args())
 	if err != nil {
-		failf("%v", err)
+		failf("1: %v", err)
 	}
 	kernelObj := filepath.Join(*flagKernelObj, target.KernelObject)
 	rg, err := cover.MakeReportGenerator(kernelObj, *flagKernelSrc, *flagArch)
 	if err != nil {
-		failf("%v", err)
+		failf("2: %v", err)
 	}
 	buf := new(bytes.Buffer)
 	if err := rg.Do(buf, pcs); err != nil {
-		failf("%v", err)
+		failf("3: %v", err)
 	}
 	fn, err := osutil.TempFile("syz-cover")
 	if err != nil {
@@ -77,6 +77,7 @@ func main() {
 	if err := osutil.WriteFile(fn, buf.Bytes()); err != nil {
 		failf("%v", err)
 	}
+	fmt.Println(fn)
 	if err := exec.Command("xdg-open", fn).Start(); err != nil {
 		failf("failed to start browser: %v", err)
 	}
@@ -94,6 +95,7 @@ func readPCs(files []string) ([]uint64, error) {
 			if err != nil {
 				return nil, err
 			}
+			pc += 5
 			pcs = append(pcs, pc)
 		}
 	}

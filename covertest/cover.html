@@ -1,0 +1,137 @@
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+ul, #myUL {
+  list-style-type: none;
+}
+
+#myUL {
+  margin: 0;
+  padding: 0;
+}
+
+.caret {
+  cursor: pointer;
+  user-select: none;
+}
+
+.caret::before {
+  content: "\25B6";
+  color: black;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.caret-down::before {
+  transform: rotate(90deg);  
+}
+
+.nested {
+  display: none;
+}
+
+.active {
+  display: block;
+}
+
+
+.split {
+	/*margin: 20px 5px;*/
+	/*border-collapse: collapse;*/
+
+  height: 100%;
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  overflow-x: hidden;
+  /*padding-top: 20px;*/
+}
+
+.left {
+  left: 0;
+  width: 30%;
+}
+
+.right {
+	border-left: 1px solid #ccc;
+  right: 0;
+  width: 70%;
+}
+
+</style>
+</head>
+<body>
+
+<div class="split left">
+<ul id="myUL">
+  <li><span class="caret">Beverages</span>
+    <ul class="nested">
+      <li><a href="#" class="file">Water</a></li>
+      <li class="file">Coffee</li>
+      <li><span class="caret">Tea</span>
+        <ul class="nested">
+          <li>Black Tea</li>
+          <li>White Tea</li>
+          <li><span class="caret">Green Tea</span>
+            <ul class="nested">
+              <li>Sencha</li>
+              <li>Gyokuro</li>
+              <li>Matcha</li>
+              <li>Pi Lo Chun</li>
+            </ul>
+          </li>
+        </ul>
+      </li>  
+    </ul>
+  </li>
+  <li><span class="caret">Beverages</span>
+    <ul class="nested">
+      <li>Water</li>
+      <li>Coffee</li>
+      <li><span class="caret">Tea</span>
+        <ul class="nested">
+          <li>Black Tea</li>
+          <li>White Tea</li>
+          <li><span class="caret">Green Tea</span>
+            <ul class="nested">
+              <li>Sencha</li>
+              <li>Gyokuro</li>
+              <li>Matcha</li>
+              <li>Pi Lo Chun</li>
+            </ul>
+          </li>
+        </ul>
+      </li>  
+    </ul>
+  </li>
+</ul>
+</div>
+
+<div id="file-cover" class="split right">
+    <p>RIGHT PANE</p>
+</div>
+
+
+<script>
+var toggler = document.getElementsByClassName("caret");
+for (i = 0; i < toggler.length; i++) {
+  toggler[i].addEventListener("click", function() {
+    this.parentElement.querySelector(".nested").classList.toggle("active");
+    this.classList.toggle("caret-down");
+  });
+}
+
+var file_pane = document.getElementById("file-cover")
+var files = document.getElementsByClassName("file");
+for (i = 0; i < files.length; i++) {
+  files[i].addEventListener("click", function() {
+    alert("CLICK");
+    /*file_pane.Text = "CLICK";*/
+  });
+}
+</script>
+
+</body>
+</html>
+
