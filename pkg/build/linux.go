@@ -16,7 +16,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
-
+	"debug/elf"
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"io"
+)
 	"github.com/google/syzkaller/pkg/osutil"
 )
 
@@ -72,7 +77,7 @@ func (linux) buildKernel(targetArch, kernelDir, outputDir, compiler string, conf
 	return nil
 }
 
-func (linux) createImage(targetArch, vmType, kernelDir, outputDir, userspaceDir, cmdlineFile, sysctlFile string) error {
+func (linux) createImage(targetArch, vmType, kernelDir, outputDir, userspaceDir, cmdlineFile, sysctlFile string) (string, error) {
 	tempDir, err := ioutil.TempDir("", "syz-build")
 	if err != nil {
 		return err
@@ -140,4 +145,28 @@ func runMake(kernelDir string, args ...string) error {
 	)
 	_, err := osutil.Run(time.Hour, cmd)
 	return err
+}
+
+func elfBinarySignature(bin string) (string, error) {
+	f, err := os.Open(bin)
+	if err != nil {
+		return fmt.Errorf("failed to open binary for signature: %v", err)
+	}
+	ef, err := elf.NewFile(f)
+	if err != nil {
+		return fmt.Errorf("failed to open elf binary: %v", err)
+	}
+	hasher := sha1.New()
+	for _, sec := range ef.Sections {
+		// Hash allocated sections (e.g. no debug info as it's not allocated)
+		// with file data (e.g. no bss). We also ignore .notes section as it
+		// contains some small changing binary blob that seems irrelevant.
+		// It's unclear if it's better to check NOTE type,
+		// or ".notes" name or !PROGBITS type.
+		if sec.Flags & elf.SHF_ALLOC == 0 || sec.Type == elf.SHT_NOBITS || sec.Type == elf.SHT_NOTE {
+			continue
+		}
+		io.Copy(hasher, sec.Open())
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
 }

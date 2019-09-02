@@ -26,23 +26,28 @@ import (
 //  - kernel.config: actual kernel config used during build
 //  - obj/: directory with kernel object files (this should match KernelObject
 //    specified in sys/targets, e.g. vmlinux for linux)
+// The returned string is a kernel ID that will be the same for kernels with the
+// same runtime behavior, and different for kernels with different runtime
+// behavior. Binary equal builds, or builds that differ only in e.g. debug info,
+// have the same ID. The ID may be empty if OS implementation does not have
+// a way to calculate such IDs.
 func Image(targetOS, targetArch, vmType, kernelDir, outputDir, compiler, userspaceDir,
-	cmdlineFile, sysctlFile string, config []byte) error {
+	cmdlineFile, sysctlFile string, config []byte) (string, error) {
 	builder, err := getBuilder(targetOS, targetArch, vmType)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := osutil.MkdirAll(filepath.Join(outputDir, "obj")); err != nil {
-		return err
+		return "", err
 	}
 	if len(config) != 0 {
 		// Write kernel config early, so that it's captured on build failures.
 		if err := osutil.WriteFile(filepath.Join(outputDir, "kernel.config"), config); err != nil {
-			return fmt.Errorf("failed to write config file: %v", err)
+			return "", fmt.Errorf("failed to write config file: %v", err)
 		}
 	}
-	err = builder.build(targetArch, vmType, kernelDir, outputDir, compiler, userspaceDir, cmdlineFile, sysctlFile, config)
-	return extractRootCause(err)
+	buildID, err := builder.build(targetArch, vmType, kernelDir, outputDir, compiler, userspaceDir, cmdlineFile, sysctlFile, config)
+	return buildID, extractRootCause(err)
 }
 
 func Clean(targetOS, targetArch, vmType, kernelDir string) error {
@@ -59,7 +64,7 @@ type KernelBuildError struct {
 
 type builder interface {
 	build(targetArch, vmType, kernelDir, outputDir, compiler, userspaceDir,
-		cmdlineFile, sysctlFile string, config []byte) error
+		cmdlineFile, sysctlFile string, config []byte) (string, error)
 	clean(kernelDir, targetArch string) error
 }
 
