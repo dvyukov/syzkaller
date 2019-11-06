@@ -90,6 +90,7 @@ func TestBisectCause(t *testing.T) {
 		Error: []byte("bisect error 3"),
 	}
 	c.expectOK(c.client2.JobDone(done))
+	c.expectNoEmail()
 
 	// BisectCause #2
 	pollResp = c.client2.pollJobs(build.Manager)
@@ -540,6 +541,109 @@ syzbot can test patches for this bug, for details see:
 https://goo.gl/tpsmEJ#testing-patches`,
 			extBugID2, crashLogLink, kernelConfigLink, reproSyzLink, reproCLink, bisectLogLink))
 	}
+}
+
+func TestBisectWrong(t *testing.T) {
+	c := NewCtx(t)
+	defer c.Close()
+
+	build := testBuild(1)
+	c.client2.UploadBuild(build)
+	for i := 0; i < 4; i++ {
+		var flags dashapi.JobDoneFlags
+		switch i {
+		case 0:
+		case 1:
+			flags = dashapi.BisectResultMerge
+		case 2:
+			flags = dashapi.BisectResultNoop
+		case 3:
+			flags = dashapi.BisectResultMerge | dashapi.BisectResultNoop
+		default:
+			t.Fatalf("assign flags")
+		}
+		t.Logf("iteration %v: flags=%v", i, flags)
+		
+		crash := testCrashWithRepro(build, i)
+		c.client2.ReportCrash(crash)
+		c.client2.pollEmailBug()
+
+		{
+		pollResp := c.client2.pollJobs(build.Manager)
+		done := &dashapi.JobDoneReq{
+			ID:    pollResp.ID,
+			Flags: flags,
+			Build: *build,
+			Log:   []byte("bisect log"),
+			Commits: []dashapi.Commit{
+				{
+					Hash:       "111111111111111111111111",
+					Title:      "kernel: break build",
+					Author:     "hacker@kernel.org",
+					AuthorName: "Hacker Kernelov",
+					CC:         []string{"reviewer1@kernel.org", "reviewer2@kernel.org"},
+					Date:       time.Date(2000, 2, 9, 4, 5, 6, 7, time.UTC),
+				},
+			},
+		}
+		done.Build.ID = pollResp.ID
+		c.expectOK(c.client2.JobDone(done))
+		if i == 0 {
+			msg := c.pollEmailBug()
+	//t.Logf("REPLY: %s", msg.Body)
+			c.expectTrue(strings.Contains(msg.Body, fmt.Sprintf("syzbot has bisected this bug to:")))
+		} else {
+			c.expectNoEmail()
+		}
+		}
+
+		{
+			c.advanceTime(31 * 24 * time.Hour)
+			pollResp := c.client2.pollJobs(build.Manager)
+			done := &dashapi.JobDoneReq{
+				ID:          pollResp.ID,
+			Flags: flags,
+				Build:       *build,
+				Log:         []byte("bisectfix log 4"),
+				CrashTitle:  "bisectfix crash title 4",
+				CrashLog:    []byte("bisectfix crash log 4"),
+				CrashReport: []byte("bisectfix crash report 4"),
+				Commits: []dashapi.Commit{
+					{
+						Hash:       "46e65cb4a0448942ec316b24d60446bbd5cc7827",
+						Title:      "kernel: add a fix",
+						Author:     "author@kernel.org",
+						AuthorName: "Author Kernelov",
+						Date: time.Date(2000, 2, 9, 4, 5, 6, 7, time.UTC),
+					},
+				},
+			}
+			done.Build.ID = pollResp.ID
+			c.expectOK(c.client2.JobDone(done))
+			msg := c.pollEmailBug()
+			c.expectTrue(strings.Contains(msg.Body, "syzbot suspects this bug was fixed by commit:"))
+		}
+		//c.incomingEmail(msg.Sender, "#syz invalid")
+		//c.expectNoEmail()
+
+
+		{
+			// Auto-upstreamming.
+			c.advanceTime(31 * 24 * time.Hour)
+			msg := c.pollEmailBug()
+	//t.Logf("REPLY: %s", msg.Body)
+			c.expectTrue(strings.Contains(msg.Body, "Sending this report upstream"))
+			msg = c.pollEmailBug()
+	//t.Logf("REPLY: %s", msg.Body)
+			c.expectTrue(strings.Contains(msg.Body, "syzbot found the following crash on:"))
+			c.expectTrue(strings.Contains(msg.Body, "The bug was bisected to:"))
+		}
+		c.expectNoEmail()
+
+
+	}
+
+
 }
 
 func TestBisectCauseAncient(t *testing.T) {

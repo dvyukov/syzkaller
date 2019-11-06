@@ -183,6 +183,7 @@ type Job struct {
 	BuildID     string
 	Log         int64 // reference to Log text entity
 	Error       int64 // reference to Error text entity, if set job failed
+	Flags       JobFlags
 
 	Reported bool // have we reported result back to user?
 }
@@ -193,6 +194,14 @@ const (
 	JobTestPatch JobType = iota
 	JobBisectCause
 	JobBisectFix
+)
+
+type JobFlags int64
+
+const (
+	// Parallel to dashapi.JobDoneFlags, see comments there.
+	BisectResultMerge JobFlags = 1 << iota
+	BisectResultNoop
 )
 
 // Text holds text blobs (crash logs, reports, reproducers, etc).
