@@ -11,22 +11,21 @@ import (
 
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/feature"
 	"github.com/google/syzkaller/sys/linux"
 )
 
-func init() {
-	checkFeature[FeatureCoverage] = checkCoverage
-	checkFeature[FeatureComparisons] = checkComparisons
-	checkFeature[FeatureExtraCoverage] = checkExtraCoverage
-	checkFeature[FeatureSandboxSetuid] = unconditionallyEnabled
-	checkFeature[FeatureSandboxNamespace] = checkSandboxNamespace
-	checkFeature[FeatureSandboxAndroid] = checkSandboxAndroid
-	checkFeature[FeatureFault] = checkFault
-	checkFeature[FeatureLeak] = checkLeak
-	checkFeature[FeatureNetInjection] = checkNetInjection
-	checkFeature[FeatureNetDevices] = unconditionallyEnabled
-	checkFeature[FeatureKCSAN] = checkKCSAN
-	checkFeature[FeatureDevlinkPCI] = checkDevlinkPCI
+var checkFeature = checkMap{
+	feature.Coverage:         checkCoverage,
+	feature.Comparisons:      checkComparisons,
+	feature.ExtraCoverage:    checkExtraCoverage,
+	feature.SandboxNamespace: checkSandboxNamespace,
+	feature.SandboxAndroid:   checkSandboxAndroid,
+	feature.Fault:            checkFault,
+	feature.Leak:             checkLeak,
+	feature.NetInjection:     checkNetInjection,
+	feature.KCSAN:            checkKCSAN,
+	feature.DevlinkPCI:       checkDevlinkPCI,
 }
 
 func checkCoverage() string {
@@ -43,14 +42,14 @@ func checkCoverage() string {
 }
 
 func checkComparisons() (reason string) {
-	return checkCoverageFeature(FeatureComparisons)
+	return checkCoverageFeature(feature.Comparisons)
 }
 
 func checkExtraCoverage() (reason string) {
-	return checkCoverageFeature(FeatureExtraCoverage)
+	return checkCoverageFeature(feature.ExtraCoverage)
 }
 
-func checkCoverageFeature(feature int) (reason string) {
+func checkCoverageFeature(feat feature.ID) (reason string) {
 	if reason = checkDebugFS(); reason != "" {
 		return reason
 	}
@@ -83,8 +82,8 @@ func checkCoverageFeature(feature int) (reason string) {
 			reason = fmt.Sprintf("munmap failed: %v", err)
 		}
 	}()
-	switch feature {
-	case FeatureComparisons:
+	switch feat {
+	case feature.Comparisons:
 		_, _, errno = syscall.Syscall(syscall.SYS_IOCTL,
 			uintptr(fd), linux.KCOV_ENABLE, linux.KCOV_TRACE_CMP)
 		if errno != 0 {
@@ -93,7 +92,7 @@ func checkCoverageFeature(feature int) (reason string) {
 			}
 			return fmt.Sprintf("ioctl(KCOV_TRACE_CMP) failed: %v", errno)
 		}
-	case FeatureExtraCoverage:
+	case feature.ExtraCoverage:
 		arg := KcovRemoteArg{
 			TraceMode:    uint32(linux.KCOV_TRACE_PC),
 			AreaSize:     uint32(coverSize * unsafe.Sizeof(uintptr(0))),

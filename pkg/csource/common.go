@@ -23,11 +23,6 @@ const (
 	freebsd = "freebsd"
 	openbsd = "openbsd"
 	netbsd  = "netbsd"
-
-	sandboxNone      = "none"
-	sandboxSetuid    = "setuid"
-	sandboxNamespace = "namespace"
-	sandboxAndroid   = "android"
 )
 
 func createCommonHeader(p, mmapProg *prog.Prog, replacements map[string]string, opts Options) ([]byte, error) {
@@ -74,6 +69,9 @@ func defineList(p, mmapProg *prog.Prog, opts Options) (defines []string) {
 			defines = append(defines, def)
 		}
 	}
+	for _, feat := range opts.Enabled() {
+		defines = append(defines, "SYZ_"+feat.MacroName)
+	}
 	for _, c := range p.Calls {
 		defines = append(defines, "__NR_"+c.Meta.CallName)
 	}
@@ -93,27 +91,7 @@ func commonDefines(p *prog.Prog, opts Options) map[string]bool {
 		"HOSTGOOS_" + runtime.GOOS:      true,
 		"SYZ_USE_BITMASKS":              bitmasks,
 		"SYZ_USE_CHECKSUMS":             csums,
-		"SYZ_SANDBOX_NONE":              opts.Sandbox == sandboxNone,
-		"SYZ_SANDBOX_SETUID":            opts.Sandbox == sandboxSetuid,
-		"SYZ_SANDBOX_NAMESPACE":         opts.Sandbox == sandboxNamespace,
-		"SYZ_SANDBOX_ANDROID":           opts.Sandbox == sandboxAndroid,
-		"SYZ_THREADED":                  opts.Threaded,
-		"SYZ_COLLIDE":                   opts.Collide,
-		"SYZ_REPEAT":                    opts.Repeat,
 		"SYZ_REPEAT_TIMES":              opts.RepeatTimes > 1,
-		"SYZ_MULTI_PROC":                opts.Procs > 1,
-		"SYZ_FAULT":                     opts.Fault,
-		"SYZ_LEAK":                      opts.Leak,
-		"SYZ_NET_INJECTION":             opts.NetInjection,
-		"SYZ_NET_DEVICES":               opts.NetDevices,
-		"SYZ_NET_RESET":                 opts.NetReset,
-		"SYZ_CGROUPS":                   opts.Cgroups,
-		"SYZ_BINFMT_MISC":               opts.BinfmtMisc,
-		"SYZ_CLOSE_FDS":                 opts.CloseFDs,
-		"SYZ_KCSAN":                     opts.KCSAN,
-		"SYZ_DEVLINK_PCI":               opts.DevlinkPCI,
-		"SYZ_USE_TMP_DIR":               opts.UseTmpDir,
-		"SYZ_HANDLE_SEGV":               opts.HandleSegv,
 		"SYZ_REPRO":                     opts.Repro,
 		"SYZ_TRACE":                     opts.Trace,
 		"SYZ_EXECUTOR_USES_SHMEM":       sysTarget.ExecutorUsesShmem,

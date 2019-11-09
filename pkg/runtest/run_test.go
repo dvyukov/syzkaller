@@ -48,6 +48,7 @@ func test(t *testing.T, sysTarget *targets.Target) {
 	if err != nil {
 		t.Fatalf("failed to detect host features: %v", err)
 	}
+	features.Executor = executor
 	calls, _, err := host.DetectSupportedSyscalls(target, "none")
 	if err != nil {
 		t.Fatalf("failed to detect supported syscalls: %v", err)
@@ -60,7 +61,7 @@ func test(t *testing.T, sysTarget *targets.Target) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := host.Setup(target, features, featureFlags, executor); err != nil {
+	if err := host.Setup(target, features); err != nil {
 		t.Fatal(err)
 	}
 	requests := make(chan *RunRequest, 2*runtime.GOMAXPROCS(0))

@@ -125,10 +125,10 @@ func (mgr *Manager) collectStats() []UIStat {
 	}
 	delete(rawStats, "cover")
 	delete(rawStats, "signal")
-	if mgr.checkResult != nil {
+	if len(mgr.enabledSyscalls) != 0 {
 		stats = append(stats, UIStat{
 			Name:  "syscalls",
-			Value: fmt.Sprint(len(mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox])),
+			Value: fmt.Sprint(len(mgr.enabledSyscalls)),
 			Link:  "/syscalls",
 		})
 	}
@@ -267,7 +267,7 @@ func (mgr *Manager) httpCoverFallback(w http.ResponseWriter, r *http.Request) {
 		calls[id] = append(calls[id], errno)
 	}
 	data := &UIFallbackCoverData{}
-	for _, id := range mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox] {
+	for _, id := range mgr.enabledSyscalls {
 		errnos := calls[id]
 		sort.Ints(errnos)
 		successful := 0

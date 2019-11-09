@@ -16,46 +16,33 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/cover"
-	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
-	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
 	_ "github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 var (
 	flagOS        = flag.String("os", runtime.GOOS, "target os")
 	flagArch      = flag.String("arch", runtime.GOARCH, "target arch")
+	flagTimeout   = flag.Duration("timeout", 0, "unused")
 	flagCoverFile = flag.String("coverfile", "", "write coverage to the file")
 	flagRepeat    = flag.Int("repeat", 1, "repeat execution that many times (0 for infinite loop)")
 	flagProcs     = flag.Int("procs", 1, "number of parallel processes to execute programs")
 	flagOutput    = flag.Bool("output", false, "write programs and results to stdout")
 	flagHints     = flag.Bool("hints", false, "do a hints-generation run")
-	flagFaultCall = flag.Int("fault_call", -1, "inject fault into this call (0-based)")
-	flagFaultNth  = flag.Int("fault_nth", 0, "inject fault on n-th operation (0-based)")
-	flagEnable    = flag.String("enable", "none", "enable only listed additional features")
-	flagDisable   = flag.String("disable", "none", "enable all additional features except listed")
 )
 
 func main() {
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: execprog [flags] file-with-programs+\n")
-		flag.PrintDefaults()
-		csource.PrintAvailableFeaturesFlags()
-	}
+	feature.InitFlags()
 	flag.Parse()
 	if len(flag.Args()) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
-	featuresFlags, err := csource.ParseFeaturesFlags(*flagEnable, *flagDisable, true)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
 	target, err := prog.GetTarget(*flagOS, *flagArch)
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -73,14 +60,14 @@ func main() {
 			log.Logf(0, "%-24v: %v", feat.Name, feat.Reason)
 		}
 	}
-	config, execOpts := createConfig(target, features, featuresFlags)
-	if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
+	//execOpts := createExecOpts(features)
+	if err = host.Setup(target, features); err != nil {
 		log.Fatal(err)
 	}
 	var gateCallback func()
-	if features[host.FeatureLeak].Enabled {
+	if features.Leak {
 		gateCallback = func() {
-			output, err := osutil.RunCmd(10*time.Minute, "", config.Executor, "leak")
+			output, err := osutil.RunCmd(10*time.Minute, "", features.Executor, "leak")
 			if err != nil {
 				os.Stdout.Write(output)
 				os.Exit(1)
@@ -89,8 +76,9 @@ func main() {
 	}
 	ctx := &Context{
 		entries:  entries,
-		config:   config,
-		execOpts: execOpts,
+		target:   target,
+		features: features,
+		//execOpts: execOpts,
 		gate:     ipc.NewGate(2**flagProcs, gateCallback),
 		shutdown: make(chan struct{}),
 		repeat:   *flagRepeat,
@@ -109,9 +97,10 @@ func main() {
 }
 
 type Context struct {
-	entries   []*prog.LogEntry
-	config    *ipc.Config
-	execOpts  *ipc.ExecOpts
+	entries  []*prog.LogEntry
+	target   *prog.Target
+	features *feature.Set
+	//execOpts  *ipc.ExecOpts
 	gate      *ipc.Gate
 	shutdown  chan struct{}
 	logMu     sync.Mutex
@@ -122,7 +111,7 @@ type Context struct {
 }
 
 func (ctx *Context) run(pid int) {
-	env, err := ipc.MakeEnv(ctx.config, pid)
+	env, err := ipc.MakeEnv(ctx.target, pid)
 	if err != nil {
 		log.Fatalf("failed to create ipc env: %v", err)
 	}
@@ -147,19 +136,18 @@ func (ctx *Context) execute(pid int, env *ipc.Env, entry *prog.LogEntry) {
 	ticket := ctx.gate.Enter()
 	defer ctx.gate.Leave(ticket)
 
-	callOpts := ctx.execOpts
-	if *flagFaultCall == -1 && entry.Fault {
-		newOpts := *ctx.execOpts
-		newOpts.Flags |= ipc.FlagInjectFault
-		newOpts.FaultCall = entry.FaultCall
-		newOpts.FaultNth = entry.FaultNth
-		callOpts = &newOpts
+	features := ctx.features
+	if !features.Fault && features.All[feature.Fault].Present && entry.Fault {
+		features = features.Copy()
+		features.Fault = true
+		features.FaultCall = entry.FaultCall
+		features.FaultNth = entry.FaultNth
 	}
 	if *flagOutput {
-		ctx.logProgram(pid, entry.P, callOpts)
+		ctx.logProgram(pid, entry.P, features)
 	}
-	output, info, hanged, err := env.Exec(callOpts, entry.P)
-	if ctx.config.Flags&ipc.FlagDebug != 0 || err != nil {
+	output, info, hanged, err := env.Exec(features, entry.P)
+	if ctx.features.Debug || err != nil {
 		log.Logf(0, "result: hanged=%v err=%v\n\n%s", hanged, err, output)
 	}
 	if info != nil {
@@ -175,11 +163,11 @@ func (ctx *Context) execute(pid int, env *ipc.Env, entry *prog.LogEntry) {
 	}
 }
 
-func (ctx *Context) logProgram(pid int, p *prog.Prog, callOpts *ipc.ExecOpts) {
+func (ctx *Context) logProgram(pid int, p *prog.Prog, features *feature.Set) {
 	strOpts := ""
-	if callOpts.Flags&ipc.FlagInjectFault != 0 {
+	if features.Fault {
 		strOpts = fmt.Sprintf(" (fault-call:%v fault-nth:%v)",
-			callOpts.FaultCall, callOpts.FaultNth)
+			features.FaultCall, features.FaultNth)
 	}
 	data := p.Serialize()
 	ctx.logMu.Lock()
@@ -282,52 +270,23 @@ func loadPrograms(target *prog.Target, files []string) []*prog.LogEntry {
 	return entries
 }
 
-func createConfig(target *prog.Target,
-	features *host.Features, featuresFlags csource.Features) (
-	*ipc.Config, *ipc.ExecOpts) {
-	config, execOpts, err := ipcconfig.Default(target)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	if config.Flags&ipc.FlagSignal != 0 {
-		execOpts.Flags |= ipc.FlagCollectCover
+//!!!
+/*
+func createExecOpts(features *feature.Set) *ipc.ExecOpts {
+	opts := &ipc.ExecOpts{}
+	if features.Coverage {
+		opts.Flags |= ipc.FlagCollectCover
 	}
 	if *flagCoverFile != "" {
-		config.Flags |= ipc.FlagSignal
-		execOpts.Flags |= ipc.FlagCollectCover
-		execOpts.Flags &^= ipc.FlagDedupCover
+		if !features.Coverage {
+			log.Fatalf("can't write cover profile: coverage is not supported")
+		}
+		opts.Flags |= ipc.FlagCollectCover | ipc.FlagDupCover
 	}
 	if *flagHints {
-		if execOpts.Flags&ipc.FlagCollectCover != 0 {
-			execOpts.Flags ^= ipc.FlagCollectCover
-		}
-		execOpts.Flags |= ipc.FlagCollectComps
+		opts.Flags &= ^ipc.FlagCollectCover
+		opts.Flags |= ipc.FlagCollectComps
 	}
-	if features[host.FeatureExtraCoverage].Enabled {
-		config.Flags |= ipc.FlagExtraCover
-	}
-	if *flagFaultCall >= 0 {
-		execOpts.Flags |= ipc.FlagInjectFault
-		execOpts.FaultCall = *flagFaultCall
-		execOpts.FaultNth = *flagFaultNth
-	}
-	if featuresFlags["tun"].Enabled && features[host.FeatureNetInjection].Enabled {
-		config.Flags |= ipc.FlagEnableTun
-	}
-	if featuresFlags["net_dev"].Enabled && features[host.FeatureNetDevices].Enabled {
-		config.Flags |= ipc.FlagEnableNetDev
-	}
-	if featuresFlags["net_reset"].Enabled {
-		config.Flags |= ipc.FlagEnableNetReset
-	}
-	if featuresFlags["cgroups"].Enabled {
-		config.Flags |= ipc.FlagEnableCgroups
-	}
-	if featuresFlags["close_fds"].Enabled {
-		config.Flags |= ipc.FlagEnableCloseFds
-	}
-	if featuresFlags["devlink_pci"].Enabled && features[host.FeatureDevlinkPCI].Enabled {
-		config.Flags |= ipc.FlagEnableDevlinkPCI
-	}
-	return config, execOpts
+	return opts
 }
+*/

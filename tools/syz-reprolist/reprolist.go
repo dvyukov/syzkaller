@@ -154,7 +154,7 @@ func createProg2CArgs(bug *dashapi.LoadBugResp, opts csource.Options, file strin
 	haveOSFlag := containsCommit("aa2533b98d21ebcad5777310215159127bfe3573")
 	args := []string{
 		"-prog", file,
-		"-sandbox", opts.Sandbox,
+		//!!! "-sandbox", opts.Sandbox,
 		fmt.Sprintf("-segv=%v", opts.HandleSegv),
 		fmt.Sprintf("-collide=%v", opts.Collide),
 		fmt.Sprintf("-threaded=%v", opts.Threaded),

@@ -71,9 +71,7 @@ func main() {
 	if stats != nil {
 		fmt.Printf("Extracting prog: %v\n", stats.ExtractProgTime)
 		fmt.Printf("Minimizing prog: %v\n", stats.MinimizeProgTime)
-		fmt.Printf("Simplifying prog options: %v\n", stats.SimplifyProgTime)
-		fmt.Printf("Extracting C: %v\n", stats.ExtractCTime)
-		fmt.Printf("Simplifying C: %v\n", stats.SimplifyCTime)
+		fmt.Printf("Simplify   opts: %v\n", stats.SimplifyOptsTime)
 	}
 	if res == nil {
 		return

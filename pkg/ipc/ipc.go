@@ -21,60 +21,9 @@ import (
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/feature"
 	"github.com/google/syzkaller/sys/targets"
 )
-
-// Configuration flags for Config.Flags.
-type EnvFlags uint64
-
-// Note: New / changed flags should be added to parse_env_flags in executor.cc
-const (
-	FlagDebug            EnvFlags = 1 << iota // debug output from executor
-	FlagSignal                                // collect feedback signals (coverage)
-	FlagSandboxSetuid                         // impersonate nobody user
-	FlagSandboxNamespace                      // use namespaces for sandboxing
-	FlagSandboxAndroid                        // use Android sandboxing for the untrusted_app domain
-	FlagExtraCover                            // collect extra coverage
-	FlagEnableTun                             // setup and use /dev/tun for packet injection
-	FlagEnableNetDev                          // setup more network devices for testing
-	FlagEnableNetReset                        // reset network namespace between programs
-	FlagEnableCgroups                         // setup cgroups for testing
-	FlagEnableCloseFds                        // close fds after each program
-	FlagEnableDevlinkPCI                      // setup devlink PCI device
-)
-
-// Per-exec flags for ExecOpts.Flags:
-type ExecFlags uint64
-
-const (
-	FlagCollectCover ExecFlags = 1 << iota // collect coverage
-	FlagDedupCover                         // deduplicate coverage in executor
-	FlagInjectFault                        // inject a fault in this execution (see ExecOpts)
-	FlagCollectComps                       // collect KCOV comparisons
-	FlagThreaded                           // use multiple threads to mitigate blocked syscalls
-	FlagCollide                            // collide syscalls to provoke data races
-)
-
-type ExecOpts struct {
-	Flags     ExecFlags
-	FaultCall int // call index for fault injection (0-based)
-	FaultNth  int // fault n-th operation in the call (0-based)
-}
-
-// Config is the configuration for Env.
-type Config struct {
-	// Path to executor binary.
-	Executor string
-
-	UseShmem      bool // use shared memory instead of pipes for communication
-	UseForkServer bool // use extended protocol with handshake
-
-	// Flags are configuation flags, defined above.
-	Flags EnvFlags
-
-	// Timeout is the execution timeout for a single program.
-	Timeout time.Duration
-}
 
 type CallFlags uint32
 
@@ -88,8 +37,9 @@ const (
 type CallInfo struct {
 	Flags  CallFlags
 	Signal []uint32 // feedback signal, filled if FlagSignal is set
-	Cover  []uint32 // per-call coverage, filled if FlagSignal is set and cover == true,
-	// if dedup == false, then cov effectively contains a trace, otherwise duplicates are removed
+	// Deduplicated per-call coverage, filled if feature.RawCoverage is set,
+	// if feature.TraceCoverage is set, then this contains a raw trace.
+	Cover []uint32
 	Comps prog.CompMap // per-call comparison operands
 	Errno int          // call errno (0 if the call was successful)
 }
@@ -100,16 +50,18 @@ type ProgInfo struct {
 }
 
 type Env struct {
+	Pid int
+
 	in  []byte
 	out []byte
 
-	cmd       *command
-	inFile    *os.File
-	outFile   *os.File
-	bin       []string
-	linkedBin string
-	pid       int
-	config    *Config
+	cmd           *command
+	inFile        *os.File
+	outFile       *os.File
+	bin           []string
+	linkedBin     string
+	useForkServer bool // use extended protocol with handshake
+	hostFuzzer    bool
 
 	StatExecs    uint64
 	StatRestarts uint64
@@ -128,36 +80,11 @@ const (
 	extraReplyIndex = 0xffffffff // uint32(-1)
 )
 
-func SandboxToFlags(sandbox string) (EnvFlags, error) {
-	switch sandbox {
-	case "none":
-		return 0, nil
-	case "setuid":
-		return FlagSandboxSetuid, nil
-	case "namespace":
-		return FlagSandboxNamespace, nil
-	case "android":
-		return FlagSandboxAndroid, nil
-	default:
-		return 0, fmt.Errorf("sandbox must contain one of none/setuid/namespace/android")
-	}
-}
-
-func FlagsToSandbox(flags EnvFlags) string {
-	if flags&FlagSandboxSetuid != 0 {
-		return "setuid"
-	} else if flags&FlagSandboxNamespace != 0 {
-		return "namespace"
-	} else if flags&FlagSandboxAndroid != 0 {
-		return "android"
-	}
-	return "none"
-}
-
-func MakeEnv(config *Config, pid int) (*Env, error) {
+func MakeEnv(target *prog.Target, pid int) (*Env, error) {
 	var inf, outf *os.File
 	var inmem, outmem []byte
-	if config.UseShmem {
+	sysTarget := targets.Get(target.OS, target.Arch)
+	if sysTarget.ExecutorUsesShmem {
 		var err error
 		inf, inmem, err = osutil.CreateMemMappedFile(prog.ExecBufferSize)
 		if err != nil {
@@ -182,35 +109,13 @@ func MakeEnv(config *Config, pid int) (*Env, error) {
 		outmem = make([]byte, outputSize)
 	}
 	env := &Env{
-		in:      inmem,
-		out:     outmem,
-		inFile:  inf,
-		outFile: outf,
-		bin:     strings.Split(config.Executor, " "),
-		pid:     pid,
-		config:  config,
-	}
-	if len(env.bin) == 0 {
-		return nil, fmt.Errorf("binary is empty string")
-	}
-	env.bin[0] = osutil.Abs(env.bin[0]) // we are going to chdir
-	// Append pid to binary name.
-	// E.g. if binary is 'syz-executor' and pid=15,
-	// we create a link from 'syz-executor.15' to 'syz-executor' and use 'syz-executor.15' as binary.
-	// This allows to easily identify program that lead to a crash in the log.
-	// Log contains pid in "executing program 15" and crashes usually contain "Comm: syz-executor.15".
-	// Note: pkg/report knowns about this and converts "syz-executor.15" back to "syz-executor".
-	base := filepath.Base(env.bin[0])
-	pidStr := fmt.Sprintf(".%v", pid)
-	const maxLen = 16 // TASK_COMM_LEN is currently set to 16
-	if len(base)+len(pidStr) >= maxLen {
-		// Remove beginning of file name, in tests temp files have unique numbers at the end.
-		base = base[len(base)+len(pidStr)-maxLen+1:]
-	}
-	binCopy := filepath.Join(filepath.Dir(env.bin[0]), base+pidStr)
-	if err := os.Link(env.bin[0], binCopy); err == nil {
-		env.bin[0] = binCopy
-		env.linkedBin = binCopy
+		Pid:           pid,
+		in:            inmem,
+		out:           outmem,
+		inFile:        inf,
+		outFile:       outf,
+		useForkServer: sysTarget.ExecutorUsesForkServer,
+		hostFuzzer:    sysTarget.HostFuzzer,
 	}
 	inf = nil
 	outf = nil
@@ -248,7 +153,12 @@ var rateLimit = time.NewTicker(1 * time.Second)
 // info: per-call info
 // hanged: program hanged and was killed
 // err0: failed to start the process or bug in executor itself
-func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInfo, hanged bool, err0 error) {
+func (env *Env) Exec(features *feature.Set, p *prog.Prog) (
+	output []byte, info *ProgInfo, hanged bool, err0 error) {
+	err0 = env.initBinary(features.Executor)
+	if err0 != nil {
+		return
+	}
 	// Copy-in serialized program.
 	progSize, err := p.SerializeForExec(env.in)
 	if err != nil {
@@ -256,10 +166,10 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 		return
 	}
 	var progData []byte
-	if !env.config.UseShmem {
+	if env.inFile != nil {
 		progData = env.in[:progSize]
 	}
-	// Zero out the first two words (ncmd and nsig), so that we don't have garbage there
+	// Zero out the first word (ncmd), so that we don't have garbage there
 	// if executor crashes before writing non-garbage there.
 	for i := 0; i < 4; i++ {
 		env.out[i] = 0
@@ -267,19 +177,18 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 
 	atomic.AddUint64(&env.StatExecs, 1)
 	if env.cmd == nil {
-		if p.Target.OS != "test" && targets.Get(p.Target.OS, p.Target.Arch).HostFuzzer {
+		if env.hostFuzzer && p.Target.OS != "test" {
 			// The executor is actually ssh,
 			// starting them too frequently leads to timeouts.
 			<-rateLimit.C
 		}
-		tmpDirPath := "./"
 		atomic.AddUint64(&env.StatRestarts, 1)
-		env.cmd, err0 = makeCommand(env.pid, env.bin, env.config, env.inFile, env.outFile, env.out, tmpDirPath)
+		env.cmd, err0 = env.makeCommand(features)
 		if err0 != nil {
 			return
 		}
 	}
-	output, hanged, err0 = env.cmd.exec(opts, progData)
+	output, hanged, err0 = env.cmd.exec(features, progData)
 	if err0 != nil {
 		env.cmd.close()
 		env.cmd = nil
@@ -287,14 +196,45 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 	}
 
 	info, err0 = env.parseOutput(p)
-	if info != nil && env.config.Flags&FlagSignal == 0 {
+	if info != nil && !features.Coverage {
 		addFallbackSignal(p, info)
 	}
-	if !env.config.UseForkServer {
+	if !env.useForkServer {
 		env.cmd.close()
 		env.cmd = nil
 	}
 	return
+}
+
+func (env *Env) initBinary(executor string) error {
+	if len(env.bin) != 0 {
+		return nil
+	}
+	bin := strings.Split(executor, " ")
+	if len(bin) == 0 {
+		return fmt.Errorf("binary is empty string")
+	}
+	bin[0] = osutil.Abs(bin[0]) // we are going to chdir
+	// Append pid to binary name.
+	// E.g. if binary is 'syz-executor' and pid=15,
+	// we create a link from 'syz-executor.15' to 'syz-executor' and use 'syz-executor.15' as binary.
+	// This allows to easily identify program that lead to a crash in the log.
+	// Log contains pid in "executing program 15" and crashes usually contain "Comm: syz-executor.15".
+	// Note: pkg/report knowns about this and converts "syz-executor.15" back to "syz-executor".
+	base := filepath.Base(bin[0])
+	pidStr := fmt.Sprintf(".%v", env.Pid)
+	const maxLen = 16 // TASK_COMM_LEN is currently set to 16
+	if len(base)+len(pidStr) >= maxLen {
+		// Remove beginning of file name, in tests temp files have unique numbers at the end.
+		base = base[len(base)+len(pidStr)-maxLen+1:]
+	}
+	binCopy := filepath.Join(filepath.Dir(bin[0]), base+pidStr)
+	if err := os.Link(bin[0], binCopy); err == nil {
+		bin[0] = binCopy
+		env.linkedBin = binCopy
+	}
+	env.bin = bin
+	return nil
 }
 
 // addFallbackSignal computes simple fallback signal in cases we don't have real coverage signal.
@@ -327,7 +267,7 @@ func (env *Env) parseOutput(p *prog.Prog) (*ProgInfo, error) {
 		return nil, fmt.Errorf("failed to read number of calls")
 	}
 	info := &ProgInfo{Calls: make([]CallInfo, len(p.Calls))}
-	extraParts := make([]CallInfo, 0)
+	var extraParts []CallInfo
 	for i := uint32(0); i < ncmd; i++ {
 		if len(out) < int(unsafe.Sizeof(callReply{})) {
 			return nil, fmt.Errorf("failed to read call %v reply", i)
@@ -366,10 +306,9 @@ func (env *Env) parseOutput(p *prog.Prog) (*ProgInfo, error) {
 		}
 		inf.Comps = comps
 	}
-	if len(extraParts) == 0 {
-		return info, nil
+	if len(extraParts) != 0 {
+		info.Extra = convertExtra(extraParts)
 	}
-	info.Extra = convertExtra(extraParts)
 	return info, nil
 }
 
@@ -474,7 +413,6 @@ func readUint32Array(outp *[]byte, size uint32) ([]uint32, bool) {
 
 type command struct {
 	pid      int
-	config   *Config
 	timeout  time.Duration
 	cmd      *exec.Cmd
 	dir      string
@@ -491,9 +429,9 @@ const (
 )
 
 type handshakeReq struct {
-	magic uint64
-	flags uint64 // env flags
-	pid   uint64
+	magic    uint64
+	features uint64
+	pid      uint64
 }
 
 type handshakeReply struct {
@@ -501,8 +439,9 @@ type handshakeReply struct {
 }
 
 type executeReq struct {
-	magic     uint64
-	envFlags  uint64 // env flags
+	magic    uint64
+	features uint64
+	//!!! remove this
 	execFlags uint64 // exec flags
 	pid       uint64
 	faultCall uint64
@@ -530,20 +469,25 @@ type callReply struct {
 	// signal/cover/comps follow
 }
 
-func makeCommand(pid int, bin []string, config *Config, inFile, outFile *os.File, outmem []byte,
-	tmpDirPath string) (*command, error) {
-	dir, err := ioutil.TempDir(tmpDirPath, "syzkaller-testdir")
+func (env *Env) makeCommand(features *feature.Set) (*command, error) {
+	dir, err := ioutil.TempDir("./", "syz-ipc")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
 	dir = osutil.Abs(dir)
 
 	c := &command{
-		pid:     pid,
-		config:  config,
-		timeout: sanitizeTimeout(config),
+		pid:     env.Pid,
+		timeout: time.Minute,
 		dir:     dir,
-		outmem:  outmem,
+		outmem:  env.out,
+	}
+	// Executor protects against most hangs, so we use quite large timeout here.
+	// Executor can be slow due to global locks in namespaces and other things,
+	// so let's better wait than report false misleading crashes.
+	// But if there is no fork server, executor does not have an internal timeout.
+	if !env.useForkServer {
+		c.timeout = 5 * time.Second
 	}
 	defer func() {
 		if c != nil {
@@ -581,15 +525,15 @@ func makeCommand(pid int, bin []string, config *Config, inFile, outFile *os.File
 	c.readDone = make(chan []byte, 1)
 	c.exited = make(chan struct{})
 
-	cmd := osutil.Command(bin[0], bin[1:]...)
-	if inFile != nil && outFile != nil {
-		cmd.ExtraFiles = []*os.File{inFile, outFile}
+	cmd := osutil.Command(env.bin[0], env.bin[1:]...)
+	if env.inFile != nil {
+		cmd.ExtraFiles = []*os.File{env.inFile, env.outFile}
 	}
 	cmd.Env = []string{}
 	cmd.Dir = dir
 	cmd.Stdin = outrp
 	cmd.Stdout = inwp
-	if config.Flags&FlagDebug != 0 {
+	if features.Debug {
 		close(c.readDone)
 		cmd.Stderr = os.Stdout
 	} else {
@@ -627,8 +571,8 @@ func makeCommand(pid int, bin []string, config *Config, inFile, outFile *os.File
 	// reading from inrp will hang since we hold another end of the pipe open.
 	inwp.Close()
 
-	if c.config.UseForkServer {
-		if err := c.handshake(); err != nil {
+	if env.useForkServer {
+		if err := c.handshake(features); err != nil {
 			return nil, err
 		}
 	}
@@ -652,11 +596,11 @@ func (c *command) close() {
 }
 
 // handshake sends handshakeReq and waits for handshakeReply.
-func (c *command) handshake() error {
+func (c *command) handshake(features *feature.Set) error {
 	req := &handshakeReq{
-		magic: inMagic,
-		flags: uint64(c.config.Flags),
-		pid:   uint64(c.pid),
+		magic:    inMagic,
+		features: featuresBitmask(features),
+		pid:      uint64(c.pid),
 	}
 	reqData := (*[unsafe.Sizeof(*req)]byte)(unsafe.Pointer(req))[:]
 	if _, err := c.outwp.Write(reqData); err != nil {
@@ -710,14 +654,13 @@ func (c *command) wait() error {
 	return err
 }
 
-func (c *command) exec(opts *ExecOpts, progData []byte) (output []byte, hanged bool, err0 error) {
+func (c *command) exec(features *feature.Set, progData []byte) (output []byte, hanged bool, err0 error) {
 	req := &executeReq{
 		magic:     inMagic,
-		envFlags:  uint64(c.config.Flags),
-		execFlags: uint64(opts.Flags),
+		features:  featuresBitmask(features),
 		pid:       uint64(c.pid),
-		faultCall: uint64(opts.FaultCall),
-		faultNth:  uint64(opts.FaultNth),
+		faultCall: uint64(features.FaultCall),
+		faultNth:  uint64(features.FaultNth),
 		progSize:  uint64(len(progData)),
 	}
 	reqData := (*[unsafe.Sizeof(*req)]byte)(unsafe.Pointer(req))[:]
@@ -807,26 +750,10 @@ func (c *command) exec(opts *ExecOpts, progData []byte) (output []byte, hanged b
 	return
 }
 
-func sanitizeTimeout(config *Config) time.Duration {
-	const (
-		executorTimeout = 5 * time.Second
-		minTimeout      = executorTimeout + 2*time.Second
-	)
-	timeout := config.Timeout
-	if timeout == 0 {
-		// Executor protects against most hangs, so we use quite large timeout here.
-		// Executor can be slow due to global locks in namespaces and other things,
-		// so let's better wait than report false misleading crashes.
-		timeout = time.Minute
-		if !config.UseForkServer {
-			// If there is no fork server, executor does not have internal timeout.
-			timeout = executorTimeout
-		}
+func featuresBitmask(features *feature.Set) uint64 {
+	var mask uint64
+	for _, feat := range features.Enabled() {
+		mask |= 1 << uint(feat.ID)
 	}
-	// IPC timeout must be larger then executor timeout.
-	// Otherwise IPC will kill parent executor but leave child executor alive.
-	if config.UseForkServer && timeout < minTimeout {
-		timeout = minTimeout
-	}
-	return timeout
+	return mask
 }

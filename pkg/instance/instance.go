@@ -372,13 +372,15 @@ func (inst *inst) testRepro() error {
 	// First, we always enable threaded/collide as it should be [almost] strictly better.
 	// Executor does not support empty sandbox, so we use none instead.
 	// Finally, always use repeat and multiple procs.
-	if opts.Sandbox == "" {
-		opts.Sandbox = "none"
+	if opts.SandboxEmpty {
+		opts.SandboxEmpty = false
+		opts.SandboxNone = true
 	}
 	if !opts.Fault {
 		opts.FaultCall = -1
 	}
-	cmdSyz := ExecprogCmd(execprogBin, executorCmd, cfg.TargetOS, cfg.TargetArch, opts.Sandbox,
+	sandbox := "TODO" //!!!
+	cmdSyz := ExecprogCmd(execprogBin, executorCmd, cfg.TargetOS, cfg.TargetArch, sandbox,
 		true, true, true, cfg.Procs, opts.FaultCall, opts.FaultNth, vmProgFile)
 	if err := inst.testProgram(cmdSyz, 7*time.Minute); err != nil {
 		return err

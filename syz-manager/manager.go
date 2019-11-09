@@ -23,7 +23,6 @@ import (
 	"github.com/google/syzkaller/pkg/db"
 	"github.com/google/syzkaller/pkg/gce"
 	"github.com/google/syzkaller/pkg/hash"
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/instance"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
@@ -34,6 +33,7 @@ import (
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/feature"
 	"github.com/google/syzkaller/sys/targets"
 	"github.com/google/syzkaller/vm"
 )
@@ -45,30 +45,33 @@ var (
 )
 
 type Manager struct {
-	cfg            *mgrconfig.Config
-	vmPool         *vm.Pool
-	target         *prog.Target
-	sysTarget      *targets.Target
-	reporter       report.Reporter
-	crashdir       string
-	port           int
-	corpusDB       *db.DB
-	startTime      time.Time
-	firstConnect   time.Time
-	fuzzingTime    time.Duration
-	stats          *Stats
-	crashTypes     map[string]bool
-	vmStop         chan bool
-	checkResult    *rpctype.CheckArgs
-	fresh          bool
-	numFuzzing     uint32
-	numReproducing uint32
+	cfg                   *mgrconfig.Config
+	vmPool                *vm.Pool
+	target                *prog.Target
+	sysTarget             *targets.Target
+	reporter              report.Reporter
+	crashdir              string
+	port                  int
+	corpusDB              *db.DB
+	startTime             time.Time
+	firstConnect          time.Time
+	fuzzingTime           time.Duration
+	stats                 *Stats
+	crashTypes            map[string]bool
+	vmStop                chan bool
+	fresh                 bool
+	numFuzzing            uint32
+	numReproducing        uint32
+	configEnabledSyscalls []int
+
+	// These are filled only  after machine check.
+	features        *feature.Set
+	enabledSyscalls []int
 
 	dash *dashapi.Dashboard
 
-	mu              sync.Mutex
-	phase           int
-	enabledSyscalls []int
+	mu    sync.Mutex
+	phase int
 
 	candidates       []rpctype.RPCCandidate // untriaged inputs from corpus and hub
 	disabledHashes   map[string]struct{}
@@ -158,27 +161,27 @@ func RunManager(cfg *mgrconfig.Config, target *prog.Target, sysTarget *targets.T
 	}
 
 	mgr := &Manager{
-		cfg:              cfg,
-		vmPool:           vmPool,
-		target:           target,
-		sysTarget:        sysTarget,
-		reporter:         reporter,
-		crashdir:         crashdir,
-		startTime:        time.Now(),
-		stats:            &Stats{haveHub: cfg.HubClient != ""},
-		crashTypes:       make(map[string]bool),
-		enabledSyscalls:  syscalls,
-		corpus:           make(map[string]rpctype.RPCInput),
-		disabledHashes:   make(map[string]struct{}),
-		memoryLeakFrames: make(map[string]bool),
-		dataRaceFrames:   make(map[string]bool),
-		fresh:            true,
-		vmStop:           make(chan bool),
-		hubReproQueue:    make(chan *Crash, 10),
-		needMoreRepros:   make(chan chan bool),
-		reproRequest:     make(chan chan map[string]bool),
-		usedFiles:        make(map[string]time.Time),
-		saturatedCalls:   make(map[string]bool),
+		cfg:                   cfg,
+		vmPool:                vmPool,
+		target:                target,
+		sysTarget:             sysTarget,
+		reporter:              reporter,
+		crashdir:              crashdir,
+		startTime:             time.Now(),
+		stats:                 &Stats{haveHub: cfg.HubClient != ""},
+		crashTypes:            make(map[string]bool),
+		configEnabledSyscalls: syscalls,
+		corpus:                make(map[string]rpctype.RPCInput),
+		disabledHashes:        make(map[string]struct{}),
+		memoryLeakFrames:      make(map[string]bool),
+		dataRaceFrames:        make(map[string]bool),
+		fresh:                 true,
+		vmStop:                make(chan bool),
+		hubReproQueue:         make(chan *Crash, 10),
+		needMoreRepros:        make(chan chan bool),
+		reproRequest:          make(chan chan map[string]bool),
+		usedFiles:             make(map[string]time.Time),
+		saturatedCalls:        make(map[string]bool),
 	}
 
 	log.Logf(0, "loading corpus...")
@@ -467,7 +470,7 @@ func (mgr *Manager) loadCorpus() {
 	case currentDBVersion:
 	}
 	syscalls := make(map[int]bool)
-	for _, id := range mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox] {
+	for _, id := range mgr.enabledSyscalls {
 		syscalls[id] = true
 	}
 	deleted := 0
@@ -695,8 +698,7 @@ func (mgr *Manager) needLocalRepro(crash *Crash) bool {
 	if !mgr.cfg.Reproduce || crash.Corrupted {
 		return false
 	}
-	if mgr.checkResult.Features[host.FeatureLeak].Enabled &&
-		crash.Type != report.MemoryLeak {
+	if mgr.features.Leak && crash.Type != report.MemoryLeak {
 		// Leak checking is very slow, don't bother reproducing other crashes.
 		return false
 	}
@@ -845,9 +847,9 @@ func saveReproStats(filename string, stats *repro.Stats) {
 	text := ""
 	if stats != nil {
 		text = fmt.Sprintf("Extracting prog: %v\nMinimizing prog: %v\n"+
-			"Simplifying prog options: %v\nExtracting C: %v\nSimplifying C: %v\n\n\n%s",
+			"Simplifying options: %v\n\n%s",
 			stats.ExtractProgTime, stats.MinimizeProgTime,
-			stats.SimplifyProgTime, stats.ExtractCTime, stats.SimplifyCTime, stats.Log)
+			stats.SimplifyOptsTime, stats.Log)
 	}
 	osutil.WriteFile(filename, []byte(text))
 }
@@ -963,11 +965,11 @@ func (mgr *Manager) collectSyscallInfo() map[string]*CallCov {
 }
 
 func (mgr *Manager) collectSyscallInfoUnlocked() map[string]*CallCov {
-	if mgr.checkResult == nil {
+	if len(mgr.enabledSyscalls) == 0 {
 		return nil
 	}
 	calls := make(map[string]*CallCov)
-	for _, call := range mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox] {
+	for _, call := range mgr.enabledSyscalls {
 		calls[mgr.target.Syscalls[call].Name] = new(CallCov)
 	}
 	for _, inp := range mgr.corpus {
@@ -1009,7 +1011,7 @@ func (mgr *Manager) machineChecked(a *rpctype.CheckArgs) {
 		for _, dc := range a.DisabledCalls[mgr.cfg.Sandbox] {
 			disabled[mgr.target.Syscalls[dc.ID].Name] = dc.Reason
 		}
-		for _, id := range mgr.enabledSyscalls {
+		for _, id := range mgr.configEnabledSyscalls {
 			name := mgr.target.Syscalls[id].Name
 			if reason := disabled[name]; reason != "" {
 				log.Logf(0, "disabling %v: %v", name, reason)
@@ -1019,13 +1021,18 @@ func (mgr *Manager) machineChecked(a *rpctype.CheckArgs) {
 	if a.Error != "" {
 		log.Fatalf("machine check: %v", a.Error)
 	}
+	features, err := a.Features.Deserialize()
+	if err != nil {
+		log.Fatalf("failed to deserialize features: %v", err)
+	}
 	log.Logf(0, "machine check:")
 	log.Logf(0, "%-24v: %v/%v", "syscalls",
 		len(a.EnabledCalls[mgr.cfg.Sandbox]), len(mgr.target.Syscalls))
-	for _, feat := range a.Features.Supported() {
+	for _, feat := range features.Supported() {
 		log.Logf(0, "%-24v: %v", feat.Name, feat.Reason)
 	}
-	mgr.checkResult = a
+	mgr.features = features
+	mgr.enabledSyscalls = a.EnabledCalls[mgr.cfg.Sandbox]
 	mgr.loadCorpus()
 	mgr.firstConnect = time.Now()
 }

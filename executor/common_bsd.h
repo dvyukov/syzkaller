@@ -376,7 +376,6 @@ static int wait_for_loop(int pid)
 	return WEXITSTATUS(status);
 }
 
-#define SYZ_HAVE_SANDBOX_SETUID 1
 static int do_sandbox_setuid(void)
 {
 	int pid = fork();

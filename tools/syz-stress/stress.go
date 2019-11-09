@@ -14,28 +14,26 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/db"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
-	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/prog"
 	_ "github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 var (
-	flagOS       = flag.String("os", runtime.GOOS, "target os")
-	flagArch     = flag.String("arch", runtime.GOARCH, "target arch")
-	flagCorpus   = flag.String("corpus", "", "corpus database")
+	flagOS     = flag.String("os", runtime.GOOS, "target os")
+	flagArch   = flag.String("arch", runtime.GOARCH, "target arch")
+	flagCorpus = flag.String("corpus", "", "corpus database")
+	//flagExecutor = flag.String("executor", "./syz-executor", "path to executor binary")
 	flagOutput   = flag.Bool("output", false, "print executor output to console")
 	flagProcs    = flag.Int("procs", 2*runtime.NumCPU(), "number of parallel processes")
 	flagLogProg  = flag.Bool("logprog", false, "print programs before execution")
 	flagGenerate = flag.Bool("generate", true, "generate new programs, otherwise only mutate corpus")
 	flagSyscalls = flag.String("syscalls", "", "comma-separated list of enabled syscalls")
-	flagEnable   = flag.String("enable", "none", "enable only listed additional features")
-	flagDisable  = flag.String("disable", "none", "enable all additional features except listed")
 
 	statExec uint64
 	gate     *ipc.Gate
@@ -44,15 +42,8 @@ var (
 const programLength = 30
 
 func main() {
-	flag.Usage = func() {
-		flag.PrintDefaults()
-		csource.PrintAvailableFeaturesFlags()
-	}
+	feature.InitFlags()
 	flag.Parse()
-	featuresFlags, err := csource.ParseFeaturesFlags(*flagEnable, *flagDisable, true)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
 	target, err := prog.GetTarget(*flagOS, *flagArch)
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -78,19 +69,14 @@ func main() {
 	calls := buildCallList(target, syscalls)
 	prios := target.CalculatePriorities(corpus)
 	ct := target.BuildChoiceTable(prios, calls)
-
-	config, execOpts, err := createIPCConfig(target, features, featuresFlags)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
+	if err = host.Setup(target, features); err != nil {
 		log.Fatal(err)
 	}
 	gate = ipc.NewGate(2**flagProcs, nil)
 	for pid := 0; pid < *flagProcs; pid++ {
 		pid := pid
 		go func() {
-			env, err := ipc.MakeEnv(config, pid)
+			env, err := ipc.MakeEnv(target, pid)
 			if err != nil {
 				log.Fatalf("failed to create execution environment: %v", err)
 			}
@@ -100,15 +86,15 @@ func main() {
 				var p *prog.Prog
 				if *flagGenerate && len(corpus) == 0 || i%4 != 0 {
 					p = target.Generate(rs, programLength, ct)
-					execute(pid, env, execOpts, p)
+					execute(env, features, p)
 					p.Mutate(rs, programLength, ct, corpus)
-					execute(pid, env, execOpts, p)
+					execute(env, features, p)
 				} else {
 					p = corpus[rnd.Intn(len(corpus))].Clone()
 					p.Mutate(rs, programLength, ct, corpus)
-					execute(pid, env, execOpts, p)
+					execute(env, features, p)
 					p.Mutate(rs, programLength, ct, corpus)
-					execute(pid, env, execOpts, p)
+					execute(env, features, p)
 				}
 			}
 		}()
@@ -120,16 +106,16 @@ func main() {
 
 var outMu sync.Mutex
 
-func execute(pid int, env *ipc.Env, execOpts *ipc.ExecOpts, p *prog.Prog) {
+func execute(env *ipc.Env, features *feature.Set, p *prog.Prog) {
 	atomic.AddUint64(&statExec, 1)
 	if *flagLogProg {
 		ticket := gate.Enter()
 		defer gate.Leave(ticket)
 		outMu.Lock()
-		fmt.Printf("executing program %v\n%s\n", pid, p.Serialize())
+		fmt.Printf("executing program %v\n%s\n", env.Pid, p.Serialize())
 		outMu.Unlock()
 	}
-	output, _, hanged, err := env.Exec(execOpts, p)
+	output, _, hanged, err := env.Exec(features, p)
 	if err != nil {
 		fmt.Printf("failed to execute executor: %v\n", err)
 	}
@@ -139,33 +125,6 @@ func execute(pid int, env *ipc.Env, execOpts *ipc.ExecOpts, p *prog.Prog) {
 	if hanged || err != nil || *flagOutput {
 		os.Stdout.Write(output)
 	}
-}
-
-func createIPCConfig(target *prog.Target, features *host.Features, featuresFlags csource.Features) (
-	*ipc.Config, *ipc.ExecOpts, error) {
-	config, execOpts, err := ipcconfig.Default(target)
-	if err != nil {
-		return nil, nil, err
-	}
-	if featuresFlags["tun"].Enabled && features[host.FeatureNetInjection].Enabled {
-		config.Flags |= ipc.FlagEnableTun
-	}
-	if featuresFlags["net_dev"].Enabled && features[host.FeatureNetDevices].Enabled {
-		config.Flags |= ipc.FlagEnableNetDev
-	}
-	if featuresFlags["net_reset"].Enabled {
-		config.Flags |= ipc.FlagEnableNetReset
-	}
-	if featuresFlags["cgroups"].Enabled {
-		config.Flags |= ipc.FlagEnableCgroups
-	}
-	if featuresFlags["close_fds"].Enabled {
-		config.Flags |= ipc.FlagEnableCloseFds
-	}
-	if featuresFlags["devlink_pci"].Enabled && features[host.FeatureDevlinkPCI].Enabled {
-		config.Flags |= ipc.FlagEnableDevlinkPCI
-	}
-	return config, execOpts, nil
 }
 
 func buildCallList(target *prog.Target, enabled []string) map[*prog.Syscall]bool {

@@ -100,34 +100,23 @@ static uint32 hash(uint32 a);
 static bool dedup(uint32 sig);
 #endif
 
-uint64 start_time_ms = 0;
+struct feature_t {
+	bool* flag;
+	const char* name;
+	void (*setup)();
+};
 
-static bool flag_debug;
-static bool flag_coverage;
-static bool flag_sandbox_none;
-static bool flag_sandbox_setuid;
-static bool flag_sandbox_namespace;
-static bool flag_sandbox_android;
-static bool flag_extra_coverage;
-static bool flag_net_injection;
-static bool flag_net_devices;
-static bool flag_net_reset;
-static bool flag_cgroups;
-static bool flag_close_fds;
-static bool flag_devlink_pci;
+static uint64 start_time_ms;
 
 static bool flag_collect_cover;
-static bool flag_dedup_cover;
-static bool flag_threaded;
-static bool flag_collide;
+static bool flag_dup_cover;
 
-// If true, then executor should write the comparisons data to fuzzer.
-static bool flag_comparisons;
-
-// Inject fault into flag_fault_nth-th operation in flag_fault_call-th syscall.
-static bool flag_fault;
+// If feature_fault_injetion is enabled, inject fault into flag_fault_nth-th
+// operation in flag_fault_call-th syscall.
 static int flag_fault_call;
 static int flag_fault_nth;
+
+#include "features.h"
 
 #define SYZ_EXECUTOR 1
 #include "common.h"
@@ -219,7 +208,7 @@ const uint32 kOutMagic = 0xbadf00d;
 
 struct handshake_req {
 	uint64 magic;
-	uint64 flags; // env flags
+	uint64 features;
 	uint64 pid;
 };
 
@@ -229,7 +218,7 @@ struct handshake_reply {
 
 struct execute_req {
 	uint64 magic;
-	uint64 env_flags;
+	uint64 features;
 	uint64 exec_flags;
 	uint64 pid;
 	uint64 fault_call;
@@ -283,11 +272,6 @@ struct kcov_comparison_t {
 	bool operator<(const struct kcov_comparison_t& other) const;
 };
 
-struct feature_t {
-	const char* name;
-	void (*setup)();
-};
-
 static thread_t* schedule_call(int call_index, int call_num, bool colliding, uint64 copyout_index, uint64 num_args, uint64* args, uint64* pos, bool extra_cover);
 static void handle_completion(thread_t* th);
 static void copyout_call_results(thread_t* th);
@@ -337,7 +321,7 @@ int main(int argc, char** argv)
 		return 0;
 	}
 	if (argc >= 2 && strcmp(argv[1], "leak") == 0) {
-#if SYZ_HAVE_LEAK_CHECK
+#if SYZ_HAVE_LEAK
 		check_leaks(argv + 2, argc - 2);
 #else
 		fail("leak checking is not implemented");
@@ -455,26 +439,12 @@ void setup_control_pipes()
 		fail("dup2(2, 0) failed");
 }
 
-void parse_env_flags(uint64 flags)
+void parse_features(uint64 v)
 {
-	// Note: Values correspond to ordering in pkg/ipc/ipc.go, e.g. FlagSandboxNamespace
-	flag_debug = flags & (1 << 0);
-	flag_coverage = flags & (1 << 1);
-	if (flags & (1 << 2))
-		flag_sandbox_setuid = true;
-	else if (flags & (1 << 3))
-		flag_sandbox_namespace = true;
-	else if (flags & (1 << 4))
-		flag_sandbox_android = true;
-	else
-		flag_sandbox_none = true;
-	flag_extra_coverage = flags & (1 << 5);
-	flag_net_injection = flags & (1 << 6);
-	flag_net_devices = flags & (1 << 7);
-	flag_net_reset = flags & (1 << 8);
-	flag_cgroups = flags & (1 << 9);
-	flag_close_fds = flags & (1 << 10);
-	flag_devlink_pci = flags & (1 << 11);
+	for (uint64 i = 0; i < sizeof(features) / sizeof(features[0]); i++) {
+		if (features[i].flag)
+			*features[i].flag = v & (1ull << i);
+	}
 }
 
 #if SYZ_EXECUTOR_USES_FORK_SERVER
@@ -486,7 +456,7 @@ void receive_handshake()
 		fail("handshake read failed: %d", n);
 	if (req.magic != kInMagic)
 		fail("bad handshake magic 0x%llx", req.magic);
-	parse_env_flags(req.flags);
+	parse_features(req.features);
 	procid = req.pid;
 }
 
@@ -510,22 +480,16 @@ void receive_execute()
 		fail("bad execute request magic 0x%llx", req.magic);
 	if (req.prog_size > kMaxInput)
 		fail("bad execute prog size 0x%llx", req.prog_size);
-	parse_env_flags(req.env_flags);
+	parse_features(req.features);
 	procid = req.pid;
 	flag_collect_cover = req.exec_flags & (1 << 0);
-	flag_dedup_cover = req.exec_flags & (1 << 1);
-	flag_fault = req.exec_flags & (1 << 2);
-	flag_comparisons = req.exec_flags & (1 << 3);
-	flag_threaded = req.exec_flags & (1 << 4);
-	flag_collide = req.exec_flags & (1 << 5);
+	flag_dup_cover = req.exec_flags & (1 << 1);
 	flag_fault_call = req.fault_call;
 	flag_fault_nth = req.fault_nth;
-	if (!flag_threaded)
-		flag_collide = false;
-	debug("[%llums] exec opts: procid=%llu threaded=%d collide=%d cover=%d comps=%d dedup=%d fault=%d/%d/%d prog=%llu\n",
-	      current_time_ms() - start_time_ms, procid, flag_threaded, flag_collide,
-	      flag_collect_cover, flag_comparisons, flag_dedup_cover, flag_fault,
-	      flag_fault_call, flag_fault_nth, req.prog_size);
+	if (flag_collide && !flag_threaded)
+		fail("non-threaded collide");
+	debug("[%llums] exec opts: procid=%llu threaded=%d collide=%d prog=%llu\n",
+	      current_time_ms() - start_time_ms, procid, flag_threaded, flag_collide, req.prog_size);
 	if (SYZ_EXECUTOR_USES_SHMEM) {
 		if (req.prog_size)
 			fail("need_prog: no program");
@@ -867,7 +831,7 @@ void write_coverage_signal(cover_t* cov, uint32* signal_count_pos, uint32* cover
 		return;
 	// Write out real coverage (basic block PCs).
 	uint32 cover_size = cov->size;
-	if (flag_dedup_cover) {
+	if (!flag_dup_cover) {
 		cover_data_t* end = cover_data + cover_size;
 		cover_unprotect(cov);
 		std::sort(cover_data, end);
@@ -1408,15 +1372,14 @@ void setup_features(char** enable, int n)
 	// Note: this can be called multiple times and must be idempotent.
 	for (int i = 0; i < n; i++) {
 		bool found = false;
-#if SYZ_HAVE_FEATURES
 		for (unsigned f = 0; f < sizeof(features) / sizeof(features[0]); f++) {
-			if (strcmp(enable[i], features[f].name) == 0) {
-				features[f].setup();
+			const feature_t* feat = &features[f];
+			if (feat->name && strcmp(enable[i], feat->name) == 0) {
+				feat->setup();
 				found = true;
 				break;
 			}
 		}
-#endif
 		if (!found)
 			fail("unknown feature %s", enable[i]);
 	}

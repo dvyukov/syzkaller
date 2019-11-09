@@ -36,9 +36,7 @@ type Stats struct {
 	Log              []byte
 	ExtractProgTime  time.Duration
 	MinimizeProgTime time.Duration
-	SimplifyProgTime time.Duration
-	ExtractCTime     time.Duration
-	SimplifyCTime    time.Duration
+	SimplifyOptsTime time.Duration
 }
 
 type context struct {
@@ -237,29 +235,8 @@ func (ctx *context) repro(entries []*prog.LogEntry, crashStart int) (*Result, er
 		return nil, err
 	}
 
-	// Try extracting C repro without simplifying options first.
-	res, err = ctx.extractC(res)
-	if err != nil {
-		return nil, err
-	}
-
 	// Simplify options and try extracting C repro.
-	if !res.CRepro {
-		res, err = ctx.simplifyProg(res)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Simplify C related options.
-	if res.CRepro {
-		res, err = ctx.simplifyC(res)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return res, nil
+	return ctx.simplifyProg(res)
 }
 
 func (ctx *context) extractProg(entries []*prog.LogEntry) (*Result, error) {
@@ -460,69 +437,31 @@ func (ctx *context) simplifyProg(res *Result) (*Result, error) {
 	ctx.reproLog(2, "simplifying guilty program")
 	start := time.Now()
 	defer func() {
-		ctx.stats.SimplifyProgTime = time.Since(start)
+		ctx.stats.SimplifyOptsTime = time.Since(start)
 	}()
 
-	for _, simplify := range progSimplifies {
-		opts := res.Opts
-		if !simplify(&opts) {
+	for i := range res.Opts.All {
+		candidate := res.Opts.Set.Simplify(i)
+		if candidate == nil {
 			continue
 		}
-		crashed, err := ctx.testProg(res.Prog, res.Duration, opts)
+		opts := res.Opts
+		opts.Set = candidate
+		crashed, err := ctx.testCProg(res.Prog, res.Duration, opts)
 		if err != nil {
 			return nil, err
 		}
-		if !crashed {
-			continue
+		if crashed && !res.CRepro {
+			res.CRepro = true
 		}
-		res.Opts = opts
-		// Simplification successful, try extracting C repro.
-		res, err = ctx.extractC(res)
-		if err != nil {
-			return nil, err
-		}
-		if res.CRepro {
-			return res, nil
-		}
-	}
-
-	return res, nil
-}
-
-// Try triggering crash with a C reproducer.
-func (ctx *context) extractC(res *Result) (*Result, error) {
-	ctx.reproLog(2, "extracting C reproducer")
-	start := time.Now()
-	defer func() {
-		ctx.stats.ExtractCTime = time.Since(start)
-	}()
-
-	crashed, err := ctx.testCProg(res.Prog, res.Duration, res.Opts)
-	if err != nil {
-		return nil, err
-	}
-	res.CRepro = crashed
-	return res, nil
-}
-
-// Try to simplify the C reproducer.
-func (ctx *context) simplifyC(res *Result) (*Result, error) {
-	ctx.reproLog(2, "simplifying C reproducer")
-	start := time.Now()
-	defer func() {
-		ctx.stats.SimplifyCTime = time.Since(start)
-	}()
-
-	for _, simplify := range cSimplifies {
-		opts := res.Opts
-		if simplify(&opts) {
-			crashed, err := ctx.testCProg(res.Prog, res.Duration, opts)
+		if !crashed && !res.CRepro {
+			crashed, err = ctx.testProg(res.Prog, res.Duration, opts)
 			if err != nil {
 				return nil, err
 			}
-			if crashed {
-				res.Opts = opts
-			}
+		}
+		if crashed {
+			res.Opts = opts
 		}
 	}
 	return res, nil
@@ -575,8 +514,9 @@ func (ctx *context) testProgs(entries []*prog.LogEntry, duration time.Duration, 
 		program += "]"
 	}
 
+	sandbox := "" //!!! ExecprogCmd needs to use _all_ options/features
 	command := instancePkg.ExecprogCmd(inst.execprogBin, inst.executorBin,
-		ctx.cfg.TargetOS, ctx.cfg.TargetArch, opts.Sandbox, opts.Repeat,
+		ctx.cfg.TargetOS, ctx.cfg.TargetArch, sandbox, opts.Repeat,
 		opts.Threaded, opts.Collide, opts.Procs, -1, -1, vmProgFile)
 	ctx.reproLog(2, "testing program (duration=%v, %+v): %s", duration, opts, program)
 	ctx.reproLog(3, "detailed listing:\n%s", pstr)
@@ -778,137 +718,3 @@ func encodeEntries(entries []*prog.LogEntry) []byte {
 	}
 	return buf.Bytes()
 }
-
-type Simplify func(opts *csource.Options) bool
-
-var progSimplifies = []Simplify{
-	func(opts *csource.Options) bool {
-		if !opts.Fault {
-			return false
-		}
-		opts.Fault = false
-		opts.FaultCall = 0
-		opts.FaultNth = 0
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.Collide {
-			return false
-		}
-		opts.Collide = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if opts.Collide || !opts.Threaded {
-			return false
-		}
-		opts.Threaded = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.Repeat {
-			return false
-		}
-		opts.Repeat = false
-		opts.Cgroups = false
-		opts.NetReset = false
-		opts.Procs = 1
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if opts.Procs == 1 {
-			return false
-		}
-		opts.Procs = 1
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if opts.Sandbox == "none" {
-			return false
-		}
-		opts.Sandbox = "none"
-		return true
-	},
-}
-
-var cSimplifies = append(progSimplifies, []Simplify{
-	func(opts *csource.Options) bool {
-		if opts.Sandbox == "" {
-			return false
-		}
-		opts.Sandbox = ""
-		opts.NetInjection = false
-		opts.NetDevices = false
-		opts.NetReset = false
-		opts.Cgroups = false
-		opts.BinfmtMisc = false
-		opts.CloseFDs = false
-		opts.DevlinkPCI = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.NetInjection {
-			return false
-		}
-		opts.NetInjection = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.NetDevices {
-			return false
-		}
-		opts.NetDevices = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.NetReset {
-			return false
-		}
-		opts.NetReset = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.Cgroups {
-			return false
-		}
-		opts.Cgroups = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.BinfmtMisc {
-			return false
-		}
-		opts.BinfmtMisc = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		// We don't want to remove close_fds() call when repeat is enabled,
-		// since that can lead to deadlocks, see executor/common_linux.h.
-		if !opts.CloseFDs || opts.Repeat {
-			return false
-		}
-		opts.CloseFDs = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.DevlinkPCI {
-			return false
-		}
-		opts.DevlinkPCI = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.UseTmpDir || opts.Sandbox == "namespace" || opts.Cgroups {
-			return false
-		}
-		opts.UseTmpDir = false
-		return true
-	},
-	func(opts *csource.Options) bool {
-		if !opts.HandleSegv {
-			return false
-		}
-		opts.HandleSegv = false
-		return true
-	},
-}...)

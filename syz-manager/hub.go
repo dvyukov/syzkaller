@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/hash"
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/report"
@@ -21,8 +20,8 @@ func (mgr *Manager) hubSyncLoop() {
 		cfg:           mgr.cfg,
 		target:        mgr.target,
 		stats:         mgr.stats,
-		enabledCalls:  mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox],
-		leak:          mgr.checkResult.Features[host.FeatureLeak].Enabled,
+		enabledCalls:  mgr.enabledSyscalls,
+		leak:          mgr.features.Leak,
 		fresh:         mgr.fresh,
 		hubReproQueue: mgr.hubReproQueue,
 	}

@@ -25,19 +25,18 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/csource"
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/feature"
 	"github.com/google/syzkaller/sys/targets"
 )
 
 type RunRequest struct {
-	Bin    string
-	P      *prog.Prog
-	Cfg    *ipc.Config
-	Opts   *ipc.ExecOpts
-	Repeat int
+	Bin      string
+	P        *prog.Prog
+	Features *feature.Set
+	Repeat   int
 
 	Done   chan struct{}
 	Output []byte
@@ -53,13 +52,12 @@ type RunRequest struct {
 type Context struct {
 	Dir          string
 	Target       *prog.Target
-	Features     *host.Features
+	Features     *feature.Set
 	EnabledCalls map[string]map[*prog.Syscall]bool
 	Requests     chan *RunRequest
 	LogFunc      func(text string)
 	Retries      int // max number of test retries to deal with flaky tests
 	Verbose      bool
-	Debug        bool
 	Tests        string // prefix to match test file names
 }
 
@@ -158,11 +156,14 @@ func (ctx *Context) generatePrograms(progs chan *RunRequest) error {
 		return fmt.Errorf("failed to read %v: %v", ctx.Dir, err)
 	}
 	cover := []bool{false}
-	if ctx.Features[host.FeatureCoverage].Enabled {
+	if ctx.Features.Coverage {
 		cover = append(cover, true)
 	}
 	var sandboxes []string
 	for sandbox := range ctx.EnabledCalls {
+		if sandbox == "" {
+			continue // executor does not support empty sandbox
+		}
 		sandboxes = append(sandboxes, sandbox)
 	}
 	sort.Strings(sandboxes)
@@ -205,9 +206,6 @@ func (ctx *Context) generatePrograms(progs chan *RunRequest) error {
 						name += "/repeat"
 					}
 					for _, cov := range cover {
-						if sandbox == "" {
-							break // executor does not support empty sandbox
-						}
 						name := name
 						if cov {
 							name += "/cover"
@@ -346,70 +344,53 @@ func match(props map[string]bool, requires map[string]bool) bool {
 }
 
 func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bool, times int) (*RunRequest, error) {
-	sysTarget := targets.Get(p.Target.OS, p.Target.Arch)
-	cfg := new(ipc.Config)
-	opts := new(ipc.ExecOpts)
-	cfg.UseShmem = sysTarget.ExecutorUsesShmem
-	cfg.UseForkServer = sysTarget.ExecutorUsesForkServer
-	sandboxFlags, err := ipc.SandboxToFlags(sandbox)
-	if err != nil {
-		return nil, err
-	}
-	cfg.Flags |= sandboxFlags
-	if threaded {
-		opts.Flags |= ipc.FlagThreaded | ipc.FlagCollide
-	}
-	if cov {
-		cfg.Flags |= ipc.FlagSignal
-		opts.Flags |= ipc.FlagCollectCover
-	}
-	if ctx.Features[host.FeatureExtraCoverage].Enabled {
-		cfg.Flags |= ipc.FlagExtraCover
-	}
-	if ctx.Features[host.FeatureNetInjection].Enabled {
-		cfg.Flags |= ipc.FlagEnableTun
-	}
-	if ctx.Features[host.FeatureNetDevices].Enabled {
-		cfg.Flags |= ipc.FlagEnableNetDev
-	}
-	cfg.Flags |= ipc.FlagEnableNetReset
-	cfg.Flags |= ipc.FlagEnableCgroups
-	if ctx.Features[host.FeatureDevlinkPCI].Enabled {
-		cfg.Flags |= ipc.FlagEnableDevlinkPCI
-	}
-	if ctx.Debug {
-		cfg.Flags |= ipc.FlagDebug
-	}
+	features := ctx.Features.Copy()
+	//!!!
+	/*
+		if err := features.SetSandbox(sandbox); err != nil {
+			return nil, err
+		}
+	*/
+	features.Coverage = cov
+	features.Threaded = threaded
+	features.Collide = threaded
+	/*
+		if cov {
+			opts.Flags = ipc.FlagCollectCover
+		}
+	*/
 	req := &RunRequest{
-		P:      p,
-		Cfg:    cfg,
-		Opts:   opts,
-		Repeat: times,
+		P:        p,
+		Features: features,
+		Repeat:   times,
 	}
 	return req, nil
 }
 
 func (ctx *Context) createCTest(p *prog.Prog, sandbox string, threaded bool, times int) (*RunRequest, error) {
 	opts := csource.Options{
-		Threaded:    threaded,
-		Collide:     false,
-		Repeat:      times > 1,
+		//!!! Threaded:      threaded,
+		//Collide:       false,
+		//Repeat:        times > 1,
 		RepeatTimes: times,
 		Procs:       1,
-		Sandbox:     sandbox,
-		UseTmpDir:   true,
-		HandleSegv:  true,
-		Cgroups:     p.Target.OS == "linux" && sandbox != "",
-		Trace:       true,
+		//Sandbox:       sandbox,
+		//UseTmpDir:     true,
+		//HandleSegv:    true,
+		//EnableCgroups: p.Target.OS == "linux" && sandbox != "",
+		Trace: true,
 	}
-	if sandbox != "" {
-		if ctx.Features[host.FeatureNetInjection].Enabled {
-			opts.NetInjection = true
+	//!!!
+	/*
+		if sandbox != "" {
+			if ctx.Features[targets.FeatureNetworkInjection].Enabled {
+				opts.EnableTun = true
+			}
+			if ctx.Features[targets.FeatureNetworkDevices].Enabled {
+				opts.EnableNetDev = true
+			}
 		}
-		if ctx.Features[host.FeatureNetDevices].Enabled {
-			opts.NetDevices = true
-		}
-	}
+	*/
 	src, err := csource.Write(p, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create C source: %v", err)
@@ -471,7 +452,7 @@ func checkResult(req *RunRequest) error {
 			if isC || inf.Flags&ipc.CallExecuted == 0 {
 				continue
 			}
-			if req.Cfg.Flags&ipc.FlagSignal != 0 {
+			if req.Features.Coverage {
 				// Signal is always deduplicated, so we may not get any signal
 				// on a second invocation of the same syscall.
 				// For calls that are not meant to collect synchronous coverage we
@@ -532,7 +513,7 @@ func parseBinOutput(req *RunRequest) ([]*ipc.ProgInfo, error) {
 	return infos, nil
 }
 
-func RunTest(req *RunRequest, executor string) {
+func RunTest(req *RunRequest) {
 	if req.Bin != "" {
 		tmpDir, err := ioutil.TempDir("", "syz-runtest")
 		if err != nil {
@@ -549,7 +530,6 @@ func RunTest(req *RunRequest, executor string) {
 		}
 		return
 	}
-	req.Cfg.Executor = executor
 	var env *ipc.Env
 	defer func() {
 		if env != nil {
@@ -564,13 +544,13 @@ func RunTest(req *RunRequest, executor string) {
 				env = nil
 			}
 			var err error
-			env, err = ipc.MakeEnv(req.Cfg, 0)
+			env, err = ipc.MakeEnv(req.P.Target, 0)
 			if err != nil {
 				req.Err = fmt.Errorf("failed to create ipc env: %v", err)
 				return
 			}
 		}
-		output, info, hanged, err := env.Exec(req.Opts, req.P)
+		output, info, hanged, err := env.Exec(req.Features, req.P)
 		req.Output = append(req.Output, output...)
 		if err != nil {
 			req.Err = fmt.Errorf("run %v: failed to run: %v", run, err)

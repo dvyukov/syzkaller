@@ -111,7 +111,11 @@ func main() {
 		}
 		enabledCalls[sandbox] = calls
 	}
-	for _, feat := range mgr.checkResult.Features.Supported() {
+	features, err := mgr.checkResult.Features.Deserialize()
+	if err != nil {
+		log.Fatalf("failed to deserialize features: %v", err)
+	}
+	for _, feat := range features.Supported() {
 		fmt.Printf("%-24v: %v\n", feat.Name, feat.Reason)
 	}
 	for sandbox, calls := range enabledCalls {
@@ -120,12 +124,11 @@ func main() {
 	ctx := &runtest.Context{
 		Dir:          testDir,
 		Target:       target,
-		Features:     mgr.checkResult.Features,
+		Features:     features,
 		EnabledCalls: enabledCalls,
 		Requests:     mgr.requests,
 		LogFunc:      func(text string) { fmt.Println(text) },
 		Verbose:      false,
-		Debug:        *flagDebug,
 		Tests:        *flagTests,
 	}
 	err = ctx.Run()
@@ -258,8 +261,7 @@ func (mgr *Manager) Poll(a *rpctype.RunTestPollReq, r *rpctype.RunTestPollRes) e
 		return nil
 	}
 	r.Prog = req.P.Serialize()
-	r.Cfg = req.Cfg
-	r.Opts = req.Opts
+	r.Features = req.Features.Serialize()
 	r.Repeat = req.Repeat
 	return nil
 }

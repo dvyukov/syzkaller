@@ -6,9 +6,9 @@
 package rpctype
 
 import (
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/signal"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 type RPCInput struct {
@@ -43,7 +43,7 @@ type CheckArgs struct {
 	Error         string
 	EnabledCalls  map[string][]int
 	DisabledCalls map[string][]SyscallReason
-	Features      *host.Features
+	Features      *feature.Serialized
 }
 
 type SyscallReason struct {
@@ -113,12 +113,11 @@ type RunTestPollReq struct {
 }
 
 type RunTestPollRes struct {
-	ID     int
-	Bin    []byte
-	Prog   []byte
-	Cfg    *ipc.Config
-	Opts   *ipc.ExecOpts
-	Repeat int
+	ID       int
+	Bin      []byte
+	Prog     []byte
+	Repeat   int
+	Features *feature.Serialized
 }
 
 type RunTestDoneArgs struct {

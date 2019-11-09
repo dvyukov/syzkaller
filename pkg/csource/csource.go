@@ -55,8 +55,15 @@ func Write(p *prog.Prog, opts Options) ([]byte, error) {
 	}
 
 	sandboxFunc := "loop();"
-	if opts.Sandbox != "" {
-		sandboxFunc = "do_sandbox_" + opts.Sandbox + "();"
+	switch {
+	case opts.SandboxNone:
+		sandboxFunc = "do_sandbox_none();"
+	case opts.SandboxSetuid:
+		sandboxFunc = "do_sandbox_setuid();"
+	case opts.SandboxNamespace:
+		sandboxFunc = "do_sandbox_namespace();"
+	case opts.SandboxAndroid:
+		sandboxFunc = "do_sandbox_android();"
 	}
 	replacements := map[string]string{
 		"PROCS":           fmt.Sprint(opts.Procs),
@@ -68,7 +75,7 @@ func Write(p *prog.Prog, opts Options) ([]byte, error) {
 		"RESULTS":         varsBuf.String(),
 		"SYSCALLS":        ctx.generateSyscalls(calls, len(vars) != 0),
 	}
-	if !opts.Threaded && !opts.Repeat && opts.Sandbox == "" {
+	if !opts.Threaded && !opts.Repeat && opts.SandboxEmpty {
 		// This inlines syscalls right into main for the simplest case.
 		replacements["SANDBOX_FUNC"] = replacements["SYSCALLS"]
 		replacements["SYSCALLS"] = "unused"

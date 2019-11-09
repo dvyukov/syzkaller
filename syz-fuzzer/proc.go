@@ -20,6 +20,7 @@ import (
 	"github.com/google/syzkaller/pkg/rpctype"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 const (
@@ -32,40 +33,40 @@ type Proc struct {
 	pid               int
 	env               *ipc.Env
 	rnd               *rand.Rand
-	execOpts          *ipc.ExecOpts
-	execOptsCover     *ipc.ExecOpts
-	execOptsComps     *ipc.ExecOpts
-	execOptsNoCollide *ipc.ExecOpts
+	features          *feature.Set
+	featuresCover     *feature.Set
+	featuresComps     *feature.Set
+	featuresNoCollide *feature.Set
 }
 
 func newProc(fuzzer *Fuzzer, pid int) (*Proc, error) {
-	env, err := ipc.MakeEnv(fuzzer.config, pid)
+	env, err := ipc.MakeEnv(fuzzer.target, pid)
 	if err != nil {
 		return nil, err
 	}
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano() + int64(pid)*1e12))
-	execOptsNoCollide := *fuzzer.execOpts
-	execOptsNoCollide.Flags &= ^ipc.FlagCollide
-	execOptsCover := execOptsNoCollide
-	execOptsCover.Flags |= ipc.FlagCollectCover
-	execOptsComps := execOptsNoCollide
-	execOptsComps.Flags |= ipc.FlagCollectComps
+	featuresNoCollide := fuzzer.features.Copy()
+	featuresNoCollide.Collide = false
+	featuresCover := featuresNoCollide.Copy()
+	featuresCover.RawCoverage = true
+	featuresComps := featuresNoCollide.Copy()
+	featuresComps.Comparisons = true
 	proc := &Proc{
 		fuzzer:            fuzzer,
 		pid:               pid,
 		env:               env,
 		rnd:               rnd,
-		execOpts:          fuzzer.execOpts,
-		execOptsCover:     &execOptsCover,
-		execOptsComps:     &execOptsComps,
-		execOptsNoCollide: &execOptsNoCollide,
+		features:          fuzzer.features,
+		featuresCover:     featuresCover,
+		featuresComps:     featuresComps,
+		featuresNoCollide: featuresNoCollide,
 	}
 	return proc, nil
 }
 
 func (proc *Proc) loop() {
 	generatePeriod := 100
-	if proc.fuzzer.config.Flags&ipc.FlagSignal == 0 {
+	if !proc.features.Coverage {
 		// If we don't have real coverage signal, generate programs more frequently
 		// because fallback signal is weak.
 		generatePeriod = 2
@@ -77,7 +78,7 @@ func (proc *Proc) loop() {
 			case *WorkTriage:
 				proc.triageInput(item)
 			case *WorkCandidate:
-				proc.execute(proc.execOpts, item.p, item.flags, StatCandidate)
+				proc.execute(proc.features, item.p, item.flags, StatCandidate)
 			case *WorkSmash:
 				proc.smashInput(item)
 			default:
@@ -92,13 +93,13 @@ func (proc *Proc) loop() {
 			// Generate a new prog.
 			p := proc.fuzzer.target.Generate(proc.rnd, programLength, ct)
 			log.Logf(1, "#%v: generated", proc.pid)
-			proc.execute(proc.execOpts, p, ProgNormal, StatGenerate)
+			proc.execute(proc.features, p, ProgNormal, StatGenerate)
 		} else {
 			// Mutate an existing prog.
 			p := fuzzerSnapshot.chooseProgram(proc.rnd).Clone()
 			p.Mutate(proc.rnd, programLength, ct, fuzzerSnapshot.corpus)
 			log.Logf(1, "#%v: mutated", proc.pid)
-			proc.execute(proc.execOpts, p, ProgNormal, StatFuzz)
+			proc.execute(proc.features, p, ProgNormal, StatFuzz)
 		}
 	}
 }
@@ -127,7 +128,7 @@ func (proc *Proc) triageInput(item *WorkTriage) {
 	// Compute input coverage and non-flaky signal for minimization.
 	notexecuted := 0
 	for i := 0; i < signalRuns; i++ {
-		info := proc.executeRaw(proc.execOptsCover, item.p, StatTriage)
+		info := proc.executeRaw(proc.featuresCover, item.p, StatTriage)
 		if !reexecutionSuccess(info, &item.info, item.call) {
 			// The call was not executed or failed.
 			notexecuted++
@@ -149,7 +150,7 @@ func (proc *Proc) triageInput(item *WorkTriage) {
 		item.p, item.call = prog.Minimize(item.p, item.call, false,
 			func(p1 *prog.Prog, call1 int) bool {
 				for i := 0; i < minimizeAttempts; i++ {
-					info := proc.execute(proc.execOptsNoCollide, p1, ProgNormal, StatMinimize)
+					info := proc.execute(proc.featuresNoCollide, p1, ProgNormal, StatMinimize)
 					if !reexecutionSuccess(info, &item.info, call1) {
 						// The call was not executed or failed.
 						continue
@@ -205,10 +206,10 @@ func getSignalAndCover(p *prog.Prog, info *ipc.ProgInfo, call int) (signal.Signa
 }
 
 func (proc *Proc) smashInput(item *WorkSmash) {
-	if proc.fuzzer.faultInjectionEnabled && item.call != -1 {
+	if proc.features.All[feature.Fault].Present && item.call != -1 {
 		proc.failCall(item.p, item.call)
 	}
-	if proc.fuzzer.comparisonTracingEnabled && item.call != -1 {
+	if proc.features.All[feature.Comparisons].Present && item.call != -1 {
 		proc.executeHintSeed(item.p, item.call)
 	}
 	fuzzerSnapshot := proc.fuzzer.snapshot()
@@ -216,18 +217,18 @@ func (proc *Proc) smashInput(item *WorkSmash) {
 		p := item.p.Clone()
 		p.Mutate(proc.rnd, programLength, proc.fuzzer.choiceTable, fuzzerSnapshot.corpus)
 		log.Logf(1, "#%v: smash mutated", proc.pid)
-		proc.execute(proc.execOpts, p, ProgNormal, StatSmash)
+		proc.execute(proc.features, p, ProgNormal, StatSmash)
 	}
 }
 
 func (proc *Proc) failCall(p *prog.Prog, call int) {
 	for nth := 0; nth < 100; nth++ {
 		log.Logf(1, "#%v: injecting fault into call %v/%v", proc.pid, call, nth)
-		opts := *proc.execOpts
-		opts.Flags |= ipc.FlagInjectFault
-		opts.FaultCall = call
-		opts.FaultNth = nth
-		info := proc.executeRaw(&opts, p, StatSmash)
+		features := proc.features.Copy()
+		features.Fault = true
+		features.FaultCall = call
+		features.FaultNth = nth
+		info := proc.executeRaw(features, p, StatSmash)
 		if info != nil && len(info.Calls) > call && info.Calls[call].Flags&ipc.CallFaultInjected == 0 {
 			break
 		}
@@ -237,7 +238,7 @@ func (proc *Proc) failCall(p *prog.Prog, call int) {
 func (proc *Proc) executeHintSeed(p *prog.Prog, call int) {
 	log.Logf(1, "#%v: collecting comparisons", proc.pid)
 	// First execute the original program to dump comparisons from KCOV.
-	info := proc.execute(proc.execOptsComps, p, ProgNormal, StatSeed)
+	info := proc.execute(proc.featuresComps, p, ProgNormal, StatSeed)
 	if info == nil {
 		return
 	}
@@ -247,12 +248,12 @@ func (proc *Proc) executeHintSeed(p *prog.Prog, call int) {
 	// Execute each of such mutants to check if it gives new coverage.
 	p.MutateWithHints(call, info.Calls[call].Comps, func(p *prog.Prog) {
 		log.Logf(1, "#%v: executing comparison hint", proc.pid)
-		proc.execute(proc.execOpts, p, ProgNormal, StatHint)
+		proc.execute(proc.features, p, ProgNormal, StatHint)
 	})
 }
 
-func (proc *Proc) execute(execOpts *ipc.ExecOpts, p *prog.Prog, flags ProgTypes, stat Stat) *ipc.ProgInfo {
-	info := proc.executeRaw(execOpts, p, stat)
+func (proc *Proc) execute(features *feature.Set, p *prog.Prog, flags ProgTypes, stat Stat) *ipc.ProgInfo {
+	info := proc.executeRaw(features, p, stat)
 	calls, extra := proc.fuzzer.checkNewSignal(p, info)
 	for _, callIndex := range calls {
 		proc.enqueueCallTriage(p, flags, callIndex, info.Calls[callIndex])
@@ -277,8 +278,8 @@ func (proc *Proc) enqueueCallTriage(p *prog.Prog, flags ProgTypes, callIndex int
 	})
 }
 
-func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.ProgInfo {
-	if opts.Flags&ipc.FlagDedupCover == 0 {
+func (proc *Proc) executeRaw(features *feature.Set, p *prog.Prog, stat Stat) *ipc.ProgInfo {
+	if features.TraceCoverage {
 		log.Fatalf("dedup cover is not enabled")
 	}
 
@@ -286,10 +287,10 @@ func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.P
 	ticket := proc.fuzzer.gate.Enter()
 	defer proc.fuzzer.gate.Leave(ticket)
 
-	proc.logProgram(opts, p)
+	proc.logProgram(features, p)
 	for try := 0; ; try++ {
 		atomic.AddUint64(&proc.fuzzer.stats[stat], 1)
-		output, info, hanged, err := proc.env.Exec(opts, p)
+		output, info, hanged, err := proc.env.Exec(features, p)
 		if err != nil {
 			if try > 10 {
 				log.Fatalf("executor %v failed %v times:\n%v", proc.pid, try, err)
@@ -304,15 +305,15 @@ func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.P
 	}
 }
 
-func (proc *Proc) logProgram(opts *ipc.ExecOpts, p *prog.Prog) {
+func (proc *Proc) logProgram(features *feature.Set, p *prog.Prog) {
 	if proc.fuzzer.outputType == OutputNone {
 		return
 	}
 
 	data := p.Serialize()
 	strOpts := ""
-	if opts.Flags&ipc.FlagInjectFault != 0 {
-		strOpts = fmt.Sprintf(" (fault-call:%v fault-nth:%v)", opts.FaultCall, opts.FaultNth)
+	if features.Fault {
+		strOpts = fmt.Sprintf(" (fault-call:%v fault-nth:%v)", features.FaultCall, features.FaultNth)
 	}
 
 	// The following output helps to understand what program crashed kernel.

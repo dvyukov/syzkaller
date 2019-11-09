@@ -2685,7 +2685,6 @@ static int do_sandbox_none(void)
 #include <sched.h>
 #include <sys/prctl.h>
 
-#define SYZ_HAVE_SANDBOX_SETUID 1
 static int do_sandbox_setuid(void)
 {
 	if (unshare(CLONE_NEWPID)) {
@@ -2828,7 +2827,6 @@ static int namespace_sandbox_proc(void* arg)
 	doexit(1);
 }
 
-#define SYZ_HAVE_SANDBOX_NAMESPACE 1
 static int do_sandbox_namespace(void)
 {
 	int pid;
@@ -2951,7 +2949,6 @@ static void syz_setfilecon(const char* path, const char* context)
 		fail("setfilecon: could not set context to %s, currently %s", context, new_context);
 }
 
-#define SYZ_HAVE_SANDBOX_ANDROID 1
 static int do_sandbox_android(void)
 {
 	setup_common();
@@ -3260,7 +3257,6 @@ static void setup_test()
 #endif
 
 #if SYZ_EXECUTOR || SYZ_CLOSE_FDS
-#define SYZ_HAVE_CLOSE_FDS 1
 static void close_fds()
 {
 #if SYZ_EXECUTOR
@@ -3327,7 +3323,6 @@ static void setup_leak()
 		fail("failed to write %s", KMEMLEAK_FILE);
 }
 
-#define SYZ_HAVE_LEAK_CHECK 1
 #if SYZ_EXECUTOR
 static void check_leaks(char** frames, int nframes)
 #else
@@ -3449,6 +3444,5 @@ static void setup_kcsan_filterlist(char** frames, int nframes, bool blacklist)
 	close(fd);
 }
 
-#define SYZ_HAVE_KCSAN 1
 #endif
 #endif

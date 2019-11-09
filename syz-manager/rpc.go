@@ -61,7 +61,7 @@ func startRPCServer(mgr *Manager) (int, error) {
 	serv := &RPCServer{
 		mgr:             mgr,
 		target:          mgr.target,
-		enabledSyscalls: mgr.enabledSyscalls,
+		enabledSyscalls: mgr.configEnabledSyscalls,
 		stats:           mgr.stats,
 		sandbox:         mgr.cfg.Sandbox,
 		fuzzers:         make(map[string]*Fuzzer),

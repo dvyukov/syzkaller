@@ -17,24 +17,23 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/hash"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
-	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/rpctype"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
 	_ "github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 type Fuzzer struct {
-	name              string
-	outputType        OutputType
-	config            *ipc.Config
-	execOpts          *ipc.ExecOpts
+	name       string
+	outputType OutputType
+	features   *feature.Set
+	//executor string
 	procs             []*Proc
 	gate              *ipc.Gate
 	workQueue         *WorkQueue
@@ -45,8 +44,8 @@ type Fuzzer struct {
 	target            *prog.Target
 	triagedCandidates uint32
 
-	faultInjectionEnabled    bool
-	comparisonTracingEnabled bool
+	//faultInjectionEnabled    bool
+	//comparisonTracingEnabled bool
 
 	corpusMu     sync.RWMutex
 	corpus       []*prog.Prog
@@ -106,16 +105,21 @@ func main() {
 	debug.SetGCPercent(50)
 
 	var (
-		flagName    = flag.String("name", "test", "unique name for manager")
-		flagOS      = flag.String("os", runtime.GOOS, "target OS")
-		flagArch    = flag.String("arch", runtime.GOARCH, "target arch")
+		flagName = flag.String("name", "test", "unique name for manager")
+		flagOS   = flag.String("os", runtime.GOOS, "target OS")
+		flagArch = flag.String("arch", runtime.GOARCH, "target arch")
+		//!!! use this flag
+		//flagSandbox  = flag.String("sandbox", "none", "sandbox for fuzzing (none/setuid/namespace/android)")
+		//!!! use this flag
+		//flagCoverage   = flag.Bool("cover", false, "collect coverage (feedback signal)")
+		//flagDebug = flag.Bool("debug", false, "debug mode")
 		flagManager = flag.String("manager", "", "manager rpc address")
-		flagProcs   = flag.Int("procs", 1, "number of parallel test processes")
 		flagOutput  = flag.String("output", "stdout", "write programs to none/stdout/dmesg/file")
 		flagPprof   = flag.String("pprof", "", "address to serve pprof profiles")
 		flagTest    = flag.Bool("test", false, "enable image testing mode")      // used by syz-ci
 		flagRunTest = flag.Bool("runtest", false, "enable program testing mode") // used by pkg/runtest
 	)
+	feature.InitFlags()
 	flag.Parse()
 	outputType := parseOutputType(*flagOutput)
 	log.Logf(0, "fuzzer started")
@@ -125,11 +129,6 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	config, execOpts, err := ipcconfig.Default(target)
-	if err != nil {
-		log.Fatalf("failed to create default ipc config: %v", err)
-	}
-	sandbox := ipc.FlagsToSandbox(config.Flags)
 	shutdown := make(chan struct{})
 	osutil.HandleInterrupts(shutdown)
 	go func() {
@@ -139,14 +138,8 @@ func main() {
 		os.Exit(1)
 	}()
 
-	checkArgs := &checkArgs{
-		target:      target,
-		sandbox:     sandbox,
-		ipcConfig:   config,
-		ipcExecOpts: execOpts,
-	}
 	if *flagTest {
-		testImage(*flagManager, checkArgs)
+		testImage(*flagManager, target)
 		return
 	}
 
@@ -169,16 +162,16 @@ func main() {
 	if err := manager.Call("Manager.Connect", a, r); err != nil {
 		log.Fatalf("failed to connect to manager: %v ", err)
 	}
-	featureFlags, err := csource.ParseFeaturesFlags("none", "none", true)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if r.CheckResult == nil {
-		checkArgs.gitRevision = r.GitRevision
-		checkArgs.targetRevision = r.TargetRevision
-		checkArgs.enabledCalls = r.EnabledCalls
-		checkArgs.allSandboxes = r.AllSandboxes
-		checkArgs.featureFlags = featureFlags
+	needCheck := r.CheckResult == nil
+	if needCheck {
+		checkArgs := &checkArgs{
+			target:         target,
+			gitRevision:    r.GitRevision,
+			targetRevision: r.TargetRevision,
+			enabledCalls:   r.EnabledCalls,
+			allSandboxes:   r.AllSandboxes,
+			//debug:          *flagDebug,
+		}
 		r.CheckResult, err = checkMachine(checkArgs)
 		if err != nil {
 			if r.CheckResult == nil {
@@ -193,64 +186,61 @@ func main() {
 		if r.CheckResult.Error != "" {
 			log.Fatalf("%v", r.CheckResult.Error)
 		}
-	} else {
-		if err = host.Setup(target, r.CheckResult.Features, featureFlags, config.Executor); err != nil {
+	}
+	features, err := r.CheckResult.Features.Deserialize()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := features.ParseFlags(); err != nil {
+		log.Fatal(err)
+	}
+	if !needCheck {
+		if err = host.Setup(target, features); err != nil {
 			log.Fatal(err)
 		}
 	}
-	log.Logf(0, "syscalls: %v", len(r.CheckResult.EnabledCalls[sandbox]))
-	for _, feat := range r.CheckResult.Features.Supported() {
+	enabledCalls := r.CheckResult.EnabledCalls[features.Sandbox()]
+
+	log.Logf(0, "syscalls: %v", len(enabledCalls))
+	for _, feat := range features.Supported() {
 		log.Logf(0, "%v: %v", feat.Name, feat.Reason)
 	}
-	if r.CheckResult.Features[host.FeatureExtraCoverage].Enabled {
-		config.Flags |= ipc.FlagExtraCover
-	}
-	if r.CheckResult.Features[host.FeatureNetInjection].Enabled {
-		config.Flags |= ipc.FlagEnableTun
-	}
-	if r.CheckResult.Features[host.FeatureNetDevices].Enabled {
-		config.Flags |= ipc.FlagEnableNetDev
-	}
-	config.Flags |= ipc.FlagEnableNetReset
-	config.Flags |= ipc.FlagEnableCgroups
-	config.Flags |= ipc.FlagEnableCloseFds
-	if r.CheckResult.Features[host.FeatureDevlinkPCI].Enabled {
-		config.Flags |= ipc.FlagEnableDevlinkPCI
-	}
+	//config, execOpts := ipc.MakeConfig(target, r.CheckResult.Features, *flagExecutor)
 
 	if *flagRunTest {
-		runTest(target, manager, *flagName, config.Executor)
+		runTest(target, manager, *flagName, features.Executor)
 		return
 	}
 
 	needPoll := make(chan struct{}, 1)
 	needPoll <- struct{}{}
 	fuzzer := &Fuzzer{
-		name:                     *flagName,
-		outputType:               outputType,
-		config:                   config,
-		execOpts:                 execOpts,
-		workQueue:                newWorkQueue(*flagProcs, needPoll),
-		needPoll:                 needPoll,
-		manager:                  manager,
-		target:                   target,
-		faultInjectionEnabled:    r.CheckResult.Features[host.FeatureFault].Enabled,
-		comparisonTracingEnabled: r.CheckResult.Features[host.FeatureComparisons].Enabled,
-		corpusHashes:             make(map[hash.Sig]struct{}),
+		name:       *flagName,
+		outputType: outputType,
+		features:   features,
+		//config:                   config,
+		//execOpts:                 execOpts,
+		workQueue: newWorkQueue(features.Procs, needPoll),
+		needPoll:  needPoll,
+		manager:   manager,
+		target:    target,
+		//faultInjectionEnabled:    features.Fault,
+		//comparisonTracingEnabled: features.Comparisons,
+		corpusHashes: make(map[hash.Sig]struct{}),
 	}
-	gateCallback := fuzzer.useBugFrames(r, *flagProcs)
-	fuzzer.gate = ipc.NewGate(2**flagProcs, gateCallback)
+	gateCallback := fuzzer.useBugFrames(r, features)
+	fuzzer.gate = ipc.NewGate(2*features.Procs, gateCallback)
 
 	for i := 0; fuzzer.poll(i == 0, nil); i++ {
 	}
 	calls := make(map[*prog.Syscall]bool)
-	for _, id := range r.CheckResult.EnabledCalls[sandbox] {
+	for _, id := range enabledCalls {
 		calls[target.Syscalls[id]] = true
 	}
 	prios := target.CalculatePriorities(fuzzer.corpus)
 	fuzzer.choiceTable = target.BuildChoiceTable(prios, calls)
 
-	for pid := 0; pid < *flagProcs; pid++ {
+	for pid := 0; pid < features.Procs; pid++ {
 		proc, err := newProc(fuzzer, pid)
 		if err != nil {
 			log.Fatalf("failed to create proc: %v", err)
@@ -263,14 +253,14 @@ func main() {
 }
 
 // Returns gateCallback for leak checking if enabled.
-func (fuzzer *Fuzzer) useBugFrames(r *rpctype.ConnectRes, flagProcs int) func() {
+func (fuzzer *Fuzzer) useBugFrames(r *rpctype.ConnectRes, features *feature.Set) func() {
 	var gateCallback func()
 
-	if r.CheckResult.Features[host.FeatureLeak].Enabled {
+	if features.Leak {
 		gateCallback = func() { fuzzer.gateCallback(r.MemoryLeakFrames) }
 	}
 
-	if r.CheckResult.Features[host.FeatureKCSAN].Enabled && len(r.DataRaceFrames) != 0 {
+	if features.KCSAN && len(r.DataRaceFrames) != 0 {
 		fuzzer.blacklistDataRaceFrames(r.DataRaceFrames)
 	}
 
@@ -288,7 +278,7 @@ func (fuzzer *Fuzzer) gateCallback(leakFrames []string) {
 		return
 	}
 	args := append([]string{"leak"}, leakFrames...)
-	output, err := osutil.RunCmd(10*time.Minute, "", fuzzer.config.Executor, args...)
+	output, err := osutil.RunCmd(10*time.Minute, "", fuzzer.features.Executor, args...)
 	if err != nil && triagedCandidates == 2 {
 		// If we exit right away, dying executors will dump lots of garbage to console.
 		os.Stdout.Write(output)
@@ -303,7 +293,7 @@ func (fuzzer *Fuzzer) gateCallback(leakFrames []string) {
 
 func (fuzzer *Fuzzer) blacklistDataRaceFrames(frames []string) {
 	args := append([]string{"setup_kcsan_blacklist"}, frames...)
-	output, err := osutil.RunCmd(10*time.Minute, "", fuzzer.config.Executor, args...)
+	output, err := osutil.RunCmd(10*time.Minute, "", fuzzer.features.Executor, args...)
 	if err != nil {
 		log.Fatalf("failed to set KCSAN blacklist: %v", err)
 	}

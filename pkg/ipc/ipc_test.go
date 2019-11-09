@@ -1,11 +1,10 @@
 // Copyright 2015 syzkaller project authors. All rights reserved.
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
-package ipc_test
+package ipc
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,11 +12,11 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/csource"
-	. "github.com/google/syzkaller/pkg/ipc"
-	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
+	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
 	_ "github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 const timeout = 10 * time.Second
@@ -31,27 +30,21 @@ func buildExecutor(t *testing.T, target *prog.Target) string {
 	return bin
 }
 
-func initTest(t *testing.T) (*prog.Target, rand.Source, int, bool, bool) {
+func initTest(t *testing.T) (*prog.Target, *feature.Set, func()) {
 	t.Parallel()
-	iters := 100
-	if testing.Short() {
-		iters = 10
-	}
-	seed := time.Now().UnixNano()
-	if os.Getenv("TRAVIS") != "" {
-		seed = 0 // required for deterministic coverage reports
-	}
-	rs := rand.NewSource(seed)
-	t.Logf("seed=%v", seed)
 	target, err := prog.GetTarget(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, err := ipcconfig.Default(target)
+	features, err := host.Check(target, feature.DefaultFlags())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return target, rs, iters, cfg.UseShmem, cfg.UseForkServer
+	features.Executor = buildExecutor(t, target)
+	cleanup := func() {
+		os.Remove(features.Executor)
+	}
+	return target, features, cleanup
 }
 
 // TestExecutor runs all internal executor unit tests.
@@ -71,21 +64,23 @@ func TestExecutor(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
-	target, _, _, useShmem, useForkServer := initTest(t)
+	target, features0, cleanup := initTest(t)
+	defer cleanup()
 
-	bin := buildExecutor(t, target)
-	defer os.Remove(bin)
-
-	flags := []ExecFlags{0, FlagThreaded, FlagThreaded | FlagCollide}
-	for _, flag := range flags {
-		t.Logf("testing flags 0x%x\n", flag)
-		cfg := &Config{
-			Executor:      bin,
-			UseShmem:      useShmem,
-			UseForkServer: useForkServer,
-			Timeout:       timeout,
+	for mode := 0; mode < 3; mode++ {
+		t.Logf("testing mode %v\n", mode)
+		features := features0.Copy()
+		switch mode {
+		case 0:
+		case 1:
+			features.Collide = false
+		case 2:
+			features.Threaded = false
+			features.Collide = false
+		default:
+			panic("bad")
 		}
-		env, err := MakeEnv(cfg, 0)
+		env, err := MakeEnv(target, 0)
 		if err != nil {
 			t.Fatalf("failed to create env: %v", err)
 		}
@@ -93,10 +88,7 @@ func TestExecute(t *testing.T) {
 
 		for i := 0; i < 10; i++ {
 			p := target.GenerateSimpleProg()
-			opts := &ExecOpts{
-				Flags: flag,
-			}
-			output, info, hanged, err := env.Exec(opts, p)
+			output, info, hanged, err := env.Exec(features, p)
 			if err != nil {
 				t.Fatalf("failed to run executor: %v", err)
 			}
@@ -117,20 +109,15 @@ func TestExecute(t *testing.T) {
 }
 
 func TestParallel(t *testing.T) {
-	target, _, _, useShmem, useForkServer := initTest(t)
-	bin := buildExecutor(t, target)
-	defer os.Remove(bin)
-	cfg := &Config{
-		Executor:      bin,
-		UseShmem:      useShmem,
-		UseForkServer: useForkServer,
-	}
+	target, features, cleanup := initTest(t)
+	defer cleanup()
+
 	const P = 10
 	errs := make(chan error, P)
 	for p := 0; p < P; p++ {
 		p := p
 		go func() {
-			env, err := MakeEnv(cfg, p)
+			env, err := MakeEnv(target, p)
 			if err != nil {
 				errs <- fmt.Errorf("failed to create env: %v", err)
 				return
@@ -140,8 +127,7 @@ func TestParallel(t *testing.T) {
 				errs <- err
 			}()
 			p := target.GenerateSimpleProg()
-			opts := &ExecOpts{}
-			output, info, hanged, err := env.Exec(opts, p)
+			output, info, hanged, err := env.Exec(features, p)
 			if err != nil {
 				err = fmt.Errorf("failed to run executor: %v", err)
 				return

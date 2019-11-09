@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/log"
@@ -18,27 +17,32 @@ import (
 	"github.com/google/syzkaller/pkg/runtest"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys"
+	//"github.com/google/syzkaller/sys/targets"
+	"github.com/google/syzkaller/sys/feature"
 )
 
 type checkArgs struct {
-	target         *prog.Target
-	sandbox        string
+	target *prog.Target
+	//sandbox        string
 	gitRevision    string
 	targetRevision string
 	enabledCalls   []int
 	allSandboxes   bool
-	ipcConfig      *ipc.Config
-	ipcExecOpts    *ipc.ExecOpts
-	featureFlags   map[string]csource.Feature
+	//debug          bool
+	//ipcConfig      *ipc.Config
+	//ipcExecOpts    *ipc.ExecOpts
 }
 
-func testImage(hostAddr string, args *checkArgs) {
+func testImage(hostAddr string, target *prog.Target) {
 	log.Logf(0, "connecting to host at %v", hostAddr)
 	conn, err := rpctype.Dial(hostAddr)
 	if err != nil {
 		log.Fatalf("BUG: failed to connect to host: %v", err)
 	}
 	conn.Close()
+	args := &checkArgs{
+		target: target,
+	}
 	if _, err := checkMachine(args); err != nil {
 		log.Fatalf("BUG: %v", err)
 	}
@@ -54,18 +58,20 @@ func runTest(target *prog.Target, manager *rpctype.RPCClient, name, executor str
 		if len(req.Bin) == 0 && len(req.Prog) == 0 {
 			return
 		}
-		test := convertTestReq(target, req)
-		if test.Err == nil {
-			runtest.RunTest(test, executor)
-		}
 		reply := &rpctype.RunTestDoneArgs{
-			Name:   name,
-			ID:     req.ID,
-			Output: test.Output,
-			Info:   test.Info,
+			Name: name,
+			ID:   req.ID,
 		}
-		if test.Err != nil {
-			reply.Error = test.Err.Error()
+		test, err := convertTestReq(target, req, executor)
+		if err != nil {
+			reply.Error = err.Error()
+		} else {
+			runtest.RunTest(test)
+			reply.Output = test.Output
+			reply.Info = test.Info
+			if test.Err != nil {
+				reply.Error = test.Err.Error()
+			}
 		}
 		if err := manager.Call("Manager.Done", reply, nil); err != nil {
 			log.Fatalf("Manager.Done call failed: %v", err)
@@ -73,33 +79,34 @@ func runTest(target *prog.Target, manager *rpctype.RPCClient, name, executor str
 	}
 }
 
-func convertTestReq(target *prog.Target, req *rpctype.RunTestPollRes) *runtest.RunRequest {
+func convertTestReq(target *prog.Target, req *rpctype.RunTestPollRes, executor string) (*runtest.RunRequest, error) {
+	features, err := req.Features.Deserialize()
+	if err != nil {
+		return nil, err
+	}
+	features.Executor = executor
 	test := &runtest.RunRequest{
-		Cfg:    req.Cfg,
-		Opts:   req.Opts,
-		Repeat: req.Repeat,
+		Repeat:   req.Repeat,
+		Features: features,
 	}
 	if len(req.Bin) != 0 {
 		bin, err := osutil.TempFile("syz-runtest")
 		if err != nil {
-			test.Err = err
-			return test
+			return nil, err
 		}
 		if err := osutil.WriteExecFile(bin, req.Bin); err != nil {
-			test.Err = err
-			return test
+			return nil, err
 		}
 		test.Bin = bin
 	}
 	if len(req.Prog) != 0 {
 		p, err := target.Deserialize(req.Prog, prog.NonStrict)
 		if err != nil {
-			test.Err = err
-			return test
+			return nil, err
 		}
 		test.P = p
 	}
-	return test
+	return test, nil
 }
 
 func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
@@ -120,43 +127,54 @@ func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
 			}
 		}
 	}()
-	if err := checkRevisions(args); err != nil {
-		return nil, err
-	}
+
+	//!!! sandbox:     ipc.FlagsToSandbox(config.Flags),
+	//ipcConfig:   config,
+	//ipcExecOpts: execOpts,
+
+	//!!! flags should include sandbox, coverage, debug, etc
+	//if args.debug {
+	//	features.Enable("Debug")
+	//}
 	features, err := host.Check(args.target)
 	if err != nil {
 		return nil, err
 	}
-	if feat := features[host.FeatureCoverage]; !feat.Enabled &&
-		args.ipcConfig.Flags&ipc.FlagSignal != 0 {
-		return nil, fmt.Errorf("coverage is not supported (%v)", feat.Reason)
+	if err := checkRevisions(args, features.Executor); err != nil {
+		return nil, err
 	}
-	if feat := features[host.FeatureSandboxSetuid]; !feat.Enabled &&
-		args.ipcConfig.Flags&ipc.FlagSandboxSetuid != 0 {
-		return nil, fmt.Errorf("sandbox=setuid is not supported (%v)", feat.Reason)
-	}
-	if feat := features[host.FeatureSandboxNamespace]; !feat.Enabled &&
-		args.ipcConfig.Flags&ipc.FlagSandboxNamespace != 0 {
-		return nil, fmt.Errorf("sandbox=namespace is not supported (%v)", feat.Reason)
-	}
-	if feat := features[host.FeatureSandboxAndroid]; !feat.Enabled &&
-		args.ipcConfig.Flags&ipc.FlagSandboxAndroid != 0 {
-		return nil, fmt.Errorf("sandbox=android is not supported (%v)", feat.Reason)
-	}
+	/*
+		if features.Coverage &&
+			args.ipcConfig.Flags&ipc.FlagSignal != 0 {
+			return nil, fmt.Errorf("coverage is not supported (%v)", feat.Reason)
+		}
+		if features.SandboxSetuid &&
+			args.ipcConfig.Flags&ipc.FlagSandboxSetuid != 0 {
+			return nil, fmt.Errorf("sandbox=setuid is not supported (%v)", feat.Reason)
+		}
+		if features.SandboxNamespace &&
+			args.ipcConfig.Flags&ipc.FlagSandboxNamespace != 0 {
+			return nil, fmt.Errorf("sandbox=namespace is not supported (%v)", feat.Reason)
+		}
+		if features.SandboxAndroid &&
+			args.ipcConfig.Flags&ipc.FlagSandboxAndroid != 0 {
+			return nil, fmt.Errorf("sandbox=android is not supported (%v)", feat.Reason)
+		}
+	*/
 	if err := checkSimpleProgram(args, features); err != nil {
 		return nil, err
 	}
 	res := &rpctype.CheckArgs{
-		Features:      features,
+		Features:      features.Serialize(),
 		EnabledCalls:  make(map[string][]int),
 		DisabledCalls: make(map[string][]rpctype.SyscallReason),
 	}
-	sandboxes := []string{args.sandbox}
+	sandboxes := []string{features.Sandbox()}
 	if args.allSandboxes {
-		if features[host.FeatureSandboxSetuid].Enabled {
+		if features.All[feature.SandboxSetuid].Present {
 			sandboxes = append(sandboxes, "setuid")
 		}
-		if features[host.FeatureSandboxNamespace].Enabled {
+		if features.All[feature.SandboxNamespace].Present {
 			sandboxes = append(sandboxes, "namespace")
 		}
 	}
@@ -183,9 +201,9 @@ func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
 	return res, nil
 }
 
-func checkRevisions(args *checkArgs) error {
+func checkRevisions(args *checkArgs, executor string) error {
 	log.Logf(0, "checking revisions...")
-	executorArgs := strings.Split(args.ipcConfig.Executor, " ")
+	executorArgs := strings.Split(executor, " ")
 	executorArgs = append(executorArgs, "version")
 	cmd := osutil.Command(executorArgs[0], executorArgs[1:]...)
 	cmd.Stderr = ioutil.Discard
@@ -222,18 +240,18 @@ func checkRevisions(args *checkArgs) error {
 	return nil
 }
 
-func checkSimpleProgram(args *checkArgs, features *host.Features) error {
+func checkSimpleProgram(args *checkArgs, features *feature.Set) error {
 	log.Logf(0, "testing simple program...")
-	if err := host.Setup(args.target, features, args.featureFlags, args.ipcConfig.Executor); err != nil {
+	if err := host.Setup(args.target, features); err != nil {
 		return fmt.Errorf("host setup failed: %v", err)
 	}
-	env, err := ipc.MakeEnv(args.ipcConfig, 0)
+	env, err := ipc.MakeEnv(args.target, 0)
 	if err != nil {
 		return fmt.Errorf("failed to create ipc env: %v", err)
 	}
 	defer env.Close()
 	p := args.target.GenerateSimpleProg()
-	output, info, hanged, err := env.Exec(args.ipcExecOpts, p)
+	output, info, hanged, err := env.Exec(features, p)
 	if err != nil {
 		return fmt.Errorf("program execution failed: %v\n%s", err, output)
 	}
@@ -246,7 +264,7 @@ func checkSimpleProgram(args *checkArgs, features *host.Features) error {
 	if info.Calls[0].Errno != 0 {
 		return fmt.Errorf("simple call failed: %+v\n%s", info.Calls[0], output)
 	}
-	if args.ipcConfig.Flags&ipc.FlagSignal != 0 && len(info.Calls[0].Signal) < 2 {
+	if features.Coverage && len(info.Calls[0].Signal) < 2 {
 		return fmt.Errorf("got no coverage:\n%s", output)
 	}
 	if len(info.Calls[0].Signal) < 1 {
