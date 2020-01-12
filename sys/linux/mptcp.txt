@@ -36,18 +36,18 @@ mptcp_generic_option {
 mptcp_capable_option {
 	type		const[TCPOPT_MPTCP, int8]
 	length		len[parent, int8]
-	version		int8:4
+	version		const[0, int8:4]
 	subtype		const[OPTION_MP_CAPABLE, int8:4]
 	flags		int8
 	sender		int64be
-	receiver	array[int64be, 0:1]
+	receiver	optional[int64be]
 } [packed]
 
 mptcp_add_addr_option {
 	type	const[TCPOPT_MPTCP, int8]
 	length	len[parent, int8]
-	subtype	const[OPTION_ADD_ADDR, int8:4]
 	version	len[parent, int8:4]
+	subtype	const[OPTION_ADD_ADDR, int8:4]
 	addr_id	int8
 	address	ipv4_addr
 	port	int16be
@@ -84,23 +84,25 @@ mptcp_synack_option {
 mptcp_ack_option {
 	type		const[TCPOPT_MPTCP, int8]
 	length		len[parent, int8]
-	reserved	int16:12
-	subtype		const[OPTION_TYPE_ACK, int16:4]
-	mac		array[int8, 0:20]
+	reserved	const[0, int8:4]
+	subtype		const[OPTION_TYPE_ACK, int8:4]
+	reserved2 const[0, int8]
+	mac		array[int8, 20]
 } [packed]
 
 mptcp_mp_fclose_option {
 	type		const[TCPOPT_MPTCP, int8]
 	length		len[parent, int8]
-	reserved	int16:12
-	subtype		const[OPTION_MP_FCLOSE, int16:4]
+	reserved	const[0, int8:4]
+	subtype		const[OPTION_MP_FCLOSE, int8:4]
+	reserved2 conts[0, int8]
 	key		int64
 } [packed]
 
 mptcp_remove_addr_option {
 	type		const[TCPOPT_MPTCP, int8]
 	length		len[parent, int8]
-	reserved	int8:4
+	reserved	const[0, int8:4]
 	subtype		const[OPTION_REMOVE_ADDR, int8:4]
 	addrs_id	array[int8]
 } [packed]
