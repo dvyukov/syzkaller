@@ -295,7 +295,7 @@ func TestHintsCheckDataArg(t *testing.T) {
 			res := make(map[string]bool)
 			// Whatever type here. It's just needed to pass the
 			// dataArg.Type().Dir() == DirIn check.
-			typ := &ArrayType{TypeCommon{"", "", 0, DirIn, false, true}, nil, 0, 0, 0}
+			typ := &ArrayType{TypeCommon{"", "", 0, DirIn, false, true}, NoType, 0, 0, 0}
 			dataArg := MakeDataArg(typ, []byte(test.in))
 			checkDataArg(dataArg, test.comps, func() {
 				res[string(dataArg.Data())] = true
@@ -557,7 +557,7 @@ func TestHintsData(t *testing.T) {
 			Calls: []*Call{{
 				Meta: call,
 				Args: []Arg{MakePointerArg(call.Args[0], 0,
-					MakeDataArg(call.Args[0].(*PtrType).Type, input))},
+					MakeDataArg(call.Args[0].Real().(*PtrType).Type, input))},
 				Ret: MakeReturnArg(call.Ret),
 			}},
 		}

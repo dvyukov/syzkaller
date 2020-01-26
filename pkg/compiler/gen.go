@@ -14,6 +14,26 @@ import (
 
 const sizeUnassigned = ^uint64(0)
 
+//func (comp *compiler) typeIdx(t prog.Type) prog.TypeIdx {
+//	comp.types = append(comp.types, t)
+//	return prog.TypeIdx(len(comp.types) - 1)
+//}
+/*
+	if _, ok := t.(prog.TypeIdx); ok {
+		panic("converting TypeIdx to TypeIdx")
+	}
+	id := fmt.Sprintf("%#v", t)
+	if idx, ok := comp.typeMap[id]; ok {
+		return idx
+	}
+	idx := prog.TypeIdx(len(comp.types))
+	comp.typeMap[id] = idx
+	// TODO: the order of types is poorly defined. We should sort it,
+	// but then we will also need to update all indexes (or assign lazily).
+	comp.types = append(comp.types, t)
+	return idx
+*/
+
 func (comp *compiler) genResources() []*prog.ResourceDesc {
 	var resources []*prog.ResourceDesc
 	for name, n := range comp.resources {
@@ -64,7 +84,7 @@ func (comp *compiler) collectCallArgSizes() map[string][]uint64 {
 				argSizes = append(argSizes, comp.ptrSize)
 			}
 			desc, _, _ := comp.getArgsBase(arg.Type, arg.Name.Name, prog.DirIn, true)
-			typ := comp.genField(arg, prog.DirIn, comp.ptrSize)
+			typ := comp.genType(arg.Type, arg.Name.Name, prog.DirIn, comp.ptrSize)
 			// Ignore all types with base (const, flags). We don't have base in syscall args.
 			// Also ignore resources and pointers because fd can be 32-bits and pointer 64-bits,
 			// and then there is no way to fix this.
@@ -108,9 +128,9 @@ func (comp *compiler) genSyscalls() []*prog.Syscall {
 }
 
 func (comp *compiler) genSyscall(n *ast.Call, argSizes []uint64) *prog.Syscall {
-	var ret prog.Type
+	ret := prog.NoType
 	if n.Ret != nil {
-		ret = comp.genType(n.Ret, "ret", prog.DirOut, comp.ptrSize)
+		ret = prog.CreateTypeIdx(comp.genType(n.Ret, "ret", prog.DirOut, comp.ptrSize))
 	}
 	var attrs prog.SyscallAttrs
 	descAttrs := comp.parseAttrs(callAttrs, n, n.Attrs)
@@ -133,6 +153,92 @@ func (comp *compiler) genSyscall(n *ast.Call, argSizes []uint64) *prog.Syscall {
 	}
 }
 
+func (comp *compiler) generateTypes(syscalls []*prog.Syscall, structs []*prog.KeyedStruct) []prog.Type {
+	types := []prog.Type{nil}
+	dedup := make(map[string]prog.TypeIdx)
+	//locations := make(map[*prog.TypeIdx]
+	for _, call := range syscalls {
+		for i, ti := range call.Args {
+			call.Args[i] = comp.generateType(&types, dedup, ti)
+		}
+		if call.Ret != prog.NoType {
+			call.Ret = comp.generateType(&types, dedup, call.Ret)
+		}
+	}
+	for _, str := range structs {
+		for i, ti := range str.Desc.Fields {
+			str.Desc.Fields[i] = comp.generateType(&types, dedup, ti)
+		}
+	}
+	
+	if false {
+	sort.Slice(types, func(i, j int) bool {
+		id1 := fmt.Sprintf("%#v", types[i])
+		id2 := fmt.Sprintf("%#v", types[j])
+		return id1 < id2
+	})
+	fmt.Printf("\n\n\nTYPES:\n")
+	for _, typ := range types {
+		fmt.Printf("%#v\n", typ)
+	}
+	}
+	
+	return types
+}
+
+func (comp *compiler) generateType(types *[]prog.Type, dedup map[string]prog.TypeIdx, ti prog.TypeIdx) prog.TypeIdx {
+	if  ti == prog.NoType {
+		panic("prog.NoType")
+	}
+	typ := ti.Real()
+
+	//seen := make(map[*StructDesc]bool)
+	//var rec func(t Type)
+	switch t := typ.(type) {
+	case *prog.PtrType:
+		t.Type = comp.generateType(types, dedup, t.Type)
+	case *prog.ArrayType:
+		t.Type = comp.generateType(types, dedup, t.Type)
+	case *prog.StructType:
+		/*
+		if seen[a.StructDesc] {
+			return // prune recursion via pointers to structs/unions
+		}
+		seen[a.StructDesc] = true
+		for i, f := range t.Fields {
+			rec(f)
+		}
+		*/
+	case *prog.UnionType:
+		/*
+		if seen[a.StructDesc] {
+			return // prune recursion via pointers to structs/unions
+		}
+		seen[a.StructDesc] = true
+		for _, opt := range a.Fields {
+			rec(opt)
+		}
+		*/
+	case *prog.ResourceType, *prog.BufferType, *prog.VmaType, *prog.LenType,
+		*prog.FlagsType, *prog.ConstType, *prog.IntType, *prog.ProcType, *prog.CsumType:
+	default:
+		panic("unknown type")
+	}
+
+
+
+	id := fmt.Sprintf("%#v", typ)
+	if ti1, ok := dedup[id]; ok {
+		return ti1
+	}
+	ti1 := prog.TypeIdx(len(*types))
+	dedup[id] = ti1
+	// TODO: the order of types is poorly defined. We should sort it,
+	// but then we will also need to update all indexes (or assign lazily).
+	*types = append(*types, typ)
+	return ti1
+}
+
 func (comp *compiler) genStructDescs(syscalls []*prog.Syscall) []*prog.KeyedStruct {
 	// Calculate struct/union/array sizes, add padding to structs and detach
 	// StructDesc's from StructType's. StructType's can be recursive so it's
@@ -150,10 +256,10 @@ func (comp *compiler) genStructDescs(syscalls []*prog.Syscall) []*prog.KeyedStru
 		start := len(ctx.padded)
 		for _, c := range syscalls {
 			for _, a := range c.Args {
-				ctx.walk(a)
+				ctx.walk(a.Deref())
 			}
-			if c.Ret != nil {
-				ctx.walk(c.Ret)
+			if c.Ret != prog.NoType {
+				ctx.walk(c.Ret.Deref())
 			}
 		}
 		if start == len(ctx.padded) {
@@ -190,7 +296,8 @@ func (ctx *structGen) check(key prog.StructKey, descp **prog.StructDesc) bool {
 		return false
 	}
 	ctx.padded[desc] = true
-	for _, f := range desc.Fields {
+	for _, ref := range desc.Fields {
+		f := ref.Deref()
 		ctx.walk(f)
 		if !f.Varlen() && f.Size() == sizeUnassigned {
 			// An inner struct is not padded yet.
@@ -211,7 +318,7 @@ func (ctx *structGen) check(key prog.StructKey, descp **prog.StructDesc) bool {
 func (ctx *structGen) walk(t0 prog.Type) {
 	switch t := t0.(type) {
 	case *prog.PtrType:
-		ctx.walk(t.Type)
+		ctx.walk(t.Type.Deref())
 	case *prog.ArrayType:
 		ctx.walkArray(t)
 	case *prog.StructType:
@@ -225,16 +332,17 @@ func (ctx *structGen) walkArray(t *prog.ArrayType) {
 	if ctx.padded[t] {
 		return
 	}
-	ctx.walk(t.Type)
-	if !t.Type.Varlen() && t.Type.Size() == sizeUnassigned {
+	elem := t.Type.Deref()
+	ctx.walk(elem)
+	if !elem.Varlen() && elem.Size() == sizeUnassigned {
 		// An inner struct is not padded yet.
 		// Leave this array for next iteration.
 		return
 	}
 	ctx.padded[t] = true
 	t.TypeSize = 0
-	if t.Kind == prog.ArrayRangeLen && t.RangeBegin == t.RangeEnd && !t.Type.Varlen() {
-		t.TypeSize = t.RangeBegin * t.Type.Size()
+	if t.Kind == prog.ArrayRangeLen && t.RangeBegin == t.RangeEnd && !elem.Varlen() {
+		t.TypeSize = t.RangeBegin * elem.Size()
 	}
 }
 
@@ -246,8 +354,8 @@ func (ctx *structGen) walkStruct(t *prog.StructType) {
 	structNode := comp.structNodes[t.StructDesc]
 	// Add paddings, calculate size, mark bitfields.
 	varlen := false
-	for _, f := range t.Fields {
-		if f.Varlen() {
+	for _, ref := range t.Fields {
+		if ref.Deref().Varlen() {
 			varlen = true
 		}
 	}
@@ -256,8 +364,8 @@ func (ctx *structGen) walkStruct(t *prog.StructType) {
 	comp.layoutStruct(t, varlen, attrs[attrPacked] != 0)
 	t.TypeSize = 0
 	if !varlen {
-		for _, f := range t.Fields {
-			t.TypeSize += f.Size()
+		for _, ref := range t.Fields {
+			t.TypeSize += ref.Deref().Size()
 		}
 		sizeAttr, hasSize := attrs[attrSize]
 		if hasSize {
@@ -314,12 +422,12 @@ func (comp *compiler) genStructDesc(res *prog.StructDesc, n *ast.Struct, dir pro
 }
 
 func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
-	var newFields []prog.Type
+	var newFields []prog.TypeIdx
 	var structAlign, byteOffset, bitOffset uint64
-	for i, f := range t.Fields {
+	for i, fref := range t.Fields {
 		fieldAlign := uint64(1)
 		if !packed {
-			fieldAlign = comp.typeAlign(f)
+			fieldAlign = comp.typeAlign(fref)
 			if structAlign < fieldAlign {
 				structAlign = fieldAlign
 			}
@@ -327,6 +435,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
 		fullBitOffset := byteOffset*8 + bitOffset
 		var fieldOffset uint64
 
+		f := fref.Deref()
 		if f.IsBitfield() {
 			unitAlign := f.UnitSize()
 			if packed {
@@ -344,7 +453,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
 				fullBitOffset, bitOffset = fieldOffset*8, 0
 			}
 			fieldBitOffset := (fullBitOffset - fieldOffset*8) % unitBits
-			setBitfieldOffset(f, fieldBitOffset)
+			setBitfieldOffset(fref, fieldBitOffset)
 		} else {
 			fieldOffset = roundup(roundup(fullBitOffset, 8)/8, fieldAlign)
 			bitOffset = 0
@@ -352,7 +461,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
 		if fieldOffset > byteOffset {
 			pad := fieldOffset - byteOffset
 			byteOffset += pad
-			if i != 0 && t.Fields[i-1].IsBitfield() {
+			if i != 0 && t.Field(i-1).IsBitfield() {
 				setBitfieldTypeSize(t.Fields[i-1], pad)
 				if bitOffset >= 8*pad {
 					// The padding is due to bitfields, so consume the bitOffset.
@@ -371,10 +480,10 @@ func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
 		if f.IsBitfield() {
 			if byteOffset > fieldOffset {
 				unitOffset := byteOffset - fieldOffset
-				setBitfieldUnitOffset(f, unitOffset)
+				setBitfieldUnitOffset(fref, unitOffset)
 			}
 		}
-		newFields = append(newFields, f)
+		newFields = append(newFields, fref)
 		if f.IsBitfield() {
 			bitOffset += f.BitfieldLength()
 		} else if !f.Varlen() {
@@ -387,7 +496,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType, varlen, packed bool) {
 		pad := roundup(bitOffset, 8) / 8
 		byteOffset += pad
 		i := len(t.Fields)
-		if i != 0 && t.Fields[i-1].IsBitfield() {
+		if i != 0 && t.Field(i-1).IsBitfield() {
 			setBitfieldTypeSize(t.Fields[i-1], pad)
 		} else {
 			newFields = append(newFields, genPad(pad))
@@ -415,8 +524,8 @@ func rounddown(v, a uint64) uint64 {
 	return v & ^(a - 1)
 }
 
-func bitfieldFields(t0 prog.Type) (*uint64, *uint64, *uint64) {
-	switch t := t0.(type) {
+func bitfieldFields(t0 prog.TypeRef) (*uint64, *uint64, *uint64) {
+	switch t := t0.Deref().(type) {
 	case *prog.IntType:
 		return &t.TypeSize, &t.BitfieldOff, &t.BitfieldUnitOff
 	case *prog.ConstType:
@@ -432,22 +541,23 @@ func bitfieldFields(t0 prog.Type) (*uint64, *uint64, *uint64) {
 	}
 }
 
-func setBitfieldTypeSize(t prog.Type, v uint64) {
+func setBitfieldTypeSize(t prog.TypeRef, v uint64) {
 	p, _, _ := bitfieldFields(t)
 	*p = v
 }
 
-func setBitfieldOffset(t prog.Type, v uint64) {
+func setBitfieldOffset(t prog.TypeRef, v uint64) {
 	_, p, _ := bitfieldFields(t)
 	*p = v
 }
 
-func setBitfieldUnitOffset(t prog.Type, v uint64) {
+func setBitfieldUnitOffset(t prog.TypeRef, v uint64) {
 	_, _, p := bitfieldFields(t)
 	*p = v
 }
 
-func (comp *compiler) typeAlign(t0 prog.Type) uint64 {
+func (comp *compiler) typeAlign(tref prog.TypeRef) uint64 {
+	t0 := tref.Deref()
 	switch t0.Format() {
 	case prog.FormatNative, prog.FormatBigEndian:
 	case prog.FormatStrDec, prog.FormatStrHex, prog.FormatStrOct:
@@ -499,23 +609,20 @@ func (comp *compiler) typeAlign(t0 prog.Type) uint64 {
 	}
 }
 
-func genPad(size uint64) prog.Type {
-	return &prog.ConstType{
+func genPad(size uint64) prog.TypeIdx {
+	return prog.CreateTypeIdx(&prog.ConstType{
 		IntTypeCommon: genIntCommon(genCommon("pad", "", size, prog.DirIn, false), 0, false),
 		IsPad:         true,
-	}
+	})
 }
 
-func (comp *compiler) genFieldArray(fields []*ast.Field, dir prog.Dir, argSizes []uint64) []prog.Type {
-	var res []prog.Type
+func (comp *compiler) genFieldArray(fields []*ast.Field, dir prog.Dir, argSizes []uint64) []prog.TypeIdx {
+	var res []prog.TypeIdx
 	for i, f := range fields {
-		res = append(res, comp.genField(f, dir, argSizes[i]))
+		f := comp.genType(f.Type, f.Name.Name, dir, argSizes[i])
+		res = append(res, prog.CreateTypeIdx(f))
 	}
 	return res
-}
-
-func (comp *compiler) genField(f *ast.Field, dir prog.Dir, argSize uint64) prog.Type {
-	return comp.genType(f.Type, f.Name.Name, dir, argSize)
 }
 
 func (comp *compiler) genType(t *ast.Type, field string, dir prog.Dir, argSize uint64) prog.Type {

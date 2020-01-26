@@ -47,7 +47,7 @@ func initAnyTypes(target *Target) {
 			FldName:  "ANYARRAY",
 			IsVarlen: true,
 		},
-		Type: target.any.union,
+		Type: target.any.union.Ref(),
 	}
 	target.any.ptrPtr = &PtrType{
 		TypeCommon: TypeCommon{
@@ -56,7 +56,7 @@ func initAnyTypes(target *Target) {
 			TypeSize:   target.PtrSize,
 			IsOptional: true,
 		},
-		Type: target.any.array,
+		Type: target.any.array.Ref(),
 	}
 	target.any.ptr64 = &PtrType{
 		TypeCommon: TypeCommon{
@@ -65,7 +65,7 @@ func initAnyTypes(target *Target) {
 			TypeSize:   8,
 			IsOptional: true,
 		},
-		Type: target.any.array,
+		Type: target.any.array.Ref(),
 	}
 	target.any.blob = &BufferType{
 		TypeCommon: TypeCommon{
@@ -104,16 +104,16 @@ func initAnyTypes(target *Target) {
 			IsVarlen: true,
 			ArgDir:   DirIn,
 		},
-		Fields: []Type{
-			target.any.blob,
-			target.any.ptrPtr,
-			target.any.ptr64,
-			target.any.res16,
-			target.any.res32,
-			target.any.res64,
-			target.any.resdec,
-			target.any.reshex,
-			target.any.resoct,
+		Fields: []TypeIdx{
+			target.any.blob.Ref(),
+			target.any.ptrPtr.Ref(),
+			target.any.ptr64.Ref(),
+			target.any.res16.Ref(),
+			target.any.res32.Ref(),
+			target.any.res64.Ref(),
+			target.any.resdec.Ref(),
+			target.any.reshex.Ref(),
+			target.any.resoct.Ref(),
 		},
 	}
 }
@@ -138,7 +138,7 @@ func (target *Target) makeAnyPtrType(size uint64, field string) *PtrType {
 
 func (target *Target) isAnyPtr(typ Type) bool {
 	ptr, ok := typ.(*PtrType)
-	return ok && ptr.Type == target.any.array
+	return ok && ptr.Type == target.any.array.Ref()
 }
 
 func (p *Prog) complexPtrs() (res []*PointerArg) {
@@ -214,8 +214,10 @@ func (target *Target) squashPtr(arg *PointerArg, preserveField bool) {
 	if preserveField {
 		field = arg.Type().FieldName()
 	}
-	arg.typ = target.makeAnyPtrType(arg.Type().Size(), field)
-	arg.Res = MakeGroupArg(arg.typ.(*PtrType).Type, elems)
+	//!!! this creates new TypeIdx every time
+	ptrType := target.makeAnyPtrType(arg.Type().Size(), field)
+	arg.typ = ptrType.Ref()
+	arg.Res = MakeGroupArg(ptrType.Type.Deref(), elems)
 	if size := arg.Res.Size(); size != size0 {
 		panic(fmt.Sprintf("squash changed size %v->%v for %v", size0, size, res0.Type()))
 	}
@@ -297,27 +299,29 @@ func (target *Target) squashConst(arg *ConstArg, elems *[]Arg) {
 }
 
 func (target *Target) squashResult(arg *ResultArg, elems *[]Arg) {
+	var typ *ResourceType
 	switch arg.Type().Format() {
 	case FormatNative, FormatBigEndian:
 		switch arg.Size() {
 		case 2:
-			arg.typ = target.any.res16
+			typ = target.any.res16
 		case 4:
-			arg.typ = target.any.res32
+			typ = target.any.res32
 		case 8:
-			arg.typ = target.any.res64
+			typ = target.any.res64
 		default:
 			panic("bad size")
 		}
 	case FormatStrDec:
-		arg.typ = target.any.resdec
+		typ = target.any.resdec
 	case FormatStrHex:
-		arg.typ = target.any.reshex
+		typ = target.any.reshex
 	case FormatStrOct:
-		arg.typ = target.any.resoct
+		typ = target.any.resoct
 	default:
 		panic("bad")
 	}
+	arg.typ = typ.Ref()
 	*elems = append(*elems, MakeUnionArg(target.any.union, arg))
 }
 

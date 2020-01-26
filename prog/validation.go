@@ -55,7 +55,7 @@ func (ctx *validCtx) validateCall(c *Call) error {
 			len(c.Meta.Args), len(c.Args))
 	}
 	for i, arg := range c.Args {
-		if err := ctx.validateArg(arg, c.Meta.Args[i]); err != nil {
+		if err := ctx.validateArg(arg, c.Meta.Arg(i)); err != nil {
 			return err
 		}
 	}
@@ -63,7 +63,7 @@ func (ctx *validCtx) validateCall(c *Call) error {
 }
 
 func (ctx *validCtx) validateRet(c *Call) error {
-	if c.Meta.Ret == nil {
+	if c.Meta.Ret == NoType {
 		if c.Ret != nil {
 			return fmt.Errorf("return value without type")
 		}
@@ -78,7 +78,7 @@ func (ctx *validCtx) validateRet(c *Call) error {
 	if c.Ret.Res != nil || c.Ret.Val != 0 || c.Ret.OpDiv != 0 || c.Ret.OpAdd != 0 {
 		return fmt.Errorf("return value %v is not empty", c.Ret)
 	}
-	return ctx.validateArg(c.Ret, c.Meta.Ret)
+	return ctx.validateArg(c.Ret, c.Meta.Ret.Deref())
 }
 
 func (ctx *validCtx) validateArg(arg Arg, typ Type) error {
@@ -91,7 +91,7 @@ func (ctx *validCtx) validateArg(arg Arg, typ Type) error {
 	if arg.Type() == nil {
 		return fmt.Errorf("no arg type")
 	}
-	if !ctx.target.isAnyPtr(arg.Type()) && arg.Type() != typ {
+	if !ctx.target.isAnyPtr(arg.Type()) && arg.Type().Ref() != typ.Ref() {
 		return fmt.Errorf("bad arg type %#v, expect %#v", arg.Type(), typ)
 	}
 	ctx.args[arg] = true
@@ -188,7 +188,7 @@ func (arg *GroupArg) validate(ctx *validCtx) error {
 				typ.Name(), len(typ.Fields), len(arg.Inner))
 		}
 		for i, field := range arg.Inner {
-			if err := ctx.validateArg(field, typ.Fields[i]); err != nil {
+			if err := ctx.validateArg(field, typ.Field(i)); err != nil {
 				return err
 			}
 		}
@@ -199,7 +199,7 @@ func (arg *GroupArg) validate(ctx *validCtx) error {
 				typ.Name(), len(arg.Inner), typ.RangeBegin)
 		}
 		for _, elem := range arg.Inner {
-			if err := ctx.validateArg(elem, typ.Type); err != nil {
+			if err := ctx.validateArg(elem, typ.Type.Deref()); err != nil {
 				return err
 			}
 		}
@@ -217,7 +217,7 @@ func (arg *UnionArg) validate(ctx *validCtx) error {
 	var optType Type
 	for _, typ1 := range typ.Fields {
 		if arg.Option.Type().FieldName() == typ1.FieldName() {
-			optType = typ1
+			optType = typ1.Deref()
 			break
 		}
 	}
@@ -235,7 +235,7 @@ func (arg *PointerArg) validate(ctx *validCtx) error {
 		}
 	case *PtrType:
 		if arg.Res != nil {
-			if err := ctx.validateArg(arg.Res, typ.Type); err != nil {
+			if err := ctx.validateArg(arg.Res, typ.Type.Deref()); err != nil {
 				return err
 			}
 		}

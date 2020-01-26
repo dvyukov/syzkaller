@@ -560,7 +560,7 @@ func (r *randGen) generateParticularCall(s *state, meta *Syscall) (calls []*Call
 	}
 	c := &Call{
 		Meta: meta,
-		Ret:  MakeReturnArg(meta.Ret),
+		Ret:  MakeReturnArg(meta.Ret.Deref()),
 	}
 	c.Args, calls = r.generateArgs(s, meta.Args)
 	r.target.assignSizesCall(c)
@@ -601,13 +601,13 @@ func (target *Target) DataMmapProg() *Prog {
 	}
 }
 
-func (r *randGen) generateArgs(s *state, types []Type) ([]Arg, []*Call) {
+func (r *randGen) generateArgs(s *state, types []TypeIdx) ([]Arg, []*Call) {
 	var calls []*Call
 	args := make([]Arg, len(types))
 
 	// Generate all args. Size args have the default value 0 for now.
 	for i, typ := range types {
-		arg, calls1 := r.generateArg(s, typ)
+		arg, calls1 := r.generateArg(s, typ.Deref())
 		if arg == nil {
 			panic(fmt.Sprintf("generated arg is nil for type '%v', types: %+v", typ.Name(), types))
 		}
@@ -645,7 +645,7 @@ func (r *randGen) generateArgImpl(s *state, typ Type, ignoreSpecial bool) (arg A
 
 	// Allow infinite recursion for optional pointers.
 	if pt, ok := typ.(*PtrType); ok && typ.Optional() {
-		switch pt.Type.(type) {
+		switch pt.Type.Real().(type) {
 		case *StructType, *ArrayType, *UnionType:
 			name := pt.Type.Name()
 			r.recDepth[name]++
@@ -784,7 +784,7 @@ func (a *ArrayType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
 	}
 	var inner []Arg
 	for i := uint64(0); i < count; i++ {
-		arg1, calls1 := r.generateArg(s, a.Type)
+		arg1, calls1 := r.generateArg(s, a.Type.Deref())
 		inner = append(inner, arg1)
 		calls = append(calls, calls1...)
 	}
@@ -798,7 +798,7 @@ func (a *StructType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
 }
 
 func (a *UnionType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
-	optType := a.Fields[r.Intn(len(a.Fields))]
+	optType := a.Field(r.Intn(len(a.Fields)))
 	opt, calls := r.generateArg(s, optType)
 	return MakeUnionArg(a, opt), calls
 }
@@ -808,7 +808,7 @@ func (a *PtrType) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
 		index := r.rand(len(r.target.SpecialPointers))
 		return MakeSpecialPointerArg(a, index), nil
 	}
-	inner, calls := r.generateArg(s, a.Type)
+	inner, calls := r.generateArg(s, a.Type.Deref())
 	arg = r.allocAddr(s, a, inner.Size(), inner)
 	return arg, calls
 }

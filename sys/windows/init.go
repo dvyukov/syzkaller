@@ -35,12 +35,12 @@ func (arch *arch) makeMmap() []*prog.Call {
 		{
 			Meta: meta,
 			Args: []prog.Arg{
-				prog.MakeVmaPointerArg(meta.Args[0], 0, size),
-				prog.MakeConstArg(meta.Args[1], size),
-				prog.MakeConstArg(meta.Args[2], arch.MEM_COMMIT|arch.MEM_RESERVE),
-				prog.MakeConstArg(meta.Args[3], arch.PAGE_EXECUTE_READWRITE),
+				prog.MakeVmaPointerArg(meta.Arg(0), 0, size),
+				prog.MakeConstArg(meta.Arg(1), size),
+				prog.MakeConstArg(meta.Arg(2), arch.MEM_COMMIT|arch.MEM_RESERVE),
+				prog.MakeConstArg(meta.Arg(3), arch.PAGE_EXECUTE_READWRITE),
 			},
-			Ret: prog.MakeReturnArg(meta.Ret),
+			Ret: prog.MakeReturnArg(meta.Ret.Deref()),
 		},
 	}
 }

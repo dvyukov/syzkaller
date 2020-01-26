@@ -6,6 +6,7 @@ package prog
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -15,8 +16,8 @@ type Syscall struct {
 	Name        string
 	CallName    string
 	MissingArgs int // number of trailing args that should be zero-filled
-	Args        []Type
-	Ret         Type
+	Args        []TypeIdx
+	Ret         TypeIdx
 	Attrs       SyscallAttrs
 
 	inputResources  []*ResourceDesc
@@ -43,6 +44,10 @@ type SyscallAttrs struct {
 // MaxArgs is maximum number of syscall arguments.
 // Executor also knows about this value.
 const MaxArgs = 9
+
+func (meta *Syscall) Arg(i int) Type {
+	return meta.Args[i].Deref()
+}
 
 type Dir int
 
@@ -94,6 +99,11 @@ type Type interface {
 	// where Size == 0 and UnitSize equals to the underlying bitfield type size.
 	UnitSize() uint64
 	UnitOffset() uint64
+	//Clone() Type
+	//Real() Type
+
+	Ref() TypeRef
+	//setRef(ref TypeIdx) 
 
 	DefaultArg() Arg
 	isDefaultArg(arg Arg) bool
@@ -102,6 +112,73 @@ type Type interface {
 	getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool)
 	minimize(ctx *minimizeArgsCtx, arg Arg, path string) bool
 }
+
+type TypeIdx uint32
+type TypeRef = TypeIdx
+
+//func (ti TypeIdx) String() string         { return ti.Real().String() }
+func (ti TypeIdx) Name() string           { return ti.Real().Name() }
+func (ti TypeIdx) FieldName() string      { return ti.Real().FieldName() }
+func (ti TypeIdx) TemplateName() string   { return ti.Real().TemplateName() }
+func (ti TypeIdx) Dir() Dir               { return ti.Real().Dir() }
+//func (ti TypeIdx) Optional() bool         { return ti.Real().Optional() }
+func (ti TypeIdx) Varlen() bool           { return ti.Real().Varlen() }
+func (ti TypeIdx) Size() uint64           { return ti.Real().Size() }
+func (ti TypeIdx) TypeBitSize() uint64    { return ti.Real().TypeBitSize() }
+//func (ti TypeIdx) Format() BinaryFormat   { return ti.Real().Format() }
+//func (ti TypeIdx) BitfieldOffset() uint64 { return ti.Real().BitfieldOffset() }
+//func (ti TypeIdx) BitfieldLength() uint64 { return ti.Real().BitfieldLength() }
+//func (ti TypeIdx) IsBitfield() bool       { return ti.Real().IsBitfield() }
+//func (ti TypeIdx) UnitSize() uint64       { return ti.Real().UnitSize() }
+//func (ti TypeIdx) UnitOffset() uint64     { return ti.Real().UnitOffset() }
+//func (ti TypeIdx) DefaultArg() Arg        { return ti.Real().DefaultArg() }
+
+//func (ti TypeIdx) Clone() Type { panic("cloning prog.TypeIdx") }
+func (ti TypeIdx) isDefaultArg(arg Arg) bool { return ti.Real().isDefaultArg(arg) }
+func (ti TypeIdx) generate(r *randGen, s *state) (arg Arg, calls []*Call) {
+	return ti.Real().generate(r, s)
+}
+func (ti TypeIdx) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
+	return ti.Real().mutate(r, s, arg, ctx)
+}
+func (ti TypeIdx) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool) {
+	return ti.Real().getMutationPrio(target, arg, ignoreSpecial)
+}
+func (ti TypeIdx) minimize(ctx *minimizeArgsCtx, arg Arg, path string) bool {
+	return ti.Real().minimize(ctx, arg, path)
+}
+
+func (ti TypeIdx) Ref() TypeIdx        { panic("TypeIdx.Ref called") }
+//func (ti TypeIdx) setRef(ref TypeIdx)        { panic("TypeIdx.setRef called") }
+
+func (ti TypeIdx) Real() Type { return types[ti] }
+func (ti TypeRef) Deref() Type { return types[ti] }
+
+const (
+	NoType           = TypeIdx(0)
+	//typeInternalized = 1 << 31
+)
+
+var types = []Type{nil}
+var typesMu sync.Mutex
+
+//var types [][]Type
+//types[ti>>24][ti&0xffffff]
+
+//!!! remove
+func CreateTypeIdx(t Type) TypeIdx {
+	return t.Ref()
+}
+
+//!!! remove
+/*
+func Real(t Type) Type {
+	if ti, ok := t.(TypeIdx); ok {
+		return ti.Real()
+	}
+	return t
+}
+*/
 
 func IsPad(t Type) bool {
 	if ct, ok := t.(*ConstType); ok && ct.IsPad {
@@ -118,7 +195,27 @@ type TypeCommon struct {
 	ArgDir     Dir
 	IsOptional bool
 	IsVarlen   bool
+	this TypeIdx
 }
+
+func (t *TypeCommon) ref(parent Type) TypeRef {
+	if t.this == NoType {
+		typesMu.Lock()
+		defer typesMu.Unlock()
+		types = append(types, parent)
+		t.this = TypeRef(len(types)-1)
+	}
+	return t.this
+}
+
+/*
+func (t *TypeCommon) setRef(ref TypeIdx) {
+	if t.ref != NoType {
+		panic("ref already assigned")
+	}
+	t.ref = ref
+}
+*/
 
 func (t *TypeCommon) Name() string {
 	return t.TypeName
@@ -201,6 +298,10 @@ type ResourceType struct {
 	Desc      *ResourceDesc
 }
 
+func (t *ResourceType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *ResourceType) String() string {
 	return t.Name()
 }
@@ -225,6 +326,11 @@ func (t *ResourceType) SpecialValues() []uint64 {
 
 func (t *ResourceType) Format() BinaryFormat {
 	return t.ArgFormat
+}
+
+func (t *ResourceType) Clone() Type {
+	t1 := *t
+	return &t1
 }
 
 type IntTypeCommon struct {
@@ -286,6 +392,10 @@ type ConstType struct {
 	IsPad bool
 }
 
+func (t *ConstType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *ConstType) DefaultArg() Arg {
 	return MakeConstArg(t, t.Val)
 }
@@ -299,6 +409,11 @@ func (t *ConstType) String() string {
 		return fmt.Sprintf("pad[%v]", t.Size())
 	}
 	return fmt.Sprintf("const[%v, %v]", t.Val, t.IntTypeCommon.String())
+}
+
+func (t *ConstType) Clone() Type {
+	t1 := *t
+	return &t1
 }
 
 type IntKind int
@@ -316,6 +431,10 @@ type IntType struct {
 	Align      uint64
 }
 
+func (t *IntType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *IntType) DefaultArg() Arg {
 	return MakeConstArg(t, 0)
 }
@@ -324,10 +443,19 @@ func (t *IntType) isDefaultArg(arg Arg) bool {
 	return arg.(*ConstArg).Val == 0
 }
 
+func (t *IntType) Clone() Type {
+	t1 := *t
+	return &t1
+}
+
 type FlagsType struct {
 	IntTypeCommon
 	Vals    []uint64 // compiler ensures that it's not empty
 	BitMask bool
+}
+
+func (t *FlagsType) Ref() TypeRef {
+	return t.ref(t)
 }
 
 func (t *FlagsType) DefaultArg() Arg {
@@ -338,11 +466,21 @@ func (t *FlagsType) isDefaultArg(arg Arg) bool {
 	return arg.(*ConstArg).Val == 0
 }
 
+func (t *FlagsType) Clone() Type {
+	t1 := *t
+	//clone Vals
+	return &t1
+}
+
 type LenType struct {
 	IntTypeCommon
 	BitSize uint64 // want size in multiple of bits instead of array size
 	Offset  bool   // offset from the beginning of the parent struct or base object
 	Path    []string
+}
+
+func (t *LenType) Ref() TypeRef {
+	return t.ref(t)
 }
 
 func (t *LenType) DefaultArg() Arg {
@@ -363,6 +501,10 @@ const (
 	MaxPids          = 32
 	procDefaultValue = 0xffffffffffffffff // special value denoting 0 for all procs
 )
+
+func (t *ProcType) Ref() TypeRef {
+	return t.ref(t)
+}
 
 func (t *ProcType) DefaultArg() Arg {
 	return MakeConstArg(t, procDefaultValue)
@@ -386,6 +528,10 @@ type CsumType struct {
 	Protocol uint64 // for CsumPseudo
 }
 
+func (t *CsumType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *CsumType) String() string {
 	return "csum"
 }
@@ -402,6 +548,10 @@ type VmaType struct {
 	TypeCommon
 	RangeBegin uint64 // in pages
 	RangeEnd   uint64
+}
+
+func (t *VmaType) Ref() TypeRef {
+	return t.ref(t)
 }
 
 func (t *VmaType) String() string {
@@ -447,6 +597,10 @@ type BufferType struct {
 	SubKind    string
 	Values     []string // possible values for BufferString kind
 	NoZ        bool     // non-zero terminated BufferString/BufferFilename
+}
+
+func (t *BufferType) Ref() TypeRef {
+	return t.ref(t)
 }
 
 func (t *BufferType) String() string {
@@ -496,21 +650,29 @@ const (
 
 type ArrayType struct {
 	TypeCommon
-	Type       Type
+	Type       TypeIdx
 	Kind       ArrayKind
 	RangeBegin uint64
 	RangeEnd   uint64
 }
 
+func (t *ArrayType) Ref() TypeRef {
+	return t.ref(t)
+}
+
+func (t *ArrayType) Elem() Type {
+	return t.Type.Deref()
+}
+
 func (t *ArrayType) String() string {
-	return fmt.Sprintf("array[%v]", t.Type.String())
+	return fmt.Sprintf("array[%v]", t.Type.Deref().String())
 }
 
 func (t *ArrayType) DefaultArg() Arg {
 	var elems []Arg
 	if t.Kind == ArrayRangeLen && t.RangeBegin == t.RangeEnd {
 		for i := uint64(0); i < t.RangeBegin; i++ {
-			elems = append(elems, t.Type.DefaultArg())
+			elems = append(elems, t.Type.Deref().DefaultArg())
 		}
 	}
 	return MakeGroupArg(t, elems)
@@ -531,18 +693,26 @@ func (t *ArrayType) isDefaultArg(arg Arg) bool {
 
 type PtrType struct {
 	TypeCommon
-	Type Type
+	Type TypeIdx
+}
+
+func (t *PtrType) Ref() TypeRef {
+	return t.ref(t)
+}
+
+func (t *PtrType) Elem() Type {
+	return t.Type.Deref()
 }
 
 func (t *PtrType) String() string {
-	return fmt.Sprintf("ptr[%v, %v]", t.Dir(), t.Type.String())
+	return fmt.Sprintf("ptr[%v, %v]", t.Dir(), t.Type.Deref().String())
 }
 
 func (t *PtrType) DefaultArg() Arg {
 	if t.Optional() {
 		return MakeSpecialPointerArg(t, 0)
 	}
-	return MakePointerArg(t, 0, t.Type.DefaultArg())
+	return MakePointerArg(t, 0, t.Type.Deref().DefaultArg())
 }
 
 func (t *PtrType) isDefaultArg(arg Arg) bool {
@@ -559,6 +729,10 @@ type StructType struct {
 	*StructDesc
 }
 
+func (t *StructType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *StructType) String() string {
 	return t.Name()
 }
@@ -570,7 +744,7 @@ func (t *StructType) FieldName() string {
 func (t *StructType) DefaultArg() Arg {
 	inner := make([]Arg, len(t.Fields))
 	for i, field := range t.Fields {
-		inner[i] = field.DefaultArg()
+		inner[i] = field.Deref().DefaultArg()
 	}
 	return MakeGroupArg(t, inner)
 }
@@ -591,6 +765,10 @@ type UnionType struct {
 	*StructDesc
 }
 
+func (t *UnionType) Ref() TypeRef {
+	return t.ref(t)
+}
+
 func (t *UnionType) String() string {
 	return t.Name()
 }
@@ -600,7 +778,7 @@ func (t *UnionType) FieldName() string {
 }
 
 func (t *UnionType) DefaultArg() Arg {
-	return MakeUnionArg(t, t.Fields[0].DefaultArg())
+	return MakeUnionArg(t, t.Field(0).DefaultArg())
 }
 
 func (t *UnionType) isDefaultArg(arg Arg) bool {
@@ -610,8 +788,12 @@ func (t *UnionType) isDefaultArg(arg Arg) bool {
 
 type StructDesc struct {
 	TypeCommon
-	Fields    []Type
+	Fields    []TypeIdx
 	AlignAttr uint64
+}
+
+func (t *StructDesc) Field(i int) Type {
+	return t.Fields[i].Deref()
 }
 
 func (t *StructDesc) FieldName() string {
@@ -634,31 +816,28 @@ type ConstValue struct {
 }
 
 func ForeachType(meta *Syscall, f func(Type)) {
-	seen := make(map[*StructDesc]bool)
 	var rec func(t Type)
+	seen := make(map[*StructDesc]bool)
+	recStruct := func(desc *StructDesc) {
+		if seen[desc] {
+			return // prune recursion via pointers to structs/unions
+		}
+		seen[desc] = true
+		for _, f := range desc.Fields {
+			rec(f.Deref())
+		}
+	}
 	rec = func(t Type) {
 		f(t)
 		switch a := t.(type) {
 		case *PtrType:
-			rec(a.Type)
+			rec(a.Type.Deref())
 		case *ArrayType:
-			rec(a.Type)
+			rec(a.Type.Deref())
 		case *StructType:
-			if seen[a.StructDesc] {
-				return // prune recursion via pointers to structs/unions
-			}
-			seen[a.StructDesc] = true
-			for _, f := range a.Fields {
-				rec(f)
-			}
+			recStruct(a.StructDesc)
 		case *UnionType:
-			if seen[a.StructDesc] {
-				return // prune recursion via pointers to structs/unions
-			}
-			seen[a.StructDesc] = true
-			for _, opt := range a.Fields {
-				rec(opt)
-			}
+			recStruct(a.StructDesc)
 		case *ResourceType, *BufferType, *VmaType, *LenType,
 			*FlagsType, *ConstType, *IntType, *ProcType, *CsumType:
 		default:
@@ -666,10 +845,10 @@ func ForeachType(meta *Syscall, f func(Type)) {
 		}
 	}
 	for _, t := range meta.Args {
-		rec(t)
+		rec(t.Deref())
 	}
-	if meta.Ret != nil {
-		rec(meta.Ret)
+	if meta.Ret != NoType {
+		rec(meta.Ret.Deref())
 	}
 }
 

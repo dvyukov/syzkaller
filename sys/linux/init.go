@@ -294,8 +294,8 @@ func (arch *arch) generateTimespec(g *prog.Gen, typ0 prog.Type, old prog.Arg) (a
 	case g.NOutOf(1, 4):
 		// Now for relative, past for absolute.
 		arg = prog.MakeGroupArg(typ, []prog.Arg{
-			prog.MakeResultArg(typ.Fields[0], nil, 0),
-			prog.MakeResultArg(typ.Fields[1], nil, 0),
+			prog.MakeResultArg(typ.Field(0), nil, 0),
+			prog.MakeResultArg(typ.Field(1), nil, 0),
 		})
 	case g.NOutOf(1, 3):
 		// Few ms ahead for relative, past for absolute
@@ -307,37 +307,37 @@ func (arch *arch) generateTimespec(g *prog.Gen, typ0 prog.Type, old prog.Arg) (a
 			nsec /= 1e3
 		}
 		arg = prog.MakeGroupArg(typ, []prog.Arg{
-			prog.MakeResultArg(typ.Fields[0], nil, 0),
-			prog.MakeResultArg(typ.Fields[1], nil, nsec),
+			prog.MakeResultArg(typ.Field(0), nil, 0),
+			prog.MakeResultArg(typ.Field(1), nil, nsec),
 		})
 	case g.NOutOf(1, 2):
 		// Unreachable fututre for both relative and absolute
 		arg = prog.MakeGroupArg(typ, []prog.Arg{
-			prog.MakeResultArg(typ.Fields[0], nil, 2e9),
-			prog.MakeResultArg(typ.Fields[1], nil, 0),
+			prog.MakeResultArg(typ.Field(0), nil, 2e9),
+			prog.MakeResultArg(typ.Field(1), nil, 0),
 		})
 	default:
 		// Few ms ahead for absolute.
 		meta := arch.clockGettimeSyscall
-		ptrArgType := meta.Args[1].(*prog.PtrType)
-		argType := ptrArgType.Type.(*prog.StructType)
+		ptrArgType := meta.Args[1].Real().(*prog.PtrType)
+		argType := ptrArgType.Type.Real().(*prog.StructType)
 		tp := prog.MakeGroupArg(argType, []prog.Arg{
-			prog.MakeResultArg(argType.Fields[0], nil, 0),
-			prog.MakeResultArg(argType.Fields[1], nil, 0),
+			prog.MakeResultArg(argType.Field(0), nil, 0),
+			prog.MakeResultArg(argType.Field(1), nil, 0),
 		})
 		var tpaddr prog.Arg
 		tpaddr, calls = g.Alloc(ptrArgType, tp)
 		gettime := &prog.Call{
 			Meta: meta,
 			Args: []prog.Arg{
-				prog.MakeConstArg(meta.Args[0], arch.CLOCK_REALTIME),
+				prog.MakeConstArg(meta.Arg(0), arch.CLOCK_REALTIME),
 				tpaddr,
 			},
-			Ret: prog.MakeReturnArg(meta.Ret),
+			Ret: prog.MakeReturnArg(meta.Ret.Deref()),
 		}
 		calls = append(calls, gettime)
-		sec := prog.MakeResultArg(typ.Fields[0], tp.Inner[0].(*prog.ResultArg), 0)
-		nsec := prog.MakeResultArg(typ.Fields[1], tp.Inner[1].(*prog.ResultArg), 0)
+		sec := prog.MakeResultArg(typ.Field(0), tp.Inner[0].(*prog.ResultArg), 0)
+		nsec := prog.MakeResultArg(typ.Field(1), tp.Inner[1].(*prog.ResultArg), 0)
 		msec := timeout1
 		if g.NOutOf(1, 2) {
 			msec = timeout2

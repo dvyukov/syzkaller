@@ -163,7 +163,7 @@ var typePtr = &typeDesc{
 		}
 		return &prog.PtrType{
 			TypeCommon: base.TypeCommon,
-			Type:       comp.genType(args[1], "", genDir(args[0]), 0),
+			Type:       prog.CreateTypeIdx(comp.genType(args[1], "", genDir(args[0]), 0)),
 		}
 	},
 }
@@ -240,7 +240,7 @@ var typeArray = &typeDesc{
 		// TypeSize is assigned later in genStructDescs.
 		return &prog.ArrayType{
 			TypeCommon: base.TypeCommon,
-			Type:       elemType,
+			Type:       prog.CreateTypeIdx(elemType),
 			Kind:       kind,
 			RangeBegin: begin,
 			RangeEnd:   end,

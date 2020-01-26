@@ -282,7 +282,8 @@ func checkStruct(typ *prog.StructDesc, astStruct *ast.Struct, str *dwarf.StructT
 	// e.g. if a name contains filedes/uid/pid/gid that may be the corresponding resource.
 	ai := 0
 	offset := uint64(0)
-	for _, field := range typ.Fields {
+	for _, fref := range typ.Fields {
+		field := fref.Deref()
 		if field.Varlen() {
 			ai = len(str.Field)
 			break
@@ -351,7 +352,7 @@ func parseDescriptions(OS, arch string) ([]*prog.KeyedStruct, map[string]*ast.St
 	if prg == nil {
 		return nil, nil, nil, fmt.Errorf("failed to compile descriptions:\n%s", errorBuf.Bytes())
 	}
-	prog.RestoreLinks(prg.Syscalls, prg.Resources, prg.StructDescs)
+	prog.RestoreLinks(prg.Syscalls, prg.Resources, prg.StructDescs, prg.Types)
 	locs := make(map[string]*ast.Struct)
 	for _, decl := range top.Nodes {
 		switch n := decl.(type) {
@@ -526,7 +527,7 @@ func checkMissingAttrs(checkedAttrs map[string]*checkAttr) []Warn {
 
 func isNetlinkPolicy(typ *prog.StructDesc) bool {
 	haveAttr := false
-	for _, field := range typ.Fields {
+	typ.ForEachField(func(field prog.Type) {
 		if prog.IsPad(field) {
 			continue
 		}
@@ -548,7 +549,7 @@ func isNetlinkPolicy(typ *prog.StructDesc) bool {
 			}
 		}
 		return false
-	}
+	})
 	return haveAttr
 }
 

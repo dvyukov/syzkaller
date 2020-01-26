@@ -8,143 +8,96 @@ import . "github.com/google/syzkaller/prog"
 import . "github.com/google/syzkaller/sys/trusty"
 
 func init() {
-	RegisterTarget(&Target{OS: "trusty", Arch: "arm", Revision: revision_arm, PtrSize: 4, PageSize: 4096, NumPages: 4096, DataOffset: 536870912, Syscalls: syscalls_arm, Resources: resources_arm, Structs: structDescs_arm, Consts: consts_arm}, InitTarget)
+	RegisterTarget(&Target{OS: "trusty", Arch: "arm", Revision: revision_arm, PtrSize: 4, PageSize: 4096, NumPages: 4096, DataOffset: 536870912, Syscalls: syscalls_arm, Resources: resources_arm, Structs: structDescs_arm, Types: types_arm, Consts: consts_arm}, InitTarget)
 }
 
 var resources_arm = []*ResourceDesc(nil)
 
 var structDescs_arm = []*KeyedStruct{
-	{StructKey{Name: "dma_pmem"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "dma_pmem", TypeSize: 4}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4}}},
-	}}},
-	{StructKey{Name: "ipc_msg"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg", TypeSize: 4}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4}}},
-	}}},
-	{StructKey{"ipc_msg", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg", TypeSize: 4, ArgDir: 1}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4, ArgDir: 1}}},
-	}}},
-	{StructKey{Name: "ipc_msg_info"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg_info", TypeSize: 4}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4}}},
-	}}},
-	{StructKey{Name: "uevent"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uevent", TypeSize: 4}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4}}},
-	}}},
-	{StructKey{"uevent", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uevent", TypeSize: 4, ArgDir: 1}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4, ArgDir: 1}}},
-	}}},
-	{StructKey{"uuid", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uuid", TypeSize: 4, ArgDir: 1}, Fields: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4, ArgDir: 1}}},
-	}}},
+	{StructKey{Name: "dma_pmem"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "dma_pmem", TypeSize: 4}, Fields: []TypeIdx{45}}},
+	{StructKey{Name: "ipc_msg"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg", TypeSize: 4}, Fields: []TypeIdx{45}}},
+	{StructKey{"ipc_msg", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg", TypeSize: 4, ArgDir: 1}, Fields: []TypeIdx{46}}},
+	{StructKey{Name: "ipc_msg_info"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "ipc_msg_info", TypeSize: 4}, Fields: []TypeIdx{45}}},
+	{StructKey{Name: "uevent"}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uevent", TypeSize: 4}, Fields: []TypeIdx{45}}},
+	{StructKey{"uevent", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uevent", TypeSize: 4, ArgDir: 1}, Fields: []TypeIdx{46}}},
+	{StructKey{"uuid", 1}, &StructDesc{TypeCommon: TypeCommon{TypeName: "uuid", TypeSize: 4, ArgDir: 1}, Fields: []TypeIdx{46}}},
 }
 
 var syscalls_arm = []*Syscall{
-	{NR: 18, Name: "accept", CallName: "accept", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle_id", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "peer_uuid", TypeSize: 4}, &StructType{Key: StructKey{"uuid", 1}}},
-	}},
-	{NR: 2, Name: "brk", CallName: "brk", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "brk", TypeSize: 4}}},
-	}},
-	{NR: 19, Name: "close", CallName: "close", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle_id", TypeSize: 4}}},
-	}},
-	{NR: 17, Name: "connect", CallName: "connect", Args: []Type{
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "string", IsVarlen: true}, Kind: 2}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-	}},
-	{NR: 3, Name: "exit_etc", CallName: "exit_etc", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "status", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-	}},
-	{NR: 11, Name: "finish_dma", CallName: "finish_dma", Args: []Type{
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "uaddr", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"uaddr"}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-	}},
-	{NR: 32, Name: "get_msg", CallName: "get_msg", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg_info", TypeSize: 4}, &StructType{Key: StructKey{Name: "ipc_msg_info"}}},
-	}},
-	{NR: 7, Name: "gettime", CallName: "gettime", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "clock_id", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "time", TypeSize: 4}, &IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", TypeSize: 8, ArgDir: 1}}}},
-	}},
+	{NR: 18, Name: "accept", CallName: "accept", Args: []TypeIdx{1, 3}},
+	{NR: 2, Name: "brk", CallName: "brk", Args: []TypeIdx{4}},
+	{NR: 19, Name: "close", CallName: "close", Args: []TypeIdx{1}},
+	{NR: 17, Name: "connect", CallName: "connect", Args: []TypeIdx{6, 7}},
+	{NR: 3, Name: "exit_etc", CallName: "exit_etc", Args: []TypeIdx{8, 7}},
+	{NR: 11, Name: "finish_dma", CallName: "finish_dma", Args: []TypeIdx{10, 11, 7}},
+	{NR: 32, Name: "get_msg", CallName: "get_msg", Args: []TypeIdx{12, 14}},
+	{NR: 7, Name: "gettime", CallName: "gettime", Args: []TypeIdx{15, 7, 17}},
 	{NR: 21, Name: "handle_set_create", CallName: "handle_set_create"},
-	{NR: 22, Name: "handle_set_ctrl", CallName: "handle_set_ctrl", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "cmd", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "evt", TypeSize: 4}, &StructType{Key: StructKey{Name: "uevent"}}},
-	}},
-	{NR: 5, Name: "ioctl", CallName: "ioctl", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "fd", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "req", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "buf", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "array", IsVarlen: true}}},
-	}},
-	{NR: 8, Name: "mmap", CallName: "mmap", Args: []Type{
-		&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "uaddr", TypeSize: 4}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"uaddr"}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-	}},
-	{NR: 9, Name: "munmap", CallName: "munmap", Args: []Type{
-		&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "uaddr", TypeSize: 4}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"uaddr"}},
-	}},
-	{NR: 6, Name: "nanosleep", CallName: "nanosleep", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "clock_id", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", FldName: "sleep_time", TypeSize: 8}}},
-	}},
-	{NR: 16, Name: "port_create", CallName: "port_create", Args: []Type{
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "string", IsVarlen: true}, Kind: 2}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "num_recv_bufs", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "recv_buf_size", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-	}},
-	{NR: 10, Name: "prepare_dma", CallName: "prepare_dma", Args: []Type{
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "uaddr", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"uaddr"}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "pmem", TypeSize: 4}, &StructType{Key: StructKey{Name: "dma_pmem"}}},
-	}},
-	{NR: 34, Name: "put_msg", CallName: "put_msg", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "msg_id", TypeSize: 4}}},
-	}},
-	{NR: 4, Name: "read", CallName: "read", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "fd", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"msg"}},
-	}},
-	{NR: 33, Name: "read_msg", CallName: "read_msg", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "msg_id", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "offset", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, &StructType{Key: StructKey{"ipc_msg", 1}}},
-	}},
-	{NR: 35, Name: "send_msg", CallName: "send_msg", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, &StructType{Key: StructKey{Name: "ipc_msg"}}},
-	}},
-	{NR: 20, Name: "set_cookie", CallName: "set_cookie", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "cookie", TypeSize: 4}}},
-	}},
-	{NR: 24, Name: "wait", CallName: "wait", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle_id", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "event", TypeSize: 4}, &StructType{Key: StructKey{Name: "uevent"}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "timeout_msecs", TypeSize: 4}}},
-	}},
-	{NR: 25, Name: "wait_any", CallName: "wait_any", Args: []Type{
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "event", TypeSize: 4}, &StructType{Key: StructKey{"uevent", 1}}},
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "timeout_msecs", TypeSize: 4}}},
-	}},
-	{NR: 1, Name: "write", CallName: "write", Args: []Type{
-		&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "fd", TypeSize: 4}}},
-		&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, &BufferType{TypeCommon: TypeCommon{TypeName: "array", IsVarlen: true}}},
-		&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"msg"}},
-	}},
+	{NR: 22, Name: "handle_set_ctrl", CallName: "handle_set_ctrl", Args: []TypeIdx{12, 18, 20}},
+	{NR: 5, Name: "ioctl", CallName: "ioctl", Args: []TypeIdx{21, 22, 24}},
+	{NR: 8, Name: "mmap", CallName: "mmap", Args: []TypeIdx{25, 11, 7, 12}},
+	{NR: 9, Name: "munmap", CallName: "munmap", Args: []TypeIdx{25, 11}},
+	{NR: 6, Name: "nanosleep", CallName: "nanosleep", Args: []TypeIdx{15, 7, 26}},
+	{NR: 16, Name: "port_create", CallName: "port_create", Args: []TypeIdx{6, 27, 28, 7}},
+	{NR: 10, Name: "prepare_dma", CallName: "prepare_dma", Args: []TypeIdx{10, 11, 7, 30}},
+	{NR: 34, Name: "put_msg", CallName: "put_msg", Args: []TypeIdx{12, 31}},
+	{NR: 4, Name: "read", CallName: "read", Args: []TypeIdx{21, 32, 33}},
+	{NR: 33, Name: "read_msg", CallName: "read_msg", Args: []TypeIdx{12, 31, 34, 36}},
+	{NR: 35, Name: "send_msg", CallName: "send_msg", Args: []TypeIdx{12, 38}},
+	{NR: 20, Name: "set_cookie", CallName: "set_cookie", Args: []TypeIdx{12, 39}},
+	{NR: 24, Name: "wait", CallName: "wait", Args: []TypeIdx{1, 40, 41}},
+	{NR: 25, Name: "wait_any", CallName: "wait_any", Args: []TypeIdx{43, 41}},
+	{NR: 1, Name: "write", CallName: "write", Args: []TypeIdx{21, 44, 33}},
+}
+
+var types_arm = []Type{
+	nil,
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle_id", TypeSize: 4}}},
+	&StructType{Key: StructKey{"uuid", 1}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "peer_uuid", TypeSize: 4}, 2},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "brk", TypeSize: 4}}},
+	&BufferType{TypeCommon: TypeCommon{TypeName: "string", IsVarlen: true}, Kind: 2},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "path", TypeSize: 4}, 5},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "flags", TypeSize: 4}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "status", TypeSize: 4}}},
+	&BufferType{TypeCommon: TypeCommon{TypeName: "array", ArgDir: 1, IsVarlen: true}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "uaddr", TypeSize: 4}, 9},
+	&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"uaddr"}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "handle", TypeSize: 4}}},
+	&StructType{Key: StructKey{Name: "ipc_msg_info"}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg_info", TypeSize: 4}, 13},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "clock_id", TypeSize: 4}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", TypeSize: 8, ArgDir: 1}}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "time", TypeSize: 4}, 16},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "cmd", TypeSize: 4}}},
+	&StructType{Key: StructKey{Name: "uevent"}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "evt", TypeSize: 4}, 19},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "fd", TypeSize: 4}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "req", TypeSize: 4}}},
+	&BufferType{TypeCommon: TypeCommon{TypeName: "array", IsVarlen: true}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "buf", TypeSize: 4}, 23},
+	&VmaType{TypeCommon: TypeCommon{TypeName: "vma", FldName: "uaddr", TypeSize: 4}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int64", FldName: "sleep_time", TypeSize: 8}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "num_recv_bufs", TypeSize: 4}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "recv_buf_size", TypeSize: 4}}},
+	&StructType{Key: StructKey{Name: "dma_pmem"}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "pmem", TypeSize: 4}, 29},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "msg_id", TypeSize: 4}}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, 9},
+	&LenType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "len", FldName: "size", TypeSize: 4}}, Path: []string{"msg"}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "offset", TypeSize: 4}}},
+	&StructType{Key: StructKey{"ipc_msg", 1}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, 35},
+	&StructType{Key: StructKey{Name: "ipc_msg"}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, 37},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "intptr", FldName: "cookie", TypeSize: 4}}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "event", TypeSize: 4}, 19},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "timeout_msecs", TypeSize: 4}}},
+	&StructType{Key: StructKey{"uevent", 1}},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "event", TypeSize: 4}, 42},
+	&PtrType{TypeCommon{TypeName: "ptr", FldName: "msg", TypeSize: 4}, 23},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4}}},
+	&IntType{IntTypeCommon: IntTypeCommon{TypeCommon: TypeCommon{TypeName: "int32", FldName: "todo", TypeSize: 4, ArgDir: 1}}},
 }
 
 var consts_arm = []ConstValue{
@@ -174,4 +127,4 @@ var consts_arm = []ConstValue{
 	{"__NR_write", 1},
 }
 
-const revision_arm = "ab417848f2bf8ecdc807d9ee618bdf7ef646eeaa"
+const revision_arm = "7dfed2556b4483fdbacacaf112d7d3b400cba7c4"

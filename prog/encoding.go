@@ -266,7 +266,7 @@ func (p *parser) parseProg() (*Prog, error) {
 		}
 		c := &Call{
 			Meta:    meta,
-			Ret:     MakeReturnArg(meta.Ret),
+			Ret:     MakeReturnArg(meta.Ret.Deref()),
 			Comment: p.comment,
 		}
 		prog.Calls = append(prog.Calls, c)
@@ -276,7 +276,7 @@ func (p *parser) parseProg() (*Prog, error) {
 				p.eatExcessive(false, "excessive syscall arguments")
 				break
 			}
-			typ := meta.Args[i]
+			typ := meta.Arg(i)
 			if IsPad(typ) {
 				return nil, fmt.Errorf("padding in syscall %v arguments", name)
 			}
@@ -302,7 +302,7 @@ func (p *parser) parseProg() (*Prog, error) {
 		}
 		for i := len(c.Args); i < len(meta.Args); i++ {
 			p.strictFailf("missing syscall args")
-			c.Args = append(c.Args, meta.Args[i].DefaultArg())
+			c.Args = append(c.Args, meta.Arg(i).DefaultArg())
 		}
 		if len(c.Args) != len(meta.Args) {
 			return nil, fmt.Errorf("wrong call arg count: %v, want %v", len(c.Args), len(meta.Args))
@@ -453,7 +453,7 @@ func (p *parser) parseArgAddr(typ Type) (Arg, error) {
 	var typ1 Type
 	switch t1 := typ.(type) {
 	case *PtrType:
-		typ1 = t1.Type
+		typ1 = t1.Type.Deref()
 	case *VmaType:
 	default:
 		p.eatExcessive(true, "wrong addr arg")
@@ -580,7 +580,7 @@ func (p *parser) parseArgStruct(typ Type) (Arg, error) {
 			p.eatExcessive(false, "excessive struct %v fields", typ.Name())
 			break
 		}
-		fld := t1.Fields[i]
+		fld := t1.Field(i)
 		if IsPad(fld) {
 			inner = append(inner, MakeConstArg(fld, 0))
 		} else {
@@ -596,7 +596,7 @@ func (p *parser) parseArgStruct(typ Type) (Arg, error) {
 	}
 	p.Parse('}')
 	for len(inner) < len(t1.Fields) {
-		fld := t1.Fields[len(inner)]
+		fld := t1.Field(len(inner))
 		if !IsPad(fld) {
 			p.strictFailf("missing struct %v fields %v/%v", typ.Name(), len(inner), len(t1.Fields))
 		}
@@ -615,7 +615,7 @@ func (p *parser) parseArgArray(typ Type) (Arg, error) {
 	}
 	var inner []Arg
 	for i := 0; p.Char() != ']'; i++ {
-		arg, err := p.parseArg(t1.Type)
+		arg, err := p.parseArg(t1.Type.Deref())
 		if err != nil {
 			return nil, err
 		}
@@ -628,7 +628,7 @@ func (p *parser) parseArgArray(typ Type) (Arg, error) {
 	if t1.Kind == ArrayRangeLen && t1.RangeBegin == t1.RangeEnd {
 		for uint64(len(inner)) < t1.RangeBegin {
 			p.strictFailf("missing array elements")
-			inner = append(inner, t1.Type.DefaultArg())
+			inner = append(inner, t1.Type.Deref().DefaultArg())
 		}
 		inner = inner[:t1.RangeBegin]
 	}
@@ -646,7 +646,7 @@ func (p *parser) parseArgUnion(typ Type) (Arg, error) {
 	var optType Type
 	for _, t2 := range t1.Fields {
 		if name == t2.FieldName() {
-			optType = t2
+			optType = t2.Deref()
 			break
 		}
 	}

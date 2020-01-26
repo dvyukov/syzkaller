@@ -12,25 +12,25 @@ import (
 func (arch *arch) generateSockaddrAlg(g *prog.Gen, typ0 prog.Type, old prog.Arg) (
 	arg prog.Arg, calls []*prog.Call) {
 	typ := typ0.(*prog.StructType)
-	family := g.GenerateArg(typ.Fields[0], &calls)
+	family := g.GenerateArg(typ.Field(0), &calls)
 	// There is very little point in generating feat/mask,
 	// because that can only fail otherwise correct bind.
-	feat := prog.MakeConstArg(typ.Fields[2], 0)
-	mask := prog.MakeConstArg(typ.Fields[3], 0)
+	feat := prog.MakeConstArg(typ.Field(2), 0)
+	mask := prog.MakeConstArg(typ.Field(3), 0)
 	if g.NOutOf(1, 1000) {
-		feat = g.GenerateArg(typ.Fields[2], &calls).(*prog.ConstArg)
-		mask = g.GenerateArg(typ.Fields[3], &calls).(*prog.ConstArg)
+		feat = g.GenerateArg(typ.Field(2), &calls).(*prog.ConstArg)
+		mask = g.GenerateArg(typ.Field(3), &calls).(*prog.ConstArg)
 	}
 	algType, algName := generateAlgName(g.Rand())
 	// Extend/truncate type/name to their fixed sizes.
-	algTypeData := fixedSizeData(algType, typ.Fields[1].Size())
-	algNameData := fixedSizeData(algName, typ.Fields[4].Size())
+	algTypeData := fixedSizeData(algType, typ.Field(1).Size())
+	algNameData := fixedSizeData(algName, typ.Field(4).Size())
 	arg = prog.MakeGroupArg(typ, []prog.Arg{
 		family,
-		prog.MakeDataArg(typ.Fields[1], algTypeData),
+		prog.MakeDataArg(typ.Field(1), algTypeData),
 		feat,
 		mask,
-		prog.MakeDataArg(typ.Fields[4], algNameData),
+		prog.MakeDataArg(typ.Field(4), algNameData),
 	})
 	return
 }
@@ -60,7 +60,7 @@ func generateAlgNameStruct(g *prog.Gen, typ0 prog.Type, algTyp int) (arg prog.Ar
 	algName := generateAlg(g.Rand(), algTyp)
 	algNameData := fixedSizeData(algName, typ.Fields[0].Size())
 	arg = prog.MakeGroupArg(typ, []prog.Arg{
-		prog.MakeDataArg(typ.Fields[0], algNameData),
+		prog.MakeDataArg(typ.Field(0), algNameData),
 	})
 	return
 }

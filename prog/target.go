@@ -23,6 +23,7 @@ type Target struct {
 	Syscalls  []*Syscall
 	Resources []*ResourceDesc
 	Structs   []*KeyedStruct
+	Types []Type // these are real types that TypeIdx'es refer to
 	Consts    []ConstValue
 
 	// MakeDataMmap creates calls that mmaps target data memory range.
@@ -78,6 +79,9 @@ func RegisterTarget(target *Target, initArch func(target *Target)) {
 	}
 	target.initArch = initArch
 	targets[key] = target
+
+	//!!!
+	target.init.Do(target.lazyInit)
 }
 
 func GetTarget(OS, arch string) (*Target, error) {
@@ -136,7 +140,7 @@ func (target *Target) initTarget() {
 		target.ConstMap[c.Name] = c.Value
 	}
 
-	target.resourceMap = restoreLinks(target.Syscalls, target.Resources, target.Structs)
+	target.resourceMap = restoreLinks(target.Syscalls, target.Resources, target.Structs, target.Types)
 	target.Structs = nil
 
 	target.SyscallMap = make(map[string]*Syscall)
@@ -171,11 +175,12 @@ func (target *Target) sanitize(c *Call, fix bool) error {
 	return nil
 }
 
-func RestoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*KeyedStruct) {
-	restoreLinks(syscalls, resources, structs)
+func RestoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*KeyedStruct, types []Type) {
+	restoreLinks(syscalls, resources, structs, types)
 }
 
-func restoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*KeyedStruct) map[string]*ResourceDesc {
+func restoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*KeyedStruct,
+	types []Type) map[string]*ResourceDesc {
 	resourceMap := make(map[string]*ResourceDesc)
 	for _, res := range resources {
 		resourceMap[res.Name] = res
@@ -183,10 +188,30 @@ func restoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*Key
 	keyedStructs := make(map[StructKey]*StructDesc)
 	for _, desc := range structs {
 		keyedStructs[desc.Key] = desc.Desc
+		for i := range desc.Desc.Fields {
+			internalizeType(&desc.Desc.Fields[i], types)
+		}
 	}
+	/*
+	keyedTypes := make(map[TypeIdx]Type)
+	for ti, typ := range types {
+		keyedTypes[TypeIdx(ti)] = typ
+	}
+	*/
 	for _, c := range syscalls {
+		for i := range c.Args {
+			//!!! deduplicate across targets?
+			internalizeType(&c.Args[i], types)
+		}
+		if c.Ret != NoType {
+			internalizeType(&c.Ret, types)
+		}
 		ForeachType(c, func(t0 Type) {
 			switch t := t0.(type) {
+			case *PtrType:
+				internalizeType(&t.Type, types)
+			case *ArrayType:
+				internalizeType(&t.Type, types)
 			case *ResourceType:
 				t.Desc = resourceMap[t.TypeName]
 				if t.Desc == nil {
@@ -206,6 +231,17 @@ func restoreLinks(syscalls []*Syscall, resources []*ResourceDesc, structs []*Key
 		})
 	}
 	return resourceMap
+}
+
+func internalizeType(tp *TypeIdx, types []Type) {
+	*tp = types[*tp].Ref()
+	/*
+	ti := *tp
+	if ti & typeInternalized != 0 {
+		return
+	}
+	*tp = CreateTypeIdx(types[ti])
+	*/
 }
 
 type Gen struct {
