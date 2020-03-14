@@ -21,6 +21,7 @@ type Syscall struct {
 
 	inputResources  []*ResourceDesc
 	outputResources []*ResourceDesc
+	group           *discriminationGroup
 }
 
 // SyscallAttrs represents call attributes in syzlang.

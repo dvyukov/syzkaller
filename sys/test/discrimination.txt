@@ -1,0 +1,43 @@
+# Copyright 2020 syzkaller project authors. All rights reserved.
+# Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
+
+#resource fd_disc1[fd]
+#resource fd_disc2[fd]
+#resource fd_disc3[fd_disc2]
+
+ioctl(fd fd, cmd int32, arg intptr)
+ioctl$1(fd fd, cmd const[1], arg intptr)
+ioctl$2(fd fd, cmd const[2], arg intptr)
+ioctl$3(fd fd, cmd const[3], arg intptr)
+ioctl$4(fd fd, cmd const[4])
+ioctl$ff(fd fd, cmd const[-1], arg intptr)
+ioctl$fe(fd fd, cmd const[-2], arg intptr)
+
+resource sock[fd]
+
+socket(domain flags[socket_domain], type flags[socket_type], protocol flags[socket_protocol]) sock
+socket$generic(domain int32, type int32, protocol int32) sock
+socket$inet6(domain const[0x1], type flags[socket_type], protocol const[0x100]) sock
+socket$inet6_tcp(domain const[0x1], type const[0x10], protocol const[0x100]) sock
+socket$netlink(domain const[0x2], type const[0x10], protocol flags[socket_protocol]) sock
+socket$netlink2(domain const[0x2], type const[0x10], protocol int32) sock
+socket$netlink_foo(domain const[0x2], type const[0x10], protocol const[0x102]) sock
+socket$foo(domain const[0x3], type const[0x10], protocol const[0x102]) sock
+socket$foo2(domain const[0x3], type flags[socket_type], protocol const[0x102]) sock
+socket$foo3(domain const[0x3], type int32, protocol const[0x102]) sock
+socket$foo4(domain const[0x4], type int32, protocol const[0x100]) sock
+socket$foo5(domain const[0x4], type int32, protocol int32) sock
+socket$foo6(domain int32, type int32, protocol int32) sock
+socket$foo7(domain int32, type int32, protocol int32) sock
+
+socket_domain = 0x1, 0x2, 0x3
+socket_type = 0x10, 0x11, 0x12
+socket_protocol = 0x100, 0x101, 0x102
+
+openat(dirfd fd, filename ptr[in, filename], flags flags[openat_flags], mode flags[openat_mode])
+openat$null(dirfd const[0], filename ptr[in, string["/dev/null"]], flags const[0x10])
+openat$foo(dirfd const[0], filename ptr[in, string["/dev/foo"]], flags flags[openat_flags])
+openat$bar(dirfd const[0], filename ptr[in, string["/dev/bar"]], flags int32)
+
+openat_flags = 0x10, 0x20
+openat_mode = 0x100, 0x200

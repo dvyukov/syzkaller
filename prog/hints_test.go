@@ -9,7 +9,10 @@ import (
 	"math/rand"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type ConstArgTest struct {
@@ -593,6 +596,46 @@ func BenchmarkHints(b *testing.B) {
 			}
 		}
 	})
+}
+
+func TestHintsCall(t *testing.T) {
+	target := initTargetTest(t, "test", "64")
+	type Test struct {
+		in    string
+		comps CompMap
+		out   []string
+	}
+	tests := []Test{
+		{
+			in:    `ioctl$1(0x0, 0x1, 0x0)`,
+			comps: CompMap{0x1: compSet(0x0, 0x1, 0x2, 0x3, 0x4, 0xffffffffffffffff, 0xfffffffffffffffe, 0xfffffffffffffffd)},
+			out: []string{
+				`ioctl$1(0x0, 0x4, 0x0)`,
+				`ioctl$1(0x0, 0xfd, 0x0)`,
+				`ioctl$1(0x0, 0xfe, 0x0)`,
+				`ioctl$1(0x0, 0xfffd, 0x0)`,
+				`ioctl$1(0x0, 0xfffe, 0x0)`,
+				`ioctl$1(0x0, 0xfffffffd, 0x0)`,
+			},
+		},
+	}
+	for i, test := range tests {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			p, err := target.Deserialize([]byte(test.in), Strict)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			p.MutateWithHints(0, test.comps, func(newP *Prog) {
+				got = append(got, strings.TrimSpace(string(newP.Serialize())))
+			})
+			sort.Strings(test.out)
+			sort.Strings(got)
+			if diff := cmp.Diff(test.out, got); diff != "" {
+				t.Fatal(diff)
+			}
+		})
+	}
 }
 
 func compSet(vals ...uint64) map[uint64]bool {

@@ -462,3 +462,88 @@ func TestSanitizeRandom(t *testing.T) {
 		}
 	})
 }
+
+func TestDiscriminations(t *testing.T) {
+	TestDeserializeHelper(t, "test", "64", nil, []DeserializeTest{
+		{
+			In: `ioctl(0x0, 0x0, 0x0)`,
+		},
+		{
+			In:        `ioctl$1(0x0, 0x2, 0x0)`,
+			Out:       `ioctl$1(0x0, 0x1, 0x0)`,
+			StrictErr: `call ioctl$1 has args cmd=0x2, allowed calls with such args: [ioctl$2]`,
+		},
+		{
+			In:        `ioctl$1(0x0, 0x100000000002, 0x0)`,
+			Out:       `ioctl$1(0x0, 0x1, 0x0)`,
+			StrictErr: `call ioctl$1 has args cmd=0x2, allowed calls with such args: [ioctl$2]`,
+		},
+		{
+			In:        `ioctl$1(0x0, 0xffffffffffff, 0x0)`,
+			Out:       `ioctl$1(0x0, 0x1, 0x0)`,
+			StrictErr: `call ioctl$1 has args cmd=0xffffffff, allowed calls with such args: [ioctl$ff]`,
+		},
+		{
+			In:        `ioctl$3(0x0, 0x4, 0x0)`,
+			Out:       `ioctl$3(0x0, 0x3, 0x0)`,
+			StrictErr: `call ioctl$3 has args cmd=0x4, allowed calls with such args: [ioctl$4]`,
+		},
+		{
+			In:        `ioctl$4(0x0, 0x3)`,
+			Out:       `ioctl$4(0x0, 0x4)`,
+			StrictErr: `call ioctl$4 has args cmd=0x3, allowed calls with such args: [ioctl$3]`,
+		},
+		{
+			In: `
+socket(0x3, 0x0, 0x102)
+socket(0x5, 0x10, 0x100)
+socket(0x1, 0x10, 0x100)
+socket$foo(0x3, 0x10, 0x102)
+socket$foo2(0x3, 0x10, 0x102)
+socket$foo2(0x3, 0x11, 0x102)
+socket$foo3(0x3, 0x13, 0x102)
+`,
+		},
+		{
+			In:        `socket$foo3(0x3, 0x10, 0x102)`,
+			Out:       `socket$foo3(0x3, 0x13, 0x102)`,
+			StrictErr: `call socket$foo3 has args domain=0x3,type=0x10, allowed calls with such args: [socket socket$foo socket$foo2]`,
+		},
+		{
+			In:        `socket$foo3(0x3, 0x11, 0x102)`,
+			Out:       `socket$foo3(0x3, 0x13, 0x102)`,
+			StrictErr: `call socket$foo3 has args domain=0x3,type=0x11, allowed calls with such args: [socket socket$foo2]`,
+		},
+		{
+			In:        `socket$foo3(0x3, 0x10, 0x100)`,
+			Out:       `socket$foo3(0x3, 0x13, 0x100)`,
+			StrictErr: `call socket$foo3 has args domain=0x3,type=0x10, allowed calls with such args: [socket socket$foo socket$foo2]`,
+		},
+		{
+			In:        `socket$foo3(0x3, 0x11, 0x100)`,
+			Out:       `socket$foo3(0x3, 0x13, 0x100)`,
+			StrictErr: `call socket$foo3 has args domain=0x3,type=0x11, allowed calls with such args: [socket socket$foo2]`,
+		},
+		{
+			In:        `socket$foo5(0x4, 0x10, 0x100)`,
+			Out:       `socket$foo5(0x4, 0x10, 0x101)`,
+			StrictErr: `call socket$foo5 has args domain=0x4,protocol=0x100, allowed calls with such args: [socket$foo4]`,
+		},
+		{
+			In:        `socket$netlink2(0x2, 0x10, 0x102)`,
+			Out:       `socket$netlink2(0x2, 0x10, 0x103)`,
+			StrictErr: `call socket$netlink2 has args domain=0x2,type=0x10,protocol=0x102, allowed calls with such args: [socket socket$netlink socket$netlink_foo]`,
+		},
+		{
+			In:        `socket$generic(0x2, 0x10, 0x102)`,
+			Out:       `socket$generic(0x5, 0x10, 0x102)`,
+			StrictErr: `call socket$generic has args domain=0x2, allowed calls with such args: [socket socket$netlink socket$netlink2 socket$netlink_foo]`,
+		},
+		{
+			In: `
+openat$foo(0x0, &(0x7f0000000000)='/dev/foo\x00', 0x10)
+openat$bar(0x0, &(0x7f0000000000)='/dev/bar\x00', 0x10)
+`,
+		},
+	})
+}

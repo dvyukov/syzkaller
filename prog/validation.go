@@ -14,8 +14,14 @@ func Debug() {
 }
 
 func (p *Prog) debugValidate() {
-	if debug {
-		if err := p.validate(); err != nil {
+	if !debug {
+		return
+	}
+	if err := p.validate(); err != nil {
+		panic(err)
+	}
+	for _, c := range p.Calls {
+		if err := p.Target.sanitizeDiscriminations(c, false); err != nil {
 			panic(err)
 		}
 	}

@@ -68,7 +68,8 @@ func TestDeserializeHelper(t *testing.T, OS, arch string, transform func(*Target
 					output := strings.TrimSpace(string(p.Serialize()))
 					want := strings.TrimSpace(test.Out)
 					if want != output {
-						t.Fatalf("wrong serialized data:\n%s\nexpect:\n%s\n", output, want)
+						t.Errorf("wrong serialized data:\n%s\nexpect:\n%s\n", output, want)
+						continue
 					}
 					p.SerializeForExec(buf)
 				}

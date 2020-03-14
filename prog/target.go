@@ -69,8 +69,9 @@ type Target struct {
 	any           anyTypes
 
 	// The default ChoiceTable is used only by tests and utilities, so we initialize it lazily.
-	defaultOnce        sync.Once
-	defaultChoiceTable *ChoiceTable
+	defaultOnce             sync.Once
+	defaultChoiceTable      *ChoiceTable
+	initDiscriminationsOnce sync.Once
 }
 
 const maxSpecialPointers = 16
@@ -175,8 +176,214 @@ func (target *Target) GetConst(name string) uint64 {
 }
 
 func (target *Target) sanitize(c *Call, fix bool) error {
+	if err := target.sanitizeDiscriminations(c, fix); err != nil {
+		return err
+	}
 	target.Neutralize(c)
 	return nil
+}
+
+const maxConstraints = 4
+
+type (
+	discriminationConstraint struct {
+		argIdx [maxConstraints]uint8
+		argVal [maxConstraints]uint64
+	}
+	discriminationGroup struct {
+		id          string
+		constraints map[discriminationConstraint]map[int]bool
+	}
+)
+
+func (target *Target) sanitizeDiscriminations(c *Call, fix bool) error {
+	//return nil
+
+	target.initDiscriminationsOnce.Do(target.initDiscriminations)
+	fixLimit := -1
+	if fix {
+		fixLimit = 1000
+	}
+	return target.sanitizeDiscriminationArg(c, 0, 0, fixLimit, &discriminationConstraint{})
+}
+
+func (target *Target) sanitizeDiscriminationArg(c *Call, argIdx, constraintPos, fixLimit int, constraint *discriminationConstraint) error {
+	if argIdx >= len(c.Args) {
+		return nil
+	}
+	//if c.Meta.Name == "mutate_integer" {
+	//	fmt.Printf("sanitizeDiscriminationArg: argIdx=%v constraintPos=%v constraint=%+v\n", argIdx, constraintPos, *constraint)
+	//}
+	arg, ok := c.Args[argIdx].(*ConstArg)
+	if ok {
+
+		//return fmt.Sprintf("%v=0x%x,", a.Type().FieldName(), v), optional
+		argVal, _ := arg.Value()
+		argVal = truncateToBitSize(argVal, arg.Type().TypeBitSize())
+
+		constraint.argIdx[constraintPos] = uint8(argIdx)
+		constraint.argVal[constraintPos] = argVal
+		calls := c.Meta.group.constraints[*constraint]
+		//fmt.Printf("ARG %v, constraint=%v part=%v optional=%v calls=%v\n", argIdx, constraint, part, optional, calls)
+
+		//fmt.Printf("%v: CHECKING: %+v CALLS: %v\n", c.Meta.Name, *constraint, calls)
+
+		if len(calls) != 0 && !calls[c.Meta.ID] {
+			if fixLimit < 0 {
+				return target.discriminationError(c, constraint, calls)
+			}
+			if fixLimit == 0 {
+				panic(fmt.Sprintf("infinite discrimination fix: call %v [%v], arg %v [%T], constraint %+v",
+					c.Meta.Name, c.Meta.group.id, argIdx, arg.Type(), *constraint))
+			}
+			//fmt.Printf("%v: FIXING arg %v: 0x%x", c.Meta.Name, argIdx, arg.Val)
+			switch typ := arg.Type().(type) {
+			case *ConstType:
+				arg.Val = typ.Val
+			case *FlagsType:
+				arg.Val = typ.Vals[0]
+			case *IntType:
+				arg.Val++
+			default:
+				panic(fmt.Sprintf("call %v, arg %v, unhandled type %T, constraint %+v", c.Meta.Name, argIdx, typ, *constraint))
+			}
+			//fmt.Printf(" -> 0x%x\n", arg.Val)
+			return target.sanitizeDiscriminationArg(c, argIdx, constraintPos, fixLimit-1, constraint)
+		}
+
+		switch arg.Type().(type) {
+		case *ConstType, *FlagsType, *ProcType:
+		default:
+			return target.sanitizeDiscriminationArg(c, argIdx+1, constraintPos, fixLimit, constraint)
+			//if err := target.sanitizeDiscriminationArg(c, argIdx+1, constraintPos, fixLimit, constraint); err != nil {
+			//		return err
+			//		}
+			//!!! constraint.argIdx[constraintPos] = uint8(argIdx)
+			//!!! constraint.argVal[constraintPos] = argVal
+		}
+
+		constraintPos++
+	}
+	return target.sanitizeDiscriminationArg(c, argIdx+1, constraintPos, fixLimit, constraint)
+}
+
+func (target *Target) discriminationError(c *Call, constraint *discriminationConstraint, calls map[int]bool) error {
+	args := ""
+	for i, arg := range constraint.argIdx {
+		if i != 0 && arg == 0 {
+			break
+		}
+		args += fmt.Sprintf("%v=0x%x,", c.Meta.Args[arg].Name, constraint.argVal[i])
+	}
+	var names []string
+	for id := range calls {
+		names = append(names, target.Syscalls[id].Name)
+	}
+	sort.Strings(names)
+	return fmt.Errorf("call %v has args %v allowed calls with such args: %v",
+		c.Meta.Name, args, names)
+}
+
+func (target *Target) initDiscriminations() {
+	//!!!prune empty groups and short-circuit
+	groups := make(map[string]*discriminationGroup)
+	groupCalls := make(map[string][]string)
+	for _, call := range target.Syscalls {
+		id := call.CallName
+		for i, field := range call.Args {
+			switch arg := field.Type.(type) {
+			case *ResourceType:
+				id += fmt.Sprintf("-%v:%v", i, arg.Name())
+			case *PtrType:
+				if typ, ok := arg.Elem.(*BufferType); ok && typ.Kind == BufferString && len(typ.Values) == 1 {
+					id += fmt.Sprintf("-%v:%v", i, typ.Values[0])
+				}
+			}
+		}
+		groupCalls[id] = append(groupCalls[id], call.Name)
+
+		call.group = groups[id]
+		if call.group == nil {
+			call.group = &discriminationGroup{
+				id:          id,
+				constraints: make(map[discriminationConstraint]map[int]bool),
+			}
+			groups[id] = call.group
+		}
+		collectConstraints(call, 0, 0, -1, 0, &discriminationConstraint{})
+	}
+	if false {
+		for id, group := range groups {
+			if len(groupCalls[id]) == 1 || len(group.constraints) == 0 {
+				//continue
+			}
+			if id != "syz_open_dev-0:/dev/video#" {
+				//continue
+			}
+			fmt.Printf("\nGROUP: %v calls %v, constraints %v\n", id, len(groupCalls[id]), len(group.constraints))
+			fmt.Printf("CALLS: %v\n", groupCalls[id])
+			for constraint, calls := range group.constraints {
+				for i, arg := range constraint.argIdx {
+					if i != 0 && arg == 0 {
+						break
+					}
+					fmt.Printf(" %v:0x%x", arg, constraint.argVal[i])
+				}
+				fmt.Printf(":")
+				for call := range calls {
+					fmt.Printf(" %v", target.Syscalls[call].Name)
+				}
+				fmt.Printf("\n")
+			}
+		}
+	}
+}
+
+func collectConstraints(call *Syscall, argIdx, constraintPos, prevArgIdx int, prevArgVal uint64, constraint *discriminationConstraint) {
+	if prevArgIdx != -1 {
+		if constraintPos >= len(constraint.argIdx) {
+			panic(fmt.Sprintf("%v: too many discrimination args: %+v", call.Name, *constraint))
+		}
+
+		constraint.argIdx[constraintPos] = uint8(prevArgIdx)
+		constraint.argVal[constraintPos] = prevArgVal
+		/*
+		   if call.Name == "socket" {
+		   fmt.Printf("COLLECT %v argIdx=%v, constraintPos=%v, prevArgIdx=%v, prevArgVal=0x%x, constraint=%v\n", call.Name, argIdx, constraintPos, prevArgIdx, prevArgVal, *constraint)
+		   }
+		*/
+		constraintPos++
+		defer func() {
+			constraintPos--
+			constraint.argIdx[constraintPos] = 0
+			constraint.argVal[constraintPos] = 0
+		}()
+
+		calls := call.group.constraints[*constraint]
+		if calls == nil {
+			calls = make(map[int]bool)
+			call.group.constraints[*constraint] = calls
+		}
+		calls[call.ID] = true
+	}
+	if argIdx == len(call.Args) {
+		return
+	}
+	switch arg := call.Args[argIdx].Type.(type) {
+	case *ConstType:
+		//part := fmt.Sprintf("%v=0x%x,", arg.FieldName(), arg.Val)
+		collectConstraints(call, argIdx+1, constraintPos, argIdx, arg.Val, constraint)
+	case *ProcType:
+		// This is required to allow at least the default value for ProcType.
+		collectConstraints(call, argIdx+1, constraintPos, argIdx, 0, constraint)
+	case *FlagsType:
+		for _, v := range arg.Vals {
+			v = truncateToBitSize(v, arg.TypeBitSize())
+			collectConstraints(call, argIdx+1, constraintPos, argIdx, v, constraint)
+		}
+	default:
+		collectConstraints(call, argIdx+1, constraintPos, -1, 0, constraint)
+	}
 }
 
 func RestoreLinks(syscalls []*Syscall, resources []*ResourceDesc, types []Type) {
