@@ -250,6 +250,8 @@ func main() {
 	prios := target.CalculatePriorities(fuzzer.corpus)
 	fuzzer.choiceTable = target.BuildChoiceTable(prios, calls)
 
+	checkMemory()
+
 	for pid := 0; pid < *flagProcs; pid++ {
 		proc, err := newProc(fuzzer, pid)
 		if err != nil {
