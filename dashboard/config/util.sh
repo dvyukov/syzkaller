@@ -26,54 +26,6 @@ function util_add_syzbot_bits {
   make ${MAKE_VARS} olddefconfig
 }
 
-function util_add_usb_bits {
-  MERGE_USB_SCRIPT=${THIS_DIR}/kconfiglib-merge-usb-configs.py
-
-  git clone --depth=1 https://github.com/ulfalizer/Kconfiglib.git
-  wget -qO- https://raw.githubusercontent.com/ulfalizer/Kconfiglib/master/makefile.patch | patch -p1
-
-  prefix=""
-  if [ "$#" == "1" ]; then
-    prefix="$1"
-  fi
-  configs=""
-  for config in ${THIS_DIR}/distros/${prefix}*; do
-    configs+="${config},"
-  done
-  make ${MAKE_VARS} scriptconfig SCRIPT=${MERGE_USB_SCRIPT} SCRIPT_ARG=${configs}
-  git checkout ./scripts/kconfig/Makefile
-  rm -rf ./Kconfiglib
-
-  scripts/config -d CONFIG_USB_G_NCM
-  scripts/config -d CONFIG_USB_G_SERIAL
-  scripts/config -d CONFIG_USB_G_PRINTER
-  scripts/config -d CONFIG_USB_G_NOKIA
-  scripts/config -d CONFIG_USB_G_ACM_MS
-  scripts/config -d CONFIG_USB_G_MULTI
-  scripts/config -d CONFIG_USB_G_HID
-  scripts/config -d CONFIG_USB_G_DBGP
-  scripts/config -d CONFIG_USB_G_WEBCAM
-
-  scripts/config -d CONFIG_USB_ZERO
-  scripts/config -d CONFIG_USB_AUDIO
-  scripts/config -d CONFIG_USB_ETH
-  scripts/config -d CONFIG_USB_FUNCTIONFS
-  scripts/config -d CONFIG_USB_MASS_STORAGE
-  scripts/config -d CONFIG_USB_GADGET_TARGET
-  scripts/config -d CONFIG_USB_MIDI_GADGET
-  scripts/config -d CONFIG_USB_CDC_COMPOSITE
-
-  scripts/config -d CONFIG_USB_GADGETFS
-  scripts/config -d CONFIG_USB_LIBCOMPOSITE
-  scripts/config -d CONFIG_USB_CONFIGFS
-  
-  scripts/config -e CONFIG_USB_GADGET
-  scripts/config -e CONFIG_USB_DUMMY_HCD
-  scripts/config -e CONFIG_USB_RAW_GADGET
-
-  make ${MAKE_VARS} olddefconfig
-}
-
 function util_add_syzbot_extra_bits {
   TMP_FILE=$(mktemp /tmp/syzkaller.XXXXXX)
   echo "# The following configs are added manually, preserve them.

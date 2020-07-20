@@ -1,0 +1,122 @@
+### Common config fragments required by syzbot for all kernels
+
+### Required to enable some other configs we set.
+CONFIG_EXPERT=y
+
+### We don't need lots, but some configs set it to 2 which is too low.
+### TODO: change to 8.
+CONFIG_NR_CPUS=64
+
+### We slowdown execution significantly and there is no point in low latency under test.
+CONFIG_HZ_100=y
+
+### KPROBES pollute coverage and needlessly slow down execution.
+# CONFIG_KPROBES is not set
+### Slows down execution and sometimes fuzzer actually enables it.
+# CONFIG_FUNCTION_TRACER is not set
+### Slows down execution.
+# CONFIG_RETPOLINE is not set
+# CONFIG_PAGE_TABLE_ISOLATION is not set
+# CONFIG_SCHED_DEBUG is not set
+
+### For detection of supported syscalls
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+CONFIG_KALLSYMS_BASE_RELATIVE=y
+
+### For namespace sandbox.
+CONFIG_NAMESPACES=y
+CONFIG_USER_NS=y
+CONFIG_UTS_NS=y
+### TODO: depends on CONFIG_SYSVIPC
+OPTIONAL: CONFIG_IPC_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+
+### Control groups are needed for better sandboxing of test processes.
+CONFIG_CGROUP_PIDS=y
+CONFIG_MEMCG=y
+
+### Debugging features (from kernel_configs.md, do not alpha sort).
+CONFIG_DEBUG_BUGVERBOSE=y
+CONFIG_PANIC_ON_OOPS=y
+CONFIG_PANIC_TIMEOUT=86400
+CONFIG_SCHED_STACK_END_CHECK=y
+CONFIG_FORTIFY_SOURCE=y
+CONFIG_HARDENED_USERCOPY=y
+CONFIG_BUG_ON_DATA_CORRUPTION=y
+CONFIG_DEBUG_LIST=y
+
+### CONFIG_DEBUG_PI_LIST was renamed to CONFIG_DEBUG_PLIST in 8e18faeac3e4.
+KERNEL>=5.2: CONFIG_DEBUG_PLIST=y
+KERNEL<5.2: CONFIG_DEBUG_PI_LIST=y
+
+### CONFIG_REFCOUNT_FULL was removed in fb041bb7c0a9.
+KERNEL<5.5: CONFIG_REFCOUNT_FULL=y
+
+### This config does not add any debug checks (only debug output).
+# CONFIG_DEBUG_KOBJECT is not set
+
+CONFIG_DEBUG_INFO=y
+### TODO: enable this.
+### CONFIG_DEBUG_INFO_REDUCED=y
+### BTF requires pahole (dwarves package on some distros) version 1.13,
+### while syzbot distros only provide 1.9, this breaks kernel builds.
+### See https://syzkaller.appspot.com/bug?id=cce16fbb0be2ed0c6f40459226202a8c06797536
+### It depends on !CONFIG_DEBUG_INFO_REDUCED.
+# CONFIG_DEBUG_INFO_BTF is not set
+
+### This should make behavior more deterministic.
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+
+CONFIG_KCOV=y
+CONFIG_KCOV_INSTRUMENT_ALL=y
+CONFIG_KCOV_ENABLE_COMPARISONS=y
+CONFIG_DEBUG_FS=y
+
+### Required for KCOV but also eliminates unnecessary non-determinism.
+# CONFIG_RANDOMIZE_BASE is not set
+
+### Print thread and CPU ids.
+CONFIG_PRINTK_CALLER=y
+CONFIG_PRINTK_TIME=y
+
+### Fault injection.
+CONFIG_FAULT_INJECTION=y
+CONFIG_FAILSLAB=y
+CONFIG_FAIL_PAGE_ALLOC=y
+CONFIG_FAIL_MAKE_REQUEST=y
+CONFIG_FAIL_IO_TIMEOUT=y
+CONFIG_FAIL_FUTEX=y
+CONFIG_FAULT_INJECTION_DEBUG_FS=y
+
+### Options enabled to boot Debian Wheezy.
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_INOTIFY_USER=y
+CONFIG_UEVENT_HELPER=y
+CONFIG_UEVENT_HELPER_PATH="/sbin/hotplug"
+
+### Options enabled to boot Debian Stretch.
+CONFIG_CONFIGFS_FS=y
+CONFIG_SECURITYFS=y
+
+### If syzkaller gets to /dev/{mem,kmem,ioport}, it will destroy the machine.
+### It managed to do so with some mount's, chdir's and bogus file names.
+### These are not needed for fuzzing, so completely disabling them is
+### the simplest and the most reliable option.
+# CONFIG_DEVMEM is not set
+# CONFIG_DEVKMEM is not set
+# CONFIG_DEVPORT is not set
+
+### Disable magic SysRq completely, as it can be reached over USB and through tty.
+# CONFIG_MAGIC_SYSRQ is not set
+
+# CONFIG_RUNTIME_TESTING_MENU is not set
+
+### This config can be used to enable any additional temporal debugging features in linux-next tree.
+verbatim CONFIG_DEBUG_AID_FOR_SYZBOT=y
+### These configs can be used to prevent fuzzers from trying stupid things.
+### See https://github.com/google/syzkaller/issues/1622 for details.
+verbatim CONFIG_TWIST_KERNEL_BEHAVIOR=y
+verbatim CONFIG_TWIST_FOR_SYZKALLER_TESTING=y

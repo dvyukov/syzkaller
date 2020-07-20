@@ -1,0 +1,4 @@
+arch arm64
+make defconfig
+make kvm_guest.config
+include base
