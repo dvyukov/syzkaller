@@ -1,0 +1,6 @@
+include lsm
+
+CONFIG_SECURITY_SELINUX=y
+# CONFIG_SECURITY_SELINUX_DISABLE is not set
+DEFAULT_SECURITY_SELINUX=y
+CONFIG_LSM="lockdown,yama,safesetid,integrity,tomoyo,selinux,bpf"

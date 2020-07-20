@@ -1,0 +1,10 @@
+CONFIG_KASAN=y
+CONFIG_KASAN_GENERIC=y
+CONFIG_KASAN_INLINE=y
+CLANG: CONFIG_KASAN_STACK_ENABLE=y
+
+### x86-only, not present on arm64.
+OPTIONAL: CONFIG_KASAN_VMALLOC=y
+
+### This was historically enabled in the KASAN section without explanation.
+CONFIG_SPARSEMEM_VMEMMAP=y
