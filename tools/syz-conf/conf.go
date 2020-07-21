@@ -76,18 +76,17 @@ func main() {
 		if err != nil {
 			failf("failed to merge configs: %v", err)
 		}
-		/*
-			kernelConfig, err := ioutil.ReadFile(filepath.Join(*flagSourceDir, ".config"))
-			if err != nil {
-				failf("failed to read kernel config: %v", err)
-			}
-			kernelConfig = bytes.ReplaceAll(kernelConfig, []byte("=m"), []byte("=y"))
-			if err := osutil.WriteFile(filepath.Join(*flagSourceDir, ".config"), kernelConfig); err != nil {
-				failf("failed to write kernel config: %v", err)
-			}
-		*/
+		// s/=m/=y/
+		// Note: mod2yesconfig does this, but is not present in older kernels.
+		kernelConfig, err := ioutil.ReadFile(filepath.Join(*flagSourceDir, ".config"))
+		if err != nil {
+			failf("failed to read kernel config: %v", err)
+		}
+		kernelConfig = bytes.ReplaceAll(kernelConfig, []byte("=m"), []byte("=y"))
+		if err := osutil.WriteFile(filepath.Join(*flagSourceDir, ".config"), kernelConfig); err != nil {
+			failf("failed to write kernel config: %v", err)
+		}
 		gen.Make("olddefconfig")
-		gen.Make("mod2yesconfig")
 	}
 	actualSpec := &Spec{
 		//Files: make(map[string]bool),
@@ -116,10 +115,6 @@ func main() {
 			failed = true
 		}
 	}
-	if failed {
-		os.Exit(1)
-	}
-
 	kernelConfig, err := ioutil.ReadFile(filepath.Join(*flagSourceDir, ".config"))
 	if err != nil {
 		failf("failed to read kernel config: %v", err)
@@ -131,9 +126,16 @@ func main() {
 %s
 `, filepath.Base(*flagConfig), spec.KernelRepo, spec.KernelTag, spec.Verbatim, kernelConfig))
 	outputFile := strings.TrimSuffix(*flagConfig, ".spec") + ".config"
+	if failed {
+		outputFile += ".tmp"
+		//os.Exit(1)
+	}
 	fmt.Printf("writing %v\n", outputFile)
 	if err := osutil.WriteFile(outputFile, kernelConfig); err != nil {
 		failf("failed to write output file: %v", err)
+	}
+	if failed {
+		os.Exit(1)
 	}
 }
 
@@ -164,7 +166,6 @@ type Spec struct {
 	Compiler   string
 	KernelRepo string
 	KernelTag  string
-	//Files map[string]bool
 	Defconfigs []string
 	Verbatim   []byte
 	Features   map[string]bool
@@ -205,8 +206,8 @@ var (
 	reSet      = regexp.MustCompile(`^set ([A-Z]+)$`)
 	reMake     = regexp.MustCompile(`^make ([a-z0-9_.]+)$`)
 	reVerbatim = regexp.MustCompile(`^verbatim (.+)$`)
-	reConfigY  = regexp.MustCompile(`^(?:([A-Z0-9<>=.]+): )?([A-Za-z0-9_]+)=(y|m|(?:[0-9]+)|(?:0x[0-9a-fA-F]+)|(?:".*?"))$`)
-	reConfigN  = regexp.MustCompile(`^(?:([A-Z0-9<>=.]+): )?# ([A-Za-z0-9_]+) is not set$`)
+	reConfigY  = regexp.MustCompile(`^(?:([a-zA-Z0-9<>=_.]+): )?([A-Za-z0-9_]+)=(y|m|(?:[0-9]+)|(?:0x[0-9a-fA-F]+)|(?:".*?"))$`)
+	reConfigN  = regexp.MustCompile(`^(?:([a-zA-Z0-9<>=_.]+): )?# ([A-Za-z0-9_]+) is not set$`)
 )
 
 func (spec *Spec) parseLine(text, file string, line int, kernelConfig bool) {
@@ -255,7 +256,6 @@ func (spec *Spec) addConfig(pred, name, val string, file string, line int) {
 	if prev := spec.ConfigMap[name]; prev != nil {
 		failf("%v:%v: %v is already defined at %v:%v", file, line, name, prev.File, prev.Line)
 	}
-	//TODO: check dups.
 	cfg := &Config{
 		Pred:    pred,
 		Name:    name,

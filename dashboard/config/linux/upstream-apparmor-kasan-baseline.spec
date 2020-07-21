@@ -1,4 +1,5 @@
 include bits/x86_64
+FULL: include bits/subsystems
 include bits/apparmor
 include bits/slab
 include bits/debug
