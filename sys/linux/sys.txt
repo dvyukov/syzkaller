@@ -53,6 +53,8 @@ include <uapi/linux/seccomp.h>
 include <kernel/sched/sched.h>
 include <uapi/linux/close_range.h>
 
+define issue2135 0
+
 resource fd[int32]: -1
 resource fd_dir[fd]: AT_FDCWD
 
