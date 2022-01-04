@@ -348,7 +348,7 @@ func (r *randGen) allocVMA(s *state, typ Type, dir Dir, numPages uint64) *Pointe
 func (r *randGen) createResource(s *state, res *ResourceType, dir Dir) (arg Arg, calls []*Call) {
 	kind := res.Desc.Name
 	// We may have no resources, but still be in createResource due to ANYRES.
-	if len(r.target.resourceMap) != 0 && r.oneOf(1000) {
+	if len(r.target.resourceMap) != 0 && r.oneOf(2) {
 		// Spoof resource subkind.
 		var all []string
 		for kind1 := range r.target.resourceMap {
@@ -377,7 +377,7 @@ func (r *randGen) createResource(s *state, res *ResourceType, dir Dir) (arg Arg,
 	}
 
 	// Now we have a set of candidate calls that can create the necessary resource.
-	for i := 0; i < 1e3; i++ {
+	for i := 0; i < 1000; i++ {
 		// Generate one of them.
 		meta := metas[r.Intn(len(metas))]
 		calls := r.generateParticularCall(s, meta)
@@ -417,8 +417,8 @@ func (r *randGen) createResource(s *state, res *ResourceType, dir Dir) (arg Arg,
 	for _, meta := range metas {
 		ctors = append(ctors, meta.Name)
 	}
-	panic(fmt.Sprintf("failed to create a resource %v with %v",
-		res.Desc.Kind[0], strings.Join(ctors, ", ")))
+	panic(fmt.Sprintf("failed to create a resource %v (%v) with %v",
+		kind, res.Desc.Kind[0], strings.Join(ctors, ", ")))
 }
 
 func (r *randGen) generateText(kind TextKind) []byte {

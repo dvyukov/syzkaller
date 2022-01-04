@@ -94,6 +94,28 @@ func TestRotationCoverage(t *testing.T) {
 	}
 }
 
+func TestRotationResources(t *testing.T) {
+	target, rs, _ := initTest(t)
+	allCalls := make(map[*Syscall]bool)
+	for _, call := range target.Syscalls {
+		allCalls[call] = true
+	}
+	rotator := MakeRotator(target, allCalls, rand.New(rs))
+	//for i := 0; i < iters / 10; i++ {
+		calls := rotator.Select()
+		ct := target.BuildChoiceTable(nil, calls)
+		r := newRand(target, rs)
+		for call := range calls {
+			ForeachCallType(call, func(t Type, ctx TypeCtx) {
+				if res, ok := t.(*ResourceType); ok && ctx.Dir != DirOut {
+					s := newState(target, ct, nil)
+					r.createResource(s, res, DirIn)
+				}
+			})
+		}
+	//}
+}
+
 func selectCalls(target *Target, rnd *rand.Rand, ncalls int) map[*Syscall]bool {
 retry:
 	calls := make(map[*Syscall]bool)

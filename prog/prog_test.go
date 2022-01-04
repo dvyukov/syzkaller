@@ -13,6 +13,29 @@ import (
 	"github.com/google/syzkaller/pkg/testutil"
 )
 
+func TestCreateResource(t *testing.T) {
+	target, err := GetTarget("linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ifindex *ResourceType
+	ForeachCallType(target.SyscallMap["ioctl$sock_SIOCGIFINDEX"], func(typ Type, _ TypeCtx) {
+t.Logf("type=%q\n", typ.Name())
+		if typ.Name() == "ifindex" {
+			ifindex = typ.(*ResourceType)
+		}
+	})
+	if ifindex == nil {
+		t.Fatal("no ifindex")
+	}
+	r := newRand(target, randSource(t))
+	ct := target.DefaultChoiceTable()
+	s := newState(target, ct, nil)
+	for i := 0; i < 1e2; i++ {
+		r.createResource(s, ifindex, DirOut)
+	}
+}
+
 func TestGeneration(t *testing.T) {
 	target, rs, iters := initTest(t)
 	ct := target.DefaultChoiceTable()
