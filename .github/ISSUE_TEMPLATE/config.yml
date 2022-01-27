@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Mailing list for questions
+    url: https://groups.google.com/forum/#!forum/syzkaller
+    about: Please ask and answer questions on the syzkaller@googlegroups.com mailing list.
