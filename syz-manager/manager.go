@@ -444,7 +444,7 @@ func (mgr *Manager) vmLoop() {
 
 func (mgr *Manager) preloadCorpus() {
 	log.Logf(0, "loading corpus...")
-	corpusDB, err := db.Open(filepath.Join(mgr.cfg.Workdir, "corpus.db"))
+	corpusDB, err := db.Open(filepath.Join(mgr.cfg.Workdir, "corpus.db"), true)
 	if err != nil {
 		if corpusDB == nil {
 			log.Fatalf("failed to open corpus database: %v", err)
@@ -531,10 +531,24 @@ func (mgr *Manager) loadProg(data []byte, minimized, smashed bool) bool {
 		return false
 	}
 	if disabled {
-		// This program contains a disabled syscall.
-		// We won't execute it, but remember its hash so
-		// it is not deleted during minimization.
-		mgr.disabledHashes[hash.String(data)] = struct{}{}
+		if mgr.cfg.PreserveCorpus {
+			// This program contains a disabled syscall.
+			// We won't execute it, but remember its hash so
+			// it is not deleted during minimization.
+			mgr.disabledHashes[hash.String(data)] = struct{}{}
+		} else {
+			// We cut out the disabled syscalls and let syz-fuzzer retriage and
+			// minimize what remains from the prog. The original prog will be
+			// deleted from the corpus.
+			leftover := programLeftover(mgr.target, mgr.targetEnabledSyscalls, data)
+			if len(leftover) > 0 {
+				mgr.candidates = append(mgr.candidates, rpctype.Candidate{
+					Prog:      leftover,
+					Minimized: false,
+					Smashed:   smashed,
+				})
+			}
+		}
 		return true
 	}
 	mgr.candidates = append(mgr.candidates, rpctype.Candidate{
@@ -543,6 +557,22 @@ func (mgr *Manager) loadProg(data []byte, minimized, smashed bool) bool {
 		Smashed:   smashed,
 	})
 	return true
+}
+
+func programLeftover(target *prog.Target, enabled map[*prog.Syscall]bool, data []byte) []byte {
+	p, err := target.Deserialize(data, prog.NonStrict)
+	if err != nil {
+		panic(fmt.Sprintf("subsequent deserialization failed: %s", data))
+	}
+	for i := 0; i < len(p.Calls); {
+		c := p.Calls[i]
+		if !enabled[c.Meta] {
+			p.RemoveCall(i)
+			continue
+		}
+		i++
+	}
+	return p.Serialize()
 }
 
 func checkProgram(target *prog.Target, enabled map[*prog.Syscall]bool, data []byte) (bad, disabled bool) {
