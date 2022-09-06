@@ -741,6 +741,18 @@ void realloc_output_data()
 }
 #endif
 
+uint64 tag_addr(uint64 v)
+{
+	if ((char*)v >= (char*)SYZ_DATA_OFFSET &&
+	    (char*)v < (char*)SYZ_DATA_OFFSET + SYZ_NUM_PAGES * SYZ_PAGE_SIZE)
+#if GOARCH_arm64
+		v |= (uint64)rand() << 56;
+#elif GOARCH_amd64
+		v |= ((uint64)rand() & 0x3f) << 57;
+#endif
+	return v;
+}
+
 // execute_one executes program stored in input_data.
 void execute_one()
 {
@@ -877,7 +889,7 @@ void execute_one()
 			failmsg("command has bad number of arguments", "args=%llu", num_args);
 		uint64 args[kMaxArgs] = {};
 		for (uint64 i = 0; i < num_args; i++)
-			args[i] = read_arg(&input_pos);
+			args[i] = tag_addr(read_arg(&input_pos));
 		for (uint64 i = num_args; i < kMaxArgs; i++)
 			args[i] = 0;
 		thread_t* th = schedule_call(call_index++, call_num, copyout_index,
@@ -1344,6 +1356,8 @@ template <typename T>
 void copyin_int(char* addr, uint64 val, uint64 bf, uint64 bf_off, uint64 bf_len)
 {
 	if (bf_off == 0 && bf_len == 0) {
+		if (sizeof(T) == 8 && bf == binary_format_native)
+			val = tag_addr(val);
 		*(T*)addr = swap(val, sizeof(T), bf);
 		return;
 	}

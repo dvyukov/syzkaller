@@ -10116,6 +10116,7 @@ static void reset_loop()
 #endif
 
 #if SYZ_EXECUTOR || SYZ_REPEAT
+#include <asm/prctl.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 
@@ -10123,6 +10124,25 @@ static void reset_loop()
 static void setup_test()
 {
 	prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
+#if GOARCH_arm64
+	if (prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE, 0, 0, 0))
+		fail("PR_SET_TAGGED_ADDR_CTRL failed");
+	int res = prctl(PR_GET_TAGGED_ADDR_CTRL, 0, 0, 0, 0);
+	if (res != PR_TAGGED_ADDR_ENABLE)
+		failmsg("PR_GET_TAGGED_ADDR_CTRL failed", "res=%d", res);
+#elif GOARCH_amd64
+#define ARCH_GET_UNTAG_MASK 0x4001
+#define ARCH_ENABLE_TAGGED_ADDR 0x4002
+#define ARCH_GET_MAX_TAG_BITS 0x4003
+	if (syscall(SYS_arch_prctl, ARCH_ENABLE_TAGGED_ADDR, 6))
+		fail("ARCH_ENABLE_TAGGED_ADDR failed");
+	long mask, bits;
+	if (syscall(SYS_arch_prctl, ARCH_GET_UNTAG_MASK, &mask))
+		fail("ARCH_GET_UNTAG_MASK failed");
+	if (syscall(SYS_arch_prctl, ARCH_GET_MAX_TAG_BITS, &bits))
+		fail("ARCH_GET_MAX_TAG_BITS failed");
+	debug("TAGGED_ADDR mask=%lx bits=%lu\n", mask, bits);
+#endif
 	setpgrp();
 #if SYZ_EXECUTOR || SYZ_CGROUPS
 	setup_cgroups_test();
