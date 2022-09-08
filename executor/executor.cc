@@ -421,6 +421,45 @@ static uint64 sandbox_arg = 0;
 
 int main(int argc, char** argv)
 {
+	if (argc >= 2 && strcmp(argv[1], "netns-bench") == 0) {
+		flag_debug = false;
+		flag_net_injection = true;
+		flag_net_devices = true;
+		flag_wifi = true;
+		const int procs = std::max(1, atoi(argc >= 3 ? argv[2] : ""));
+		static int ops = 0;
+		for (int i = 0; i < procs; i++) {
+			pthread_t th;
+			pthread_create(
+			    &th, 0, [](void* arg) -> void* {
+				    int me = (int)(long)arg;
+				    for (;; __atomic_fetch_add(&ops, 1, __ATOMIC_RELAXED)) {
+					    int pid = fork();
+					    if (pid < 0)
+						    fail("fork failed");
+					    if (pid == 0) {
+						    procid = me;
+						    if (unshare(CLONE_NEWNET))
+							    fail("CLONE_NEWNET failed");
+						    initialize_tun();
+						    initialize_netdevices();
+						    initialize_wifi_devices();
+						    return 0;
+					    }
+					    int status = 0;
+					    while (waitpid(pid, &status, 0) != pid) {
+					    }
+					    if (WEXITSTATUS(status))
+						    failmsg("subprocess failed", "status=%d", WEXITSTATUS(status));
+				    }
+				    return 0;
+			    },
+			    (void*)(long)i);
+		}
+		for (;; sleep(1))
+			printf("ops=%d\n", __atomic_exchange_n(&ops, 0, __ATOMIC_RELAXED));
+		return 0;
+	}
 	if (argc == 2 && strcmp(argv[1], "version") == 0) {
 		puts(GOOS " " GOARCH " " SYZ_REVISION " " GIT_REVISION);
 		return 0;
