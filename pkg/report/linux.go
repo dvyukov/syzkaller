@@ -2306,4 +2306,15 @@ var linuxOopses = append([]*oops{
 		},
 		[]*regexp.Regexp{},
 	},
+	{
+		[]byte("Snapshot "),
+		[]oopsFormat{
+			{
+				title:        compile("Snapshot .* failed"),
+				fmt:          "Snapshot failed",
+				noStackTrace: true,
+			},
+		},
+		[]*regexp.Regexp{},
+	},
 }, commonOopses...)

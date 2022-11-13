@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -309,6 +310,18 @@ func main() {
 		fuzzer.procs = append(fuzzer.procs, proc)
 		go proc.loop()
 	}
+
+	cmd := exec.Command("/bin/sh", "-c", "/lib64/ld-linux-x86-64.so.2 /root/silifuzz_orchestrator_main"+
+		" --runner /root/reading_runner_main_nolibc"+
+		" --duration=100m /root/runnable_corpus*.xz")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		panic(err)
+	}
+	go func() {
+		panic(cmd.Wait())
+	}()
 
 	fuzzer.pollLoop()
 }
