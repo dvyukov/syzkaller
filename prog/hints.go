@@ -113,7 +113,7 @@ func generateHints(compMap CompMap, arg Arg, exec func()) {
 			// We can reconsider this in the future, e.g. by decompressing, applying
 			// hints, then re-compressing. We will need to ensure this doesn't
 			// produce too many mutants given the current handling of buffers.
-			return
+			//return
 		}
 	}
 
@@ -121,7 +121,11 @@ func generateHints(compMap CompMap, arg Arg, exec func()) {
 	case *ConstArg:
 		checkConstArg(a, compMap, exec)
 	case *DataArg:
-		checkDataArg(a, compMap, exec)
+		if typ.(*BufferType).Kind == BufferCompressed {
+			checkCompressedArg(a, compMap, exec)
+		} else {
+			checkDataArg(a, compMap, exec)
+		}
 	}
 }
 
@@ -129,7 +133,7 @@ func checkConstArg(arg *ConstArg, compMap CompMap, exec func()) {
 	original := arg.Val
 	// Note: because shrinkExpand returns a map, order of programs is non-deterministic.
 	// This can affect test coverage reports.
-	for _, replacer := range shrinkExpand(original, compMap, arg.Type().TypeBitSize()) {
+	for _, replacer := range shrinkExpand(original, compMap, arg.Type().TypeBitSize(), false) {
 		arg.Val = replacer
 		exec()
 	}
@@ -147,13 +151,43 @@ func checkDataArg(arg *DataArg, compMap CompMap, exec func()) {
 		original := make([]byte, 8)
 		copy(original, data[i:])
 		val := binary.LittleEndian.Uint64(original)
-		for _, replacer := range shrinkExpand(val, compMap, 64) {
+		for _, replacer := range shrinkExpand(val, compMap, 64, false) {
 			binary.LittleEndian.PutUint64(bytes, replacer)
 			copy(data[i:], bytes)
 			exec()
 		}
 		copy(data[i:], original)
 	}
+}
+
+func checkCompressedArg(arg *DataArg, compMap CompMap, exec func()) {
+	data0 := arg.Data()
+	if len(data0) == 0 {
+		return
+	}
+	imageMu.Lock()
+	defer imageMu.Unlock()
+	data, err := Decompress(data0)
+	if err != nil {
+		panic(err)
+	}
+	bytes := make([]byte, 8)
+	for i := 0; i < len(data); i++ {
+		original := make([]byte, 8)
+		copy(original, data[i:])
+		val := binary.LittleEndian.Uint64(original)
+		if val == 0 || val == ^uint64(0) {
+			continue
+		}
+		for _, replacer := range shrinkExpand(val, compMap, 64, true) {
+			binary.LittleEndian.PutUint64(bytes, replacer)
+			copy(data[i:], bytes)
+			arg.SetData(Compress(data))
+			exec()
+		}
+		copy(data[i:], original)
+	}
+	arg.SetData(data0)
 }
 
 // Shrink and expand mutations model the cases when the syscall arguments
@@ -185,7 +219,7 @@ func checkDataArg(arg *DataArg, compMap CompMap, exec func()) {
 // check the extension.
 // As with shrink we ignore cases when the other operand is wider.
 // Note that executor sign extends all the comparison operands to int64.
-func shrinkExpand(v uint64, compMap CompMap, bitsize uint64) []uint64 {
+func shrinkExpand(v uint64, compMap CompMap, bitsize uint64, compressed bool) []uint64 {
 	v = truncateToBitSize(v, bitsize)
 	limit := uint64(1<<bitsize - 1)
 	var replacers map[uint64]bool
@@ -197,6 +231,9 @@ func shrinkExpand(v uint64, compMap CompMap, bitsize uint64) []uint64 {
 			size = uint64(width) * 8
 			mutant = v & ((1 << size) - 1)
 		} else {
+			if compressed {
+				continue
+			}
 			width = -iwidth
 			size = uint64(width) * 8
 			if size > bitsize {
@@ -217,7 +254,7 @@ func shrinkExpand(v uint64, compMap CompMap, bitsize uint64) []uint64 {
 		// In such case we will see dynamic operand that does not match what we have in the program.
 		for _, bigendian := range []bool{false, true} {
 			if bigendian {
-				if width == 1 {
+				if width == 1 || compressed {
 					continue
 				}
 				mutant = swapInt(mutant, width)
