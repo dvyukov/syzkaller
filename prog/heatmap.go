@@ -30,18 +30,26 @@ func MakeGenericHeatmap(data []byte, r *rand.Rand) Heatmap {
 		panic("cannot create a GenericHeatmap with no data")
 	}
 	hm := &GenericHeatmap{
-		r: r,
+		r:         r,
+		rawLength: len(data),
 	}
 	hm.length, hm.segments = calculateLengthAndSegments(data, granularity)
 	return hm
 }
 
 func (hm *GenericHeatmap) NumMutations() int {
-	// At least two mutations, up to about one mutation every 128 KB of heatmap size.
-	return hm.r.Intn(hm.length/(1<<17)+1) + 2
+	// At least two mutations, up to about one mutation every 4 KB of heatmap size.
+	return hm.r.Intn(hm.length/(4<<10)+1) + 2
 }
 
 func (hm *GenericHeatmap) ChooseLocation() int {
+	if hm.r.Intn(10) == 0 {
+		// Once in a while mutate a random location (not necessary "interesting").
+		// First, we can determine interesting segments incorrectly.
+		// Second, if we start with an empty data and flip a single byte in it,
+		// we will never mutate anything else otherwise.
+		return hm.r.Intn(hm.rawLength)
+	}
 	// Uniformly choose an index within one of the segments.
 	heatmapIdx := hm.r.Intn(hm.length)
 	rawIdx := translateIdx(heatmapIdx, hm.segments)
@@ -49,9 +57,10 @@ func (hm *GenericHeatmap) ChooseLocation() int {
 }
 
 type GenericHeatmap struct {
-	r        *rand.Rand
-	segments []segment // "Interesting" parts of the data.
-	length   int       // Sum of all segment lengths.
+	r         *rand.Rand
+	rawLength int       // Total length of the whole data.
+	segments  []segment // "Interesting" parts of the data.
+	length    int       // Sum of all segment lengths.
 }
 
 type segment struct {
@@ -108,9 +117,12 @@ func calculateLengthAndSegments(data []byte, granularity int) (int, []segment) {
 
 	if len(segments) == 0 {
 		// We found no segments, i.e. the data is all "boring". Fall back to a
-		// uniform probability distribution over the original data by considering it
-		// as one long segment.
-		return rawLength, append(segments, segment{offset: 0, length: rawLength})
+		// uniform probability distribution over the first sector (usually 512 bytes).
+		totalLength = 512
+		if totalLength > rawLength {
+			totalLength = rawLength
+		}
+		segments = append(segments, segment{offset: 0, length: totalLength})
 	}
 
 	return totalLength, segments
