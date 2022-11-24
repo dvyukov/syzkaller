@@ -12,10 +12,14 @@ import (
 )
 
 func Compress(rawData []byte) []byte {
+	return CompressReader(bytes.NewReader(rawData))
+}
+
+func CompressReader(r io.Reader) []byte {
 	var buffer bytes.Buffer
 	zlibWriter := zlib.NewWriter(&buffer)
 
-	_, err := zlibWriter.Write(rawData)
+	_, err := io.Copy(zlibWriter, r)
 	if err != nil {
 		panic(fmt.Sprintf("could not compress with zlib: %v", err))
 	}

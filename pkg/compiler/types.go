@@ -837,7 +837,6 @@ var typeCompressedImage = &typeDesc{
 	CantBeOpt: true,
 	CantBeOut: true,
 	RequiresCallAttrs: map[string]bool{
-		"no_generate": true,
 		"no_minimize": true,
 	},
 	CanBeArgRet: func(comp *compiler, t *ast.Type) (bool, bool) {

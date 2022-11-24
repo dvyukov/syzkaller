@@ -330,3 +330,12 @@ func Abs(path string) string {
 	}
 	return filepath.Join(wd, path)
 }
+
+type ZeroReader struct{}
+
+func (ZeroReader) Read(data []byte) (int, error) {
+	for i := range data {
+		data[i] = 0
+	}
+	return len(data), nil
+}

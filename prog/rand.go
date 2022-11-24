@@ -6,6 +6,7 @@ package prog
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/google/syzkaller/pkg/ifuzz"
+	"github.com/google/syzkaller/pkg/osutil"
 )
 
 const (
@@ -769,7 +771,12 @@ func (a *BufferType) generate(r *randGen, s *state, dir Dir) (arg Arg, calls []*
 		}
 		return MakeDataArg(a, dir, r.generateText(a.Text)), nil
 	case BufferCompressed:
-		panic(fmt.Sprintf("can't generate compressed type %v", a))
+		if dir == DirOut {
+			panic("output compressed buffer")
+		}
+		size := int64(r.Uint64() % (16 << 20))
+		data := CompressReader(&io.LimitedReader{osutil.ZeroReader{}, size})
+		return MakeDataArg(a, dir, data), nil
 	default:
 		panic("unknown buffer kind")
 	}

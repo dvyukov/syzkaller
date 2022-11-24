@@ -607,7 +607,7 @@ func (p *parser) parseArgString(t Type, dir Dir) (Arg, error) {
 		if err != nil {
 			p.strictFailf("invalid compressed data in arg: %v", err)
 			// In non-strict mode, empty the data slice.
-			data = Compress([]byte{})
+			data = Compress(nil)
 		}
 	}
 	size := ^uint64(0)
