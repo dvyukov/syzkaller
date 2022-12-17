@@ -12,6 +12,9 @@ import (
 	"io/ioutil"
 )
 
+// Note: executor/common_zlib.h also knows this const.
+const MaxSize = 132 << 20
+
 func Compress(rawData []byte) []byte {
 	var buffer bytes.Buffer
 	zlibWriter := zlib.NewWriter(&buffer)
