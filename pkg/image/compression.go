@@ -49,6 +49,9 @@ var (
 )
 
 func MustDecompress(compressed []byte) (data []byte, dtor func()) {
+	if len(compressed) == 0 {
+		return nil, func() {}
+	}
 	// Optimized decompression procedure that is ~2x faster than a naive version
 	// and consumes significantly less memory and generates less garbage.
 	// Images tend to contain lots of 0s, especially the larger images.
@@ -136,6 +139,9 @@ func MustDecompress(compressed []byte) (data []byte, dtor func()) {
 }
 
 func DecompressCheck(compressed []byte) error {
+	if len(compressed) == 0 {
+		return nil
+	}
 	zlibReader, err := zlib.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return fmt.Errorf("could not initialise zlib: %v", err)
