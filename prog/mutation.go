@@ -390,6 +390,13 @@ func (r *randGen) mutateImage(compressed []byte) (data []byte, retry bool) {
 	if len(data) == 0 {
 		return compressed, true // Do not mutate empty data.
 	}
+	if r.oneOf(10) {
+		if len(data) > 1 && r.bin() {
+			data = data[:r.randRange(1, uint64(len(data)))]
+		} else if len(data) < image.MaxSize {
+			data = data[:r.randRange(uint64(len(data)), image.MaxSize)]
+		}
+	}
 	hm := MakeGenericHeatmap(data, r.Rand)
 	for i := hm.NumMutations(); i > 0; i-- {
 		index := hm.ChooseLocation()
