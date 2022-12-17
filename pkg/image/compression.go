@@ -15,6 +15,9 @@ import (
 	"unsafe"
 )
 
+// Note: executor/common_zlib.h also knows this const.
+const MaxSize = 132 << 20
+
 func Compress(rawData []byte) []byte {
 	var buffer bytes.Buffer
 	zlibWriter := zlib.NewWriter(&buffer)
@@ -82,16 +85,14 @@ func MustDecompress(compressed []byte) (data []byte, dtor func()) {
 			panic(err)
 		}
 	}
-	// Note: executor/common_zlib.h also knows this const.
-	const maxImageSize = 132 << 20
 	var err error
-	data, err = syscall.Mmap(-1, 0, maxImageSize, syscall.PROT_READ|syscall.PROT_WRITE,
+	data, err = syscall.Mmap(-1, 0, MaxSize, syscall.PROT_READ|syscall.PROT_WRITE,
 		syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		panic(err)
 	}
 	dtor = func() {
-		if err := syscall.Munmap(data[:maxImageSize]); err != nil {
+		if err := syscall.Munmap(data[:MaxSize]); err != nil {
 			panic(err)
 		}
 		if useMutex {
