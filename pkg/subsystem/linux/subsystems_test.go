@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/google/syzkaller/pkg/subsystem/entity"
+	"github.com/google/syzkaller/pkg/subsystem"
 	"github.com/google/syzkaller/pkg/subsystem/match"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,7 +26,7 @@ func TestGroupLinuxSubsystems(t *testing.T) {
 		// It complicates the test, so let's skip it here.
 		s.Parents = nil
 	}
-	expected := []*entity.Subsystem{
+	expected := []*subsystem.Subsystem{
 		{
 			Name:        "fs",
 			Lists:       []string{"linux-fsdevel@vger.kernel.org"},

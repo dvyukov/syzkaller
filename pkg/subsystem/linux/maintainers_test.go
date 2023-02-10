@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/syzkaller/pkg/subsystem/entity"
+	"github.com/google/syzkaller/pkg/subsystem"
 	"github.com/google/syzkaller/pkg/subsystem/match"
 )
 
@@ -127,8 +127,8 @@ func TestRecordToPathRule(t *testing.T) {
 	for _, loopTest := range tests {
 		test := loopTest
 		t.Run(test.name, func(t *testing.T) {
-			pm, err := match.MakePathMatcher([]*entity.Subsystem{
-				{PathRules: []entity.PathRule{test.record.ToPathRule()}},
+			pm, err := subsystem.MakePathMatcher([]*subsystem.Subsystem{
+				{PathRules: []subsystem.PathRule{test.record.ToPathRule()}},
 			})
 			if err != nil {
 				t.Fatal(err)

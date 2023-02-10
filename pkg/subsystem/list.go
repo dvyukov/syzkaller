@@ -3,10 +3,6 @@
 
 package subsystem
 
-import (
-	"github.com/google/syzkaller/pkg/subsystem/entity"
-)
-
 // In general, it's not correct to assume that subsystems are only determined by target.OS,
 // because subsystems are related not to the user interface of the OS kernel, but rather to
 // the OS kernel implementation.
@@ -14,19 +10,19 @@ import (
 // For example, during fuzzing we can treat gVisor in the same way as any other Linux kernel.
 // In reality, however, not a single MAINTAINERS-based rule will work on the gVisor codebase.
 //
-// Therefore, subsystem lists have to be a completely different entity.
+// Therefore, subsystem lists have to be a completely different 
 
 var (
-	lists = make(map[string][]*entity.Subsystem)
+	lists = make(map[string][]*Subsystem)
 )
 
-func RegisterList(name string, list []*entity.Subsystem) {
+func RegisterList(name string, list []*Subsystem) {
 	if _, ok := lists[name]; ok {
 		panic(name + " subsystem list already exists!")
 	}
 	lists[name] = list
 }
 
-func GetList(name string) []*entity.Subsystem {
+func GetList(name string) []*Subsystem {
 	return lists[name]
 }

@@ -7,16 +7,16 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/google/syzkaller/pkg/subsystem/entity"
+	"github.com/google/syzkaller/pkg/subsystem"
 	"github.com/google/syzkaller/pkg/subsystem/match"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestDropSmallSubsystems(t *testing.T) {
-	kernel := &entity.Subsystem{}
-	net := &entity.Subsystem{}
-	fs := &entity.Subsystem{}
-	legal := &entity.Subsystem{}
+	kernel := &subsystem.Subsystem{}
+	net := &subsystem.Subsystem{}
+	fs := &subsystem.Subsystem{}
+	legal := &subsystem.Subsystem{}
 
 	matrix := match.MakeCoincidenceMatrix()
 	matrix.Record(kernel, net)
@@ -25,21 +25,21 @@ func TestDropSmallSubsystems(t *testing.T) {
 	matrix.Record(kernel, net, fs)
 	matrix.Record(kernel, net, fs)
 
-	ret := dropSmallSubsystems(matrix, []*entity.Subsystem{kernel, net, fs, legal})
-	assert.ElementsMatch(t, []*entity.Subsystem{kernel, net, fs}, ret)
+	ret := dropSmallSubsystems(matrix, []*subsystem.Subsystem{kernel, net, fs, legal})
+	assert.ElementsMatch(t, []*subsystem.Subsystem{kernel, net, fs}, ret)
 }
 
 func TestDropDuplicateSubsystems(t *testing.T) {
-	input, expected := []*entity.Subsystem{}, []*entity.Subsystem{}
+	input, expected := []*subsystem.Subsystem{}, []*subsystem.Subsystem{}
 	matrix := match.MakeCoincidenceMatrix()
 
 	// Always present.
-	kernel := &entity.Subsystem{Name: "kernel"}
+	kernel := &subsystem.Subsystem{Name: "kernel"}
 	input = append(input, kernel)
 	expected = append(expected, kernel)
 
 	// Fully overlap.
-	sameA, sameB := &entity.Subsystem{Name: "SameA"}, &entity.Subsystem{Name: "SameB"}
+	sameA, sameB := &subsystem.Subsystem{Name: "SameA"}, &subsystem.Subsystem{Name: "SameB"}
 	matrix.Record(kernel, sameA, sameB)
 	matrix.Record(kernel, sameA, sameB)
 	matrix.Record(kernel, sameA, sameB)
@@ -47,7 +47,7 @@ func TestDropDuplicateSubsystems(t *testing.T) {
 	expected = append(expected, sameA)
 
 	// Overlap, but the smaller one is not so significant.
-	ext4, fs := &entity.Subsystem{Name: "ext4"}, &entity.Subsystem{Name: "fs"}
+	ext4, fs := &subsystem.Subsystem{Name: "ext4"}, &subsystem.Subsystem{Name: "fs"}
 	matrix.Record(kernel, ext4, fs)
 	matrix.Record(kernel, ext4, fs)
 	matrix.Record(kernel, fs) // 66%.
@@ -55,7 +55,7 @@ func TestDropDuplicateSubsystems(t *testing.T) {
 	expected = append(expected, ext4, fs)
 
 	// Overlap, and the smaller one takes a big part.
-	toDrop, stays := &entity.Subsystem{Name: "to-drop"}, &entity.Subsystem{Name: "stays"}
+	toDrop, stays := &subsystem.Subsystem{Name: "to-drop"}, &subsystem.Subsystem{Name: "stays"}
 	for i := 0; i < 5; i++ {
 		matrix.Record(kernel, toDrop, stays)
 	}
@@ -69,18 +69,18 @@ func TestDropDuplicateSubsystems(t *testing.T) {
 }
 
 func TestLoopsDoExist(t *testing.T) {
-	a := &entity.Subsystem{}
-	b := &entity.Subsystem{Parents: []*entity.Subsystem{a}}
-	c := &entity.Subsystem{Parents: []*entity.Subsystem{b}}
-	a.Parents = []*entity.Subsystem{c}
-	assert.True(t, loopsExist([]*entity.Subsystem{a, b, c}))
+	a := &subsystem.Subsystem{}
+	b := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{a}}
+	c := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{b}}
+	a.Parents = []*subsystem.Subsystem{c}
+	assert.True(t, loopsExist([]*subsystem.Subsystem{a, b, c}))
 }
 
 func TestLoopsDoNotExist(t *testing.T) {
-	a := &entity.Subsystem{}
-	b := &entity.Subsystem{Parents: []*entity.Subsystem{a}}
-	c := &entity.Subsystem{Parents: []*entity.Subsystem{b}}
-	assert.False(t, loopsExist([]*entity.Subsystem{a, b, c}))
+	a := &subsystem.Subsystem{}
+	b := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{a}}
+	c := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{b}}
+	assert.False(t, loopsExist([]*subsystem.Subsystem{a, b, c}))
 }
 
 func TestTransitiveReduction(t *testing.T) {
@@ -89,31 +89,31 @@ func TestTransitiveReduction(t *testing.T) {
 	// (d, b)
 	// (d, e)
 	// (c, a)
-	a := &entity.Subsystem{}
-	b := &entity.Subsystem{Parents: []*entity.Subsystem{a}}
-	c := &entity.Subsystem{Parents: []*entity.Subsystem{a, b}}
-	e := &entity.Subsystem{}
-	d := &entity.Subsystem{Parents: []*entity.Subsystem{a, b, c, e}}
-	transitiveReduction([]*entity.Subsystem{a, b, c, d, e})
+	a := &subsystem.Subsystem{}
+	b := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{a}}
+	c := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{a, b}}
+	e := &subsystem.Subsystem{}
+	d := &subsystem.Subsystem{Parents: []*subsystem.Subsystem{a, b, c, e}}
+	transitiveReduction([]*subsystem.Subsystem{a, b, c, d, e})
 
 	// The result should be:
 	// (d, c), (c, b), (b, a)
 	// (d, e)
-	assert.ElementsMatch(t, d.Parents, []*entity.Subsystem{c, e})
-	assert.ElementsMatch(t, c.Parents, []*entity.Subsystem{b})
+	assert.ElementsMatch(t, d.Parents, []*subsystem.Subsystem{c, e})
+	assert.ElementsMatch(t, c.Parents, []*subsystem.Subsystem{b})
 }
 
 func TestSetParents(t *testing.T) {
-	kernel := &entity.Subsystem{PathRules: []entity.PathRule{{
+	kernel := &subsystem.Subsystem{PathRules: []subsystem.PathRule{{
 		IncludeRegexp: `.*`,
 	}}}
-	net := &entity.Subsystem{PathRules: []entity.PathRule{{
+	net := &subsystem.Subsystem{PathRules: []subsystem.PathRule{{
 		IncludeRegexp: `^net/`,
 	}}}
-	wireless := &entity.Subsystem{PathRules: []entity.PathRule{{
+	wireless := &subsystem.Subsystem{PathRules: []subsystem.PathRule{{
 		IncludeRegexp: `^net/wireless`,
 	}}}
-	drivers := &entity.Subsystem{PathRules: []entity.PathRule{{
+	drivers := &subsystem.Subsystem{PathRules: []subsystem.PathRule{{
 		IncludeRegexp: `^drivers/`,
 	}}}
 
@@ -129,19 +129,19 @@ func TestSetParents(t *testing.T) {
 	}
 
 	matrix, err := match.BuildCoincidenceMatrix(tree,
-		[]*entity.Subsystem{kernel, net, wireless, drivers}, nil)
+		[]*subsystem.Subsystem{kernel, net, wireless, drivers}, nil)
 	assert.NoError(t, err)
 
 	// Calculate parents.
 
-	err = setParents(matrix, []*entity.Subsystem{kernel, net, wireless, drivers})
+	err = setParents(matrix, []*subsystem.Subsystem{kernel, net, wireless, drivers})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Verify parents.
-	assert.ElementsMatch(t, net.Parents, []*entity.Subsystem{kernel})
-	assert.ElementsMatch(t, wireless.Parents, []*entity.Subsystem{net})
-	assert.ElementsMatch(t, drivers.Parents, []*entity.Subsystem{kernel})
-	assert.ElementsMatch(t, kernel.Parents, []*entity.Subsystem{})
+	assert.ElementsMatch(t, net.Parents, []*subsystem.Subsystem{kernel})
+	assert.ElementsMatch(t, wireless.Parents, []*subsystem.Subsystem{net})
+	assert.ElementsMatch(t, drivers.Parents, []*subsystem.Subsystem{kernel})
+	assert.ElementsMatch(t, kernel.Parents, []*subsystem.Subsystem{})
 }

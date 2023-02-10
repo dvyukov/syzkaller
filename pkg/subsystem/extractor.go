@@ -3,10 +3,6 @@
 
 package subsystem
 
-import (
-	"github.com/google/syzkaller/pkg/subsystem/entity"
-)
-
 // Extractor deduces the subsystems from the list of crashes.
 type Extractor struct {
 	raw rawExtractorInterface
@@ -21,11 +17,11 @@ type Crash struct {
 
 // rawExtractorInterface simplifies testing.
 type rawExtractorInterface interface {
-	FromPath(path string) []*entity.Subsystem
-	FromProg(progBytes []byte) []*entity.Subsystem
+	FromPath(path string) []*Subsystem
+	FromProg(progBytes []byte) []*Subsystem
 }
 
-func MakeExtractor(list []*entity.Subsystem) (*Extractor, error) {
+func MakeExtractor(list []*Subsystem) (*Extractor, error) {
 	raw, err := makeRawExtractor(list)
 	if err != nil {
 		return nil, err
@@ -33,9 +29,9 @@ func MakeExtractor(list []*entity.Subsystem) (*Extractor, error) {
 	return &Extractor{raw: raw}, nil
 }
 
-func (e *Extractor) Extract(crashes []*Crash) []*entity.Subsystem {
+func (e *Extractor) Extract(crashes []*Crash) []*Subsystem {
 	// First put all subsystems to the same list.
-	subsystems := []*entity.Subsystem{}
+	subsystems := []*Subsystem{}
 	for _, crash := range crashes {
 		if crash.GuiltyPath != "" {
 			subsystems = append(subsystems, e.raw.FromPath(crash.GuiltyPath)...)
@@ -46,7 +42,7 @@ func (e *Extractor) Extract(crashes []*Crash) []*entity.Subsystem {
 	}
 
 	// If there are both parents and children, remove parents.
-	ignore := make(map[*entity.Subsystem]struct{})
+	ignore := make(map[*Subsystem]struct{})
 	for _, entry := range subsystems {
 		for p := range entry.ReachableParents() {
 			ignore[p] = struct{}{}
@@ -54,7 +50,7 @@ func (e *Extractor) Extract(crashes []*Crash) []*entity.Subsystem {
 	}
 
 	// And calculate counts.
-	counts := make(map[*entity.Subsystem]int)
+	counts := make(map[*Subsystem]int)
 	maxCount := 0
 	for _, entry := range subsystems {
 		if _, ok := ignore[entry]; ok {
@@ -67,7 +63,7 @@ func (e *Extractor) Extract(crashes []*Crash) []*entity.Subsystem {
 	}
 
 	// Pick the most prevalent ones.
-	ret := []*entity.Subsystem{}
+	ret := []*Subsystem{}
 	for entry, count := range counts {
 		if count < maxCount {
 			continue

@@ -6,13 +6,12 @@ package linux
 import (
 	"fmt"
 
-	"github.com/google/syzkaller/pkg/subsystem/entity"
-	"github.com/google/syzkaller/pkg/subsystem/match"
+	"github.com/google/syzkaller/pkg/subsystem"
 )
 
 // parentTransformations applies all subsystem list transformations that have been implemented.
-func parentTransformations(matrix *match.CoincidenceMatrix,
-	list []*entity.Subsystem) ([]*entity.Subsystem, error) {
+func parentTransformations(matrix *CoincidenceMatrix,
+	list []*subsystem.Subsystem) ([]*subsystem.Subsystem, error) {
 	list = dropSmallSubsystems(matrix, list)
 	list = dropDuplicateSubsystems(matrix, list)
 	err := setParents(matrix, list)
@@ -26,13 +25,13 @@ func parentTransformations(matrix *match.CoincidenceMatrix,
 // We assume A is a child of B if:
 // 1) B covers more paths than A.
 // 2) Most of the paths that relate to A also relate to B.
-func setParents(matrix *match.CoincidenceMatrix, list []*entity.Subsystem) error {
+func setParents(matrix *CoincidenceMatrix, list []*subsystem.Subsystem) error {
 	// Some subsystems might have already been dropeed.
-	inInput := map[*entity.Subsystem]bool{}
+	inInput := map[*subsystem.Subsystem]bool{}
 	for _, item := range list {
 		inInput[item] = true
 	}
-	matrix.NonEmptyPairs(func(a, b *entity.Subsystem, count int) {
+	matrix.NonEmptyPairs(func(a, b *subsystem.Subsystem, count int) {
 		if !inInput[a] || !inInput[b] {
 			return
 		}
@@ -50,10 +49,10 @@ func setParents(matrix *match.CoincidenceMatrix, list []*entity.Subsystem) error
 }
 
 // dropSmallSubsystems removes subsystems for which we have found only a few matches in the filesystem tree.
-func dropSmallSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Subsystem) []*entity.Subsystem {
+func dropSmallSubsystems(matrix *CoincidenceMatrix, list []*subsystem.Subsystem) []*subsystem.Subsystem {
 	const cutOffCount = 2
 
-	newList := []*entity.Subsystem{}
+	newList := []*subsystem.Subsystem{}
 	for _, item := range list {
 		if matrix.Count(item) > cutOffCount || len(item.Syscalls) > 0 {
 			newList = append(newList, item)
@@ -66,8 +65,8 @@ func dropSmallSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Subsyst
 // First, if subsystems A and B 100% overlap, we prefer the one that's alphabetically first.
 // Second, if subsystem A is fully enclosed in subsystem B and constitutes more than 75% of B,
 // we drop A, since it brings little value.
-func dropDuplicateSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Subsystem) []*entity.Subsystem {
-	drop := map[*entity.Subsystem]struct{}{}
+func dropDuplicateSubsystems(matrix *CoincidenceMatrix, list []*subsystem.Subsystem) []*subsystem.Subsystem {
+	drop := map[*subsystem.Subsystem]struct{}{}
 	nameIsBetter := func(first, second string) bool {
 		// Let's prefer shorter names first.
 		if len(first) < len(second) {
@@ -75,7 +74,7 @@ func dropDuplicateSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Sub
 		}
 		return first < second
 	}
-	matrix.NonEmptyPairs(func(a, b *entity.Subsystem, count int) {
+	matrix.NonEmptyPairs(func(a, b *subsystem.Subsystem, count int) {
 		// Only consider cases when A is fully enclosed in B, i.e. M[A][B] == M[A][A].
 		if count != matrix.Count(a) {
 			return
@@ -93,7 +92,7 @@ func dropDuplicateSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Sub
 			drop[a] = struct{}{}
 		}
 	})
-	newList := []*entity.Subsystem{}
+	newList := []*subsystem.Subsystem{}
 	for _, item := range list {
 		if _, exists := drop[item]; !exists {
 			newList = append(newList, item)
@@ -104,15 +103,15 @@ func dropDuplicateSubsystems(matrix *match.CoincidenceMatrix, list []*entity.Sub
 
 // The algorithm runs in O(E * (E + V)).
 // We expect that E is quite low here, so it should be fine.
-func transitiveReduction(list []*entity.Subsystem) {
+func transitiveReduction(list []*subsystem.Subsystem) {
 	for _, s := range list {
-		removeParents := map[*entity.Subsystem]bool{}
+		removeParents := map[*subsystem.Subsystem]bool{}
 		for _, p := range s.Parents {
 			for otherP := range p.ReachableParents() {
 				removeParents[otherP] = true
 			}
 		}
-		newParents := []*entity.Subsystem{}
+		newParents := []*subsystem.Subsystem{}
 		for _, p := range s.Parents {
 			if !removeParents[p] {
 				newParents = append(newParents, p)
@@ -123,14 +122,14 @@ func transitiveReduction(list []*entity.Subsystem) {
 }
 
 // loopsExist is a helper method that verifies that the resulting graph has no loops.
-func loopsExist(list []*entity.Subsystem) bool {
+func loopsExist(list []*subsystem.Subsystem) bool {
 	type graphNode struct {
-		obj     *entity.Subsystem
+		obj     *subsystem.Subsystem
 		entered bool
 		left    bool
 	}
 	nodes := []*graphNode{}
-	objToNode := map[*entity.Subsystem]*graphNode{}
+	objToNode := map[*subsystem.Subsystem]*graphNode{}
 	for _, obj := range list {
 		node := &graphNode{obj: obj}
 		nodes = append(nodes, node)

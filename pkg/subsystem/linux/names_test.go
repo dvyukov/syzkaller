@@ -6,7 +6,7 @@ package linux
 import (
 	"testing"
 
-	"github.com/google/syzkaller/pkg/subsystem/entity"
+	"github.com/google/syzkaller/pkg/subsystem"
 )
 
 func TestEmailToName(t *testing.T) {
@@ -60,9 +60,9 @@ func TestSetSubsystemNames(t *testing.T) {
 			outName: "llvm@abcd.com", // duplicate
 		},
 	}
-	input := []*entity.Subsystem{}
+	input := []*subsystem.Subsystem{}
 	for _, item := range test {
-		s := &entity.Subsystem{Name: item.inName}
+		s := &subsystem.Subsystem{Name: item.inName}
 		if item.email != "" {
 			s.Lists = append(s.Lists, item.email)
 		}

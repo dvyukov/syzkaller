@@ -4,25 +4,23 @@
 package subsystem
 
 import (
-	"github.com/google/syzkaller/pkg/subsystem/entity"
-	"github.com/google/syzkaller/pkg/subsystem/match"
 	"github.com/google/syzkaller/prog"
 )
 
 // rawExtractor performs low-level subsystem matching (directly by a path or a syscall).
 type rawExtractor struct {
-	matcher *match.PathMatcher
-	perCall map[string][]*entity.Subsystem
+	matcher *PathMatcher
+	perCall map[string][]*Subsystem
 }
 
-func makeRawExtractor(list []*entity.Subsystem) (*rawExtractor, error) {
-	matcher, err := match.MakePathMatcher(list)
+func makeRawExtractor(list []*Subsystem) (*rawExtractor, error) {
+	matcher, err := MakePathMatcher(list)
 	if err != nil {
 		return nil, err
 	}
 	ret := &rawExtractor{
 		matcher: matcher,
-		perCall: make(map[string][]*entity.Subsystem),
+		perCall: make(map[string][]*Subsystem),
 	}
 	for _, subsystem := range list {
 		for _, call := range subsystem.Syscalls {
@@ -32,19 +30,19 @@ func makeRawExtractor(list []*entity.Subsystem) (*rawExtractor, error) {
 	return ret, nil
 }
 
-func (e *rawExtractor) FromPath(path string) []*entity.Subsystem {
+func (e *rawExtractor) FromPath(path string) []*Subsystem {
 	return e.matcher.Match(path)
 }
 
-func (e *rawExtractor) FromProg(progBytes []byte) []*entity.Subsystem {
-	calls := make(map[*entity.Subsystem]struct{})
+func (e *rawExtractor) FromProg(progBytes []byte) []*Subsystem {
+	calls := make(map[*Subsystem]struct{})
 	progCalls, _, _ := prog.CallSet(progBytes)
 	for call := range progCalls {
 		for _, subsystem := range e.perCall[call] {
 			calls[subsystem] = struct{}{}
 		}
 	}
-	list := []*entity.Subsystem{}
+	list := []*Subsystem{}
 	for key := range calls {
 		list = append(list, key)
 	}

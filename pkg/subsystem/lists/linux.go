@@ -3,11 +3,10 @@
 
 package lists
 
-import . "github.com/google/syzkaller/pkg/subsystem/entity"
-import "github.com/google/syzkaller/pkg/subsystem"
+import . "github.com/google/syzkaller/pkg/subsystem"
 
 func init() {
-	subsystem.RegisterList("linux", subsystems)
+	RegisterList("linux", subsystems)
 }
 
 // The subsystem list:
