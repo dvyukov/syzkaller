@@ -226,10 +226,10 @@ func TestSpecialStructs(t *testing.T) {
 						if ctx.Dir == DirOut {
 							return
 						}
-						if s, ok := t.(*StructType); ok && s.Name() == special {
+						if s, ok := t.(*StructType); ok && s.TemplateName() == special {
 							typ = s
 						}
-						if s, ok := t.(*UnionType); ok && s.Name() == special {
+						if s, ok := t.(*UnionType); ok && s.TemplateName() == special {
 							typ = s
 						}
 					})
@@ -238,9 +238,13 @@ func TestSpecialStructs(t *testing.T) {
 					t.Fatal("can't find struct description")
 				}
 				g := &Gen{newRand(target, rs), newState(target, ct, nil)}
-				for i := 0; i < iters/len(target.SpecialTypes); i++ {
+				iters := iters/len(target.SpecialTypes)
+				if iters == 0 {
+					iters = 1
+				}
+				for i := 0; i < iters; i++ {
 					var arg Arg
-					for i := 0; i < 2; i++ {
+					for i := 0; i < 3; i++ {
 						arg, _ = gen(g, typ, DirInOut, arg)
 						if arg.Dir() != DirInOut {
 							t.Fatalf("got wrong arg dir %v", arg.Dir())

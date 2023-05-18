@@ -685,7 +685,7 @@ func (r *randGen) generateArgImpl(s *state, typ Type, dir Dir, ignoreSpecial boo
 	if !ignoreSpecial && dir != DirOut {
 		switch typ.(type) {
 		case *StructType, *UnionType:
-			if gen := r.target.SpecialTypes[typ.Name()]; gen != nil {
+			if gen := r.target.SpecialTypes[typ.TemplateName()]; gen != nil {
 				return gen(&Gen{r, s}, typ, dir, nil)
 			}
 		}

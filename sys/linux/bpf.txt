@@ -245,6 +245,8 @@ bpf_line_info {
 }
 
 bpf_instructions [
+# Note: init.go:generateBPFProg knows index of this field.
+	custom	array[int8]
 	raw	array[bpf_insn]
 	framed	bpf_framed_program
 ] [varlen]

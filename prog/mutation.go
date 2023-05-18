@@ -471,7 +471,7 @@ func (t *PtrType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Ca
 }
 
 func (t *StructType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
-	gen := r.target.SpecialTypes[t.Name()]
+	gen := r.target.SpecialTypes[t.TemplateName()]
 	if gen == nil {
 		panic("bad arg returned by mutationArgs: StructType")
 	}
@@ -485,7 +485,7 @@ func (t *StructType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []
 }
 
 func (t *UnionType) mutate(r *randGen, s *state, arg Arg, ctx ArgCtx) (calls []*Call, retry, preserve bool) {
-	if gen := r.target.SpecialTypes[t.Name()]; gen != nil {
+	if gen := r.target.SpecialTypes[t.TemplateName()]; gen != nil {
 		var newArg Arg
 		newArg, calls = gen(&Gen{r, s}, t, arg.Dir(), arg)
 		replaceArg(arg, newArg)
@@ -601,19 +601,19 @@ func (t *IntType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (
 }
 
 func (t *StructType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool) {
-	if target.SpecialTypes[t.Name()] == nil || ignoreSpecial {
+	if target.SpecialTypes[t.TemplateName()] == nil || ignoreSpecial {
 		return dontMutate, false
 	}
 	return maxPriority, true
 }
 
 func (t *UnionType) getMutationPrio(target *Target, arg Arg, ignoreSpecial bool) (prio float64, stopRecursion bool) {
-	if target.SpecialTypes[t.Name()] == nil && len(t.Fields) == 1 || ignoreSpecial {
+	if target.SpecialTypes[t.TemplateName()] == nil && len(t.Fields) == 1 || ignoreSpecial {
 		return dontMutate, false
 	}
 	// For a non-special type union with more than one option
 	// we mutate the union itself and also the value of the current option.
-	if target.SpecialTypes[t.Name()] == nil {
+	if target.SpecialTypes[t.TemplateName()] == nil {
 		return maxPriority, false
 	}
 	return maxPriority, true

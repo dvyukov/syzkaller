@@ -4,6 +4,9 @@
 package linux
 
 import (
+	"bytes"
+	"encoding/binary"
+	"math/rand"
 	"runtime"
 
 	"github.com/google/syzkaller/prog"
@@ -69,6 +72,7 @@ func InitTarget(target *prog.Target) {
 		"ebt_replace":               arch.generateEbtables,
 		"usb_device_descriptor":     arch.generateUsbDeviceDescriptor,
 		"usb_device_descriptor_hid": arch.generateUsbHidDeviceDescriptor,
+		"bpf_prog_t":                arch.generateBPFProg,
 	}
 
 	target.AuxResources = map[string]bool{
@@ -423,6 +427,54 @@ func (arch *arch) generateTimespec(g *prog.Gen, typ0 prog.Type, dir prog.Dir, ol
 			nsec.OpAdd = msec * 1e6
 		}
 		arg = prog.MakeGroupArg(typ, dir, []prog.Arg{sec, nsec})
+	}
+	return
+}
+
+func BuzzerGenerate(progType int, rnd *rand.Rand, oldInsns []uint64) (insns []uint64, maps int) {
+	return []uint64{0}, 1
+}
+
+func (arch *arch) generateBPFProg(g *prog.Gen, typ prog.Type, dir prog.Dir, old prog.Arg) (
+	arg prog.Arg, calls []*prog.Call) {
+	const (
+		fieldType    = 0
+		fieldInsns   = 2
+		fieldFDArray = 22
+	)
+	var oldInsns []uint64
+	if old == nil {
+		arg = g.GenerateSpecialArg(typ, dir, &calls)
+	} else {
+		insnsArg := old.(*prog.GroupArg).Inner[fieldInsns].(*prog.PointerArg).Res.(*prog.UnionArg)
+		if insnsArg.Index == 0 {
+			data := insnsArg.Option.(*prog.DataArg).Data()
+			binary.Read(bytes.NewReader(data), binary.LittleEndian, &oldInsns)
+		}
+		arg = old
+		calls = g.MutateArg(arg)
+	}
+	progArg := arg.(*prog.GroupArg)
+	insnsArg := progArg.Inner[fieldInsns].(*prog.PointerArg).Res.(*prog.UnionArg)
+	if insnsArg.Index != 0 && oldInsns == nil {
+		return
+	}
+	progType := int(progArg.Inner[fieldType].(*prog.ConstArg).Val)
+	insns, maps := BuzzerGenerate(progType, g.Rand(), oldInsns)
+	w := bytes.NewBuffer(nil)
+	binary.Write(w, binary.LittleEndian, insns)
+	insnsArg.Index = 0
+	customTyp := insnsArg.Type().(*prog.UnionType).Fields[0].Type
+	insnsArg.Option = prog.MakeDataArg(customTyp, prog.DirIn, w.Bytes())
+	fdArrayArg := progArg.Inner[fieldFDArray].(*prog.PointerArg)
+	for maps != 0 && fdArrayArg.Res == nil {
+		progArg.Inner[fieldFDArray] = g.GenerateArg(fdArrayArg.Type(), prog.DirIn, &calls)
+		fdArrayArg = progArg.Inner[fieldFDArray].(*prog.PointerArg)
+	}
+	fdArray := fdArrayArg.Res.(*prog.GroupArg)
+	for len(fdArray.Inner) < maps {
+		mapArg := g.GenerateArg(fdArray.Type().(*prog.ArrayType).Elem, prog.DirIn, &calls)
+		fdArray.Inner = append(fdArray.Inner, mapArg)
 	}
 	return
 }
