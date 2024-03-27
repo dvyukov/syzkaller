@@ -69,7 +69,7 @@ func startRPCServer(mgr *Manager) (*RPCServer, error) {
 		cfg:   mgr.cfg,
 		stats: mgr.stats,
 	}
-	s, err := rpctype.NewRPCServer(mgr.cfg.RPC, "Manager", serv)
+	s, err := rpctype.NewRPCServer(mgr.cfg.RPC, "Manager", serv, true)
 	if err != nil {
 		return nil, err
 	}

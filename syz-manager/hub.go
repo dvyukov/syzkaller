@@ -138,10 +138,10 @@ func (hc *HubConnector) connect(corpus [][]byte) (*rpctype.RPCClient, error) {
 	}
 	// Hub.Connect request can be very large, so do it on a transient connection
 	// (rpc connection buffers never shrink).
-	if err := rpctype.RPCCall(hc.cfg.HubAddr, 1, "Hub.Connect", a, nil); err != nil {
+	if err := rpctype.RPCCall(hc.cfg.HubAddr, 1, true, "Hub.Connect", a, nil); err != nil {
 		return nil, err
 	}
-	hub, err := rpctype.NewRPCClient(hc.cfg.HubAddr, 1)
+	hub, err := rpctype.NewRPCClient(hc.cfg.HubAddr, 1, true)
 	if err != nil {
 		return nil, err
 	}

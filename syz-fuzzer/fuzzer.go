@@ -179,7 +179,7 @@ func main() {
 	machineInfo, modules := collectMachineInfos(target)
 
 	log.Logf(0, "dialing manager at %v", *flagManager)
-	manager, err := rpctype.NewRPCClient(*flagManager, timeouts.Scale)
+	manager, err := rpctype.NewRPCClient(*flagManager, timeouts.Scale, true)
 	if err != nil {
 		log.SyzFatalf("failed to create an RPC client: %v ", err)
 	}

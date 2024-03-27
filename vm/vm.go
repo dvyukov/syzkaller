@@ -93,6 +93,11 @@ func AllowsOvercommit(typ string) bool {
 	return vmimpl.Types[vmType(typ)].Overcommit
 }
 
+// TODO
+func UseNetCompression(typ string) bool {
+	return vmimpl.Types[vmType(typ)].NetCompression
+}
+
 // Create creates a VM pool that can be used to create individual VMs.
 func Create(cfg *mgrconfig.Config, debug bool) (*Pool, error) {
 	typ, ok := vmimpl.Types[vmType(cfg.Type)]
