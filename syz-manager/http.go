@@ -24,6 +24,7 @@ import (
 	"github.com/google/syzkaller/pkg/html/pages"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
+	statspkg "github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/pkg/vcs"
 	"github.com/google/syzkaller/prog"
 	"github.com/gorilla/handlers"
@@ -38,6 +39,7 @@ func (mgr *Manager) initHTTP() {
 	handle("/", mgr.httpSummary)
 	handle("/config", mgr.httpConfig)
 	handle("/expert_mode", mgr.httpExpertMode)
+	handle("/stats", mgr.httpStats)
 	handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}).ServeHTTP)
 	handle("/syscalls", mgr.httpSyscalls)
 	handle("/corpus", mgr.httpCorpus)
@@ -141,15 +143,28 @@ func (mgr *Manager) collectStats() []UIStat {
 		{Name: "config", Value: configName, Link: "/config"},
 		{Name: "uptime", Value: fmt.Sprint(time.Since(mgr.startTime) / 1e9 * 1e9)},
 		{Name: "fuzzing time", Value: fmt.Sprint(mgr.fuzzingTime / 60e9 * 60e9)},
-		{Name: "corpus", Value: fmt.Sprint(mgr.corpus.Stats().Progs), Link: "/corpus"},
-		{Name: "triage queue", Value: fmt.Sprint(mgr.stats.triageQueueLen.get())},
+		//{Name: "corpus", Value: fmt.Sprint(mgr.corpus.Stats().Progs), Link: "/corpus"},
+		//{Name: "triage queue", Value: fmt.Sprint(mgr.stats.triageQueueLen.get())},
 		{Name: "crashes", Value: rateStat(rawStats["crashes"], secs)},
 		{Name: "crash types", Value: rateStat(rawStats["crash types"], secs)},
 		{Name: "suppressed", Value: rateStat(rawStats["suppressed"], secs)},
-		{Name: "signal", Value: fmt.Sprint(rawStats["signal"])},
-		{Name: "coverage", Value: fmt.Sprint(rawStats["coverage"]), Link: "/cover"},
+		//{Name: "signal", Value: fmt.Sprint(rawStats["signal"])},
+		//{Name: "coverage", Value: fmt.Sprint(rawStats["coverage"]), Link: "/cover"},
 		{Name: "exec total", Value: rateStat(rawStats["exec total"], secs)},
 	}
+
+	level := statspkg.Simple
+	if mgr.expertMode {
+		level = statspkg.All
+	}
+	for _, stat1 := range statspkg.Collect(level) {
+		stats = append(stats, UIStat{
+			Name:  stat1.Name,
+			Value: stat1.Value,
+			Link:  stat1.Link,
+		})
+	}
+
 	if mgr.coverFilter != nil {
 		stats = append(stats, UIStat{
 			Name: "filtered coverage",
@@ -174,14 +189,17 @@ func (mgr *Manager) collectStats() []UIStat {
 	if mgr.expertMode {
 		var intStats []UIStat
 		for k, v := range rawStats {
-			val := ""
-			switch {
-			case k == "fuzzer jobs" || strings.HasPrefix(k, "rpc exchange"):
+			val, link := "", ""
+			switch k {
+			case "exchange lat server (us)":
+				val = fmt.Sprint(v)
+				link = "/stat_histogram?name=server_lat"
+			case "fuzzer jobs", "exchange progs", "exchange lat client (us)":
 				val = fmt.Sprint(v)
 			default:
 				val = rateStat(v, secs)
 			}
-			intStats = append(intStats, UIStat{Name: k, Value: val})
+			intStats = append(intStats, UIStat{Name: k, Value: val, Link: link})
 		}
 		sort.Slice(intStats, func(i, j int) bool {
 			return intStats[i].Name < intStats[j].Name
@@ -200,6 +218,16 @@ func rateStat(v, secs uint64) string {
 	}
 	x := v * 60 * 60 / secs
 	return fmt.Sprintf("%v (%v/hour)", v, x)
+}
+
+func (mgr *Manager) httpStats(w http.ResponseWriter, r *http.Request) {
+	data, err := statspkg.RenderHtml()
+	if err != nil {
+		log.Logf(0, "failed to execute template: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Write(data)
 }
 
 func (mgr *Manager) httpCrash(w http.ResponseWriter, r *http.Request) {

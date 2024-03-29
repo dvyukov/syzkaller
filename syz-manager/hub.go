@@ -17,6 +17,7 @@ import (
 	"github.com/google/syzkaller/pkg/report"
 	"github.com/google/syzkaller/pkg/report/crash"
 	"github.com/google/syzkaller/pkg/rpctype"
+	"github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/prog"
 )
 
@@ -48,6 +49,14 @@ func (mgr *Manager) hubSyncLoop(keyGet keyGetter) {
 		fresh:         mgr.fresh,
 		hubReproQueue: mgr.externalReproQueue,
 		keyGet:        keyGet,
+
+		statSendProgAdd:   stats.Create("hub: send prog add", ""),
+		statSendProgDel:   stats.Create("hub: send prog del", ""),
+		statRecvProg:      stats.Create("hub: recv prog", ""),
+		statRecvProgDrop:  stats.Create("hub: recv prog drop", ""),
+		statSendRepro:     stats.Create("hub: send repro", "", stats.Graph("hub repros")),
+		statRecvRepro:     stats.Create("hub: recv repro", "", stats.Graph("hub repros")),
+		statRecvReproDrop: stats.Create("hub: recv repro drop", "", stats.Graph("hub repros")),
 	}
 	if mgr.cfg.Reproduce && mgr.dash != nil {
 		hc.needMoreRepros = mgr.needMoreRepros
@@ -69,6 +78,14 @@ type HubConnector struct {
 	hubReproQueue  chan *Crash
 	needMoreRepros chan chan bool
 	keyGet         keyGetter
+
+	statSendProgAdd   *stats.Val
+	statSendProgDel   *stats.Val
+	statRecvProg      *stats.Val
+	statRecvProgDrop  *stats.Val
+	statSendRepro     *stats.Val
+	statRecvRepro     *stats.Val
+	statRecvReproDrop *stats.Val
 }
 
 // HubManagerView restricts interface between HubConnector and Manager.
@@ -196,13 +213,13 @@ func (hc *HubConnector) sync(hub *rpctype.RPCClient, corpus [][]byte) error {
 		}
 		minimized, smashed, progDropped := hc.processProgs(r.Inputs)
 		reproDropped := hc.processRepros(r.Repros)
-		hc.stats.hubSendProgAdd.add(len(a.Add))
-		hc.stats.hubSendProgDel.add(len(a.Del))
-		hc.stats.hubSendRepro.add(len(a.Repros))
-		hc.stats.hubRecvProg.add(len(r.Inputs) - progDropped)
-		hc.stats.hubRecvProgDrop.add(progDropped)
-		hc.stats.hubRecvRepro.add(len(r.Repros) - reproDropped)
-		hc.stats.hubRecvReproDrop.add(reproDropped)
+		hc.statSendProgAdd.Add(len(a.Add))
+		hc.statSendProgDel.Add(len(a.Del))
+		hc.statSendRepro.Add(len(a.Repros))
+		hc.statRecvProg.Add(len(r.Inputs) - progDropped)
+		hc.statRecvProgDrop.Add(progDropped)
+		hc.statRecvRepro.Add(len(r.Repros) - reproDropped)
+		hc.statRecvReproDrop.Add(reproDropped)
 		log.Logf(0, "hub sync: send: add %v, del %v, repros %v;"+
 			" recv: progs %v (min %v, smash %v), repros %v; more %v",
 			len(a.Add), len(a.Del), len(a.Repros),

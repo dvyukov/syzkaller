@@ -36,6 +36,7 @@ import (
 	crash_pkg "github.com/google/syzkaller/pkg/report/crash"
 	"github.com/google/syzkaller/pkg/repro"
 	"github.com/google/syzkaller/pkg/rpctype"
+	"github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys/targets"
 	"github.com/google/syzkaller/vm"
@@ -102,6 +103,9 @@ type Manager struct {
 	afterTriageStatSent bool
 
 	assetStorage *asset.Storage
+
+	statExecs *stats.Val
+	//statNewInputs *stats.Val
 }
 
 const (
@@ -177,7 +181,7 @@ func RunManager(cfg *mgrconfig.Config) {
 		reporter:           reporter,
 		crashdir:           crashdir,
 		startTime:          time.Now(),
-		stats:              &Stats{haveHub: cfg.HubClient != ""},
+		stats:              &Stats{ /*haveHub: cfg.HubClient != ""*/ },
 		crashTypes:         make(map[string]bool),
 		disabledHashes:     make(map[string]struct{}),
 		memoryLeakFrames:   make(map[string]bool),
@@ -191,6 +195,15 @@ func RunManager(cfg *mgrconfig.Config) {
 		usedFiles:          make(map[string]time.Time),
 		saturatedCalls:     make(map[string]bool),
 	}
+
+	// Stats imported from the fuzzer (names must match the the fuzzer names).
+	mgr.statExecs = stats.Create("exec total", "Total test program executions", stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total"))
+	stats.Create("executor restarts", "Number of times executor process was restarted", stats.Rate{})
+	stats.Create("buffer too small", "Program serialization overflowed exec buffer", stats.NoGraph)
+	stats.Create("no exec requests", "Number of times fuzzer was stalled with no exec requests", stats.Rate{})
+	stats.Create("no exec duration", "Total duration fuzzer was stalled with no exec requests (ns)", stats.Rate{})
+
+	//	statNewInputs:      stats.Create("new inputs", "Potential untriaged corpus candidates", stats.Graph("corpus")),
 
 	mgr.preloadCorpus()
 	mgr.initStats() // Initializes prometheus variables.
@@ -231,17 +244,23 @@ func RunManager(cfg *mgrconfig.Config) {
 			}
 			mgr.fuzzingTime += diff * time.Duration(atomic.LoadUint32(&mgr.numFuzzing))
 			mgr.mu.Unlock()
-			executed := mgr.stats.execTotal.get()
-			crashes := mgr.stats.crashes.get()
-			corpusCover := mgr.stats.corpusCover.get()
-			corpusSignal := mgr.stats.corpusSignal.get()
-			maxSignal := mgr.stats.maxSignal.get()
-			triageQLen := mgr.stats.triageQueueLen.get()
-			numReproducing := atomic.LoadUint32(&mgr.numReproducing)
-			numFuzzing := atomic.LoadUint32(&mgr.numFuzzing)
-
-			log.Logf(0, "VMs %v, executed %v, cover %v, signal %v/%v, crashes %v, repro %v, triageQLen %v",
-				numFuzzing, executed, corpusCover, corpusSignal, maxSignal, crashes, numReproducing, triageQLen)
+			buf := new(bytes.Buffer)
+			for _, stat := range stats.Collect(stats.Console) {
+				fmt.Fprintf(buf, "%v=%v ", stat.Name, stat.Value)
+			}
+			log.Logf(0, "%s", buf.String())
+			/*
+				executed := mgr.stats.execTotal.Val()
+				crashes := mgr.stats.crashes.get()
+				corpusCover := 0  //mgr.stats.corpusCover.get()
+				corpusSignal := 0 //mgr.stats.corpusSignal.get()
+				//maxSignal := mgr.stats.maxSignal.get()
+				//triageQLen := mgr.stats.triageQueueLen.get()
+				numReproducing := atomic.LoadUint32(&mgr.numReproducing)
+				numFuzzing := atomic.LoadUint32(&mgr.numFuzzing)
+				log.Logf(0, "VMs %v, executed %v, cover %v, signal %v, crashes %v, repro %v",
+					numFuzzing, executed, corpusCover, corpusSignal, crashes, numReproducing)
+			*/
 		}
 	}()
 
@@ -280,11 +299,10 @@ func (mgr *Manager) initBench() {
 				continue
 			}
 			mgr.minimizeCorpusUnlocked()
-			stat := mgr.corpus.Stats()
-			vals["corpus"] = uint64(stat.Progs)
+			vals["corpus"] = uint64(mgr.corpus.StatProgs.Val())
 			vals["uptime"] = uint64(time.Since(mgr.firstConnect)) / 1e9
 			vals["fuzzing"] = uint64(mgr.fuzzingTime) / 1e9
-			vals["candidates"] = uint64(mgr.fuzzer.Load().Stats().Candidates)
+			vals["candidates"] = uint64(mgr.fuzzer.Load().StatCandidates.Val())
 			mgr.mu.Unlock()
 
 			data, err := json.MarshalIndent(vals, "", "  ")
@@ -1220,7 +1238,7 @@ func fullReproLog(stats *repro.Stats) []byte {
 
 func (mgr *Manager) corpusInputHandler(updates <-chan corpus.NewItemEvent) {
 	for update := range updates {
-		mgr.stats.newInputs.inc()
+		//mgr.statNewInputs.Add(1)
 		mgr.serv.updateFilteredCover(update.NewCover)
 
 		if update.Exists {
@@ -1265,12 +1283,12 @@ func (mgr *Manager) addNewCandidates(candidates []fuzzer.Candidate) {
 }
 
 func (mgr *Manager) minimizeCorpusUnlocked() {
-	currSize := mgr.corpus.Stats().Progs
+	currSize := mgr.corpus.StatProgs.Val()
 	if mgr.phase < phaseLoadedCorpus || currSize <= mgr.lastMinCorpus*103/100 {
 		return
 	}
 	mgr.corpus.Minimize(mgr.cfg.Cover)
-	newSize := mgr.corpus.Stats().Progs
+	newSize := mgr.corpus.StatProgs.Val()
 
 	log.Logf(1, "minimized corpus: %v -> %v", currSize, newSize)
 	mgr.lastMinCorpus = newSize
@@ -1437,7 +1455,7 @@ func (mgr *Manager) fuzzerSignalRotation(fuzzer *fuzzer.Fuzzer) {
 		// 3000/60000 = 5%.
 		execsBetweenRotates = 60000
 	)
-	var lastExecTotal uint64
+	lastExecTotal := 0
 	lastRotation := time.Now()
 	for {
 		time.Sleep(time.Minute * 5)
@@ -1447,7 +1465,7 @@ func (mgr *Manager) fuzzerSignalRotation(fuzzer *fuzzer.Fuzzer) {
 		if phase < phaseTriagedCorpus {
 			continue
 		}
-		if mgr.stats.execTotal.get()-lastExecTotal < execsBetweenRotates {
+		if mgr.statExecs.Val()-lastExecTotal < execsBetweenRotates {
 			continue
 		}
 		if time.Since(lastRotation) < timeBetweenRotates {
@@ -1455,7 +1473,7 @@ func (mgr *Manager) fuzzerSignalRotation(fuzzer *fuzzer.Fuzzer) {
 		}
 		fuzzer.RotateMaxSignal(rotateSignals)
 		lastRotation = time.Now()
-		lastExecTotal = mgr.stats.execTotal.get()
+		lastExecTotal = mgr.statExecs.Val()
 	}
 }
 
@@ -1470,17 +1488,17 @@ func (mgr *Manager) fuzzerLoop(fuzzer *fuzzer.Fuzzer) {
 		mgr.serv.distributeSignalDelta(newSignal, dropSignal)
 
 		// Collect statistics.
-		fuzzerStats := fuzzer.Stats()
-		mgr.stats.setNamed(fuzzerStats.Named)
-		mgr.stats.corpusCover.set(fuzzerStats.Cover)
-		mgr.stats.corpusSignal.set(fuzzerStats.Signal)
-		mgr.stats.maxSignal.set(fuzzerStats.MaxSignal)
-		mgr.stats.triageQueueLen.set(fuzzerStats.Candidates)
-		mgr.stats.fuzzerJobs.set(fuzzerStats.RunningJobs)
-		mgr.stats.rpcTraffic.add(int(mgr.serv.server.TotalBytes.Swap(0)))
+		//fuzzerStats := fuzzer.Stats()
+		//mgr.stats.setNamed(fuzzerStats.Named)
+		//mgr.stats.corpusCover.set(fuzzerStats.Cover)
+		//mgr.stats.corpusSignal.set(fuzzerStats.Signal)
+		//mgr.stats.maxSignal.set(fuzzerStats.MaxSignal)
+		//mgr.stats.triageQueueLen.set(fuzzerStats.Candidates)
+		//mgr.stats.fuzzerJobs.set(fuzzerStats.RunningJobs)
+		//mgr.stats.rpcTraffic.add(int(mgr.serv.server.TotalBytes.Swap(0)))
 
 		// Update the state machine.
-		if fuzzerStats.Candidates == 0 {
+		if fuzzer.StatCandidates.Val() == 0 {
 			mgr.mu.Lock()
 			if mgr.phase == phaseLoadedCorpus {
 				if mgr.cfg.HubClient != "" {
@@ -1567,25 +1585,23 @@ func (mgr *Manager) dashboardReporter() {
 		}
 		crashes := mgr.stats.crashes.get()
 		suppressedCrashes := mgr.stats.crashSuppressed.get()
-		execs := mgr.stats.execTotal.get()
-		corpusStat := mgr.corpus.Stats()
 		req := &dashapi.ManagerStatsReq{
 			Name:              mgr.cfg.Name,
 			Addr:              webAddr,
 			UpTime:            time.Since(mgr.firstConnect),
-			Corpus:            uint64(corpusStat.Progs),
-			PCs:               mgr.stats.corpusCover.get(),
-			Cover:             mgr.stats.corpusSignal.get(),
+			Corpus:            uint64(mgr.corpus.StatProgs.Val()),
+			PCs:               uint64(mgr.corpus.StatCover.Val()),
+			Cover:             uint64(mgr.corpus.StatSignal.Val()),
 			CrashTypes:        mgr.stats.crashTypes.get(),
 			FuzzingTime:       mgr.fuzzingTime - lastFuzzingTime,
 			Crashes:           crashes - lastCrashes,
 			SuppressedCrashes: suppressedCrashes - lastSuppressedCrashes,
-			Execs:             execs - lastExecs,
+			Execs:             uint64(mgr.statExecs.Val()) - lastExecs,
 		}
 		if mgr.phase >= phaseTriagedCorpus && !mgr.afterTriageStatSent {
 			mgr.afterTriageStatSent = true
-			req.TriagedCoverage = mgr.stats.corpusSignal.get()
-			req.TriagedPCs = mgr.stats.corpusCover.get()
+			req.TriagedCoverage = uint64(mgr.corpus.StatSignal.Val())
+			req.TriagedPCs = uint64(mgr.corpus.StatCover.Val())
 		}
 		mgr.mu.Unlock()
 

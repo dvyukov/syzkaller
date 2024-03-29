@@ -71,7 +71,7 @@ func genProgRequest(fuzzer *Fuzzer, rnd *rand.Rand) *Request {
 	return &Request{
 		Prog:       p,
 		NeedSignal: rpctype.NewSignal,
-		stat:       statGenerate,
+		stat:       fuzzer.statExecGenerate,
 	}
 }
 
@@ -90,11 +90,11 @@ func mutateProgRequest(fuzzer *Fuzzer, rnd *rand.Rand) *Request {
 	return &Request{
 		Prog:       newP,
 		NeedSignal: rpctype.NewSignal,
-		stat:       statFuzz,
+		stat:       fuzzer.statExecFuzz,
 	}
 }
 
-func candidateRequest(input Candidate) *Request {
+func candidateRequest(fuzzer *Fuzzer, input Candidate) *Request {
 	flags := progCandidate
 	if input.Minimized {
 		flags |= progMinimized
@@ -105,7 +105,7 @@ func candidateRequest(input Candidate) *Request {
 	return &Request{
 		Prog:       input.Prog,
 		NeedSignal: rpctype.NewSignal,
-		stat:       statCandidate,
+		stat:       fuzzer.statExecCandidate,
 		flags:      flags,
 	}
 }
@@ -131,6 +131,7 @@ func triageJobPrio(flags ProgTypes) jobPriority {
 }
 
 func (job *triageJob) run(fuzzer *Fuzzer) {
+	fuzzer.statNewInputs.Add(1)
 	callName := fmt.Sprintf("call #%v %v", job.call, job.p.CallName(job.call))
 	fuzzer.Logf(3, "triaging input for %v (new signal=%v)", callName, job.newSignal.Len())
 	// Compute input coverage and non-flaky signal for minimization.
@@ -149,7 +150,7 @@ func (job *triageJob) run(fuzzer *Fuzzer) {
 	}
 	fuzzer.Logf(2, "added new input for %v to the corpus: %s", callName, job.p)
 	if job.flags&progSmashed == 0 {
-		fuzzer.startJob(&smashJob{
+		fuzzer.startJob(fuzzer.statJobsSmash, &smashJob{
 			p:    job.p.Clone(),
 			call: job.call,
 		})
@@ -180,7 +181,7 @@ func (job *triageJob) deflake(fuzzer *Fuzzer) (info deflakedCover, stop bool) {
 			NeedSignal:   rpctype.AllSignal,
 			NeedCover:    true,
 			NeedRawCover: fuzzer.Config.FetchRawCover,
-			stat:         statTriage,
+			stat:         fuzzer.statExecTriage,
 			flags:        progInTriage,
 		})
 		if result.Stop {
@@ -227,7 +228,7 @@ func (job *triageJob) minimize(fuzzer *Fuzzer, newSignal signal.Signal) (stop bo
 					Prog:         p1,
 					NeedSignal:   rpctype.AllSignal,
 					SignalFilter: newSignal,
-					stat:         statMinimize,
+					stat:         fuzzer.statExecMinimize,
 				})
 				if result.Stop {
 					stop = true
@@ -283,7 +284,10 @@ func (job *smashJob) priority() priority {
 func (job *smashJob) run(fuzzer *Fuzzer) {
 	fuzzer.Logf(2, "smashing the program %s (call=%d):", job.p, job.call)
 	if fuzzer.Config.Comparisons && job.call >= 0 {
-		fuzzer.startJob(newHintsJob(job.p.Clone(), job.call))
+		fuzzer.startJob(fuzzer.statJobsHints, &hintsJob{
+			p:    job.p.Clone(),
+			call: job.call,
+		})
 	}
 
 	const iters = 75
@@ -297,7 +301,7 @@ func (job *smashJob) run(fuzzer *Fuzzer) {
 		result := fuzzer.exec(job, &Request{
 			Prog:       p,
 			NeedSignal: rpctype.NewSignal,
-			stat:       statSmash,
+			stat:       fuzzer.statExecSmash,
 		})
 		if result.Stop {
 			return
@@ -305,7 +309,7 @@ func (job *smashJob) run(fuzzer *Fuzzer) {
 		if fuzzer.Config.Collide {
 			result := fuzzer.exec(job, &Request{
 				Prog: randomCollide(p, rnd),
-				stat: statCollide,
+				stat: fuzzer.statExecCollide,
 			})
 			if result.Stop {
 				return
@@ -347,7 +351,7 @@ func (job *smashJob) faultInjection(fuzzer *Fuzzer) {
 		newProg.Calls[job.call].Props.FailNth = nth
 		result := fuzzer.exec(job, &Request{
 			Prog: job.p,
-			stat: statSmash,
+			stat: fuzzer.statExecSmash,
 		})
 		if result.Stop {
 			return
@@ -365,13 +369,6 @@ type hintsJob struct {
 	call int
 }
 
-func newHintsJob(p *prog.Prog, call int) *hintsJob {
-	return &hintsJob{
-		p:    p,
-		call: call,
-	}
-}
-
 func (job *hintsJob) priority() priority {
 	return priority{smashPrio}
 }
@@ -382,7 +379,7 @@ func (job *hintsJob) run(fuzzer *Fuzzer) {
 	result := fuzzer.exec(job, &Request{
 		Prog:      p,
 		NeedHints: true,
-		stat:      statSeed,
+		stat:      fuzzer.statExecSeed,
 	})
 	if result.Stop || result.Info == nil {
 		return
@@ -395,7 +392,7 @@ func (job *hintsJob) run(fuzzer *Fuzzer) {
 			result := fuzzer.exec(job, &Request{
 				Prog:       p,
 				NeedSignal: rpctype.NewSignal,
-				stat:       statHint,
+				stat:       fuzzer.statExecHint,
 			})
 			return !result.Stop
 		})

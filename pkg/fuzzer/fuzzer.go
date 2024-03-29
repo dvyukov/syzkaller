@@ -16,6 +16,7 @@ import (
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/rpctype"
 	"github.com/google/syzkaller/pkg/signal"
+	"github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/prog"
 )
 
@@ -39,8 +40,21 @@ type Fuzzer struct {
 
 	nextExecFallback chan *Request
 
-	runningJobs      atomic.Int64
-	queuedCandidates atomic.Int64
+	StatCandidates    *stats.Val
+	statNewInputs     *stats.Val
+	statJobs          *stats.Val
+	statJobsTriage    *stats.Val
+	statJobsSmash     *stats.Val
+	statJobsHints     *stats.Val
+	statExecGenerate  *stats.Val
+	statExecFuzz      *stats.Val
+	statExecCandidate *stats.Val
+	statExecTriage    *stats.Val
+	statExecMinimize  *stats.Val
+	statExecSmash     *stats.Val
+	statExecHint      *stats.Val
+	statExecSeed      *stats.Val
+	statExecCollide   *stats.Val
 }
 
 func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
@@ -52,7 +66,7 @@ func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
 	}
 	f := &Fuzzer{
 		Config: cfg,
-		Cover:  &Cover{},
+		Cover:  newCover(),
 
 		ctx:    ctx,
 		stats:  map[string]uint64{},
@@ -65,7 +79,25 @@ func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
 
 		nextExec:         makePriorityQueue[*Request](),
 		nextExecFallback: make(chan *Request, cfg.PregenerateCount),
+
+		StatCandidates:    stats.Create("candidates", "Number of candidate programs in triage queue", stats.Graph("corpus")),
+		statNewInputs:     stats.Create("new inputs", "Potential untriaged corpus candidates", stats.Graph("corpus")),
+		statJobs:          stats.Create("fuzzer jobs", "Total running fuzzer jobs", stats.NoGraph),
+		statJobsTriage:    stats.Create("triage jobs", "Running triage jobs", stats.Graph("jobs")),
+		statJobsSmash:     stats.Create("smash jobs", "Running smash jobs", stats.Graph("jobs")),
+		statJobsHints:     stats.Create("hints jobs", "Running hints jobs", stats.Graph("jobs")),
+		statExecGenerate:  stats.Create("exec gen", "Executions of generated programs", stats.Rate{}, stats.Graph("exec")),
+		statExecFuzz:      stats.Create("exec fuzz", "Executions of mutated programs", stats.Rate{}, stats.Graph("exec")),
+		statExecCandidate: stats.Create("exec candidate", "Executions of candidate programs", stats.Rate{}, stats.Graph("exec")),
+		statExecTriage:    stats.Create("exec triage", "Executions of corpus triage programs", stats.Rate{}, stats.Graph("exec")),
+		statExecMinimize:  stats.Create("exec minimize", "Executions of programs during minimization", stats.Rate{}, stats.Graph("exec")),
+		statExecSmash:     stats.Create("exec smash", "Executions of smashed programs", stats.Rate{}, stats.Graph("exec")),
+		statExecHint:      stats.Create("exec hints", "Executions of programs generated using hints", stats.Rate{}, stats.Graph("exec")),
+		statExecSeed:      stats.Create("exec seeds", "Executions of programs for hints extraction", stats.Rate{}, stats.Graph("exec")),
+		statExecCollide:   stats.Create("exec collide", "Executions of programs in collide mode", stats.Rate{}, stats.Graph("exec")),
 	}
+	stats.StackedGraph("jobs")
+	stats.StackedGraph("exec")
 	f.updateChoiceTable(nil)
 	go f.choiceTableUpdater()
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -102,7 +134,7 @@ type Request struct {
 	SignalFilter signal.Signal // If specified, the resulting signal MAY be a subset of it.
 	// Fields that are only relevant within pkg/fuzzer.
 	flags   ProgTypes
-	stat    string
+	stat    *stats.Val
 	resultC chan *Result
 }
 
@@ -125,10 +157,7 @@ func (fuzzer *Fuzzer) Done(req *Request, res *Result) {
 	if req.resultC != nil {
 		req.resultC <- res
 	}
-	// Update stats.
-	fuzzer.mu.Lock()
-	fuzzer.stats[req.stat]++
-	fuzzer.mu.Unlock()
+	req.stat.Add(1)
 }
 
 func (fuzzer *Fuzzer) triageProgCall(p *prog.Prog, info *ipc.CallInfo, call int,
@@ -148,7 +177,7 @@ func (fuzzer *Fuzzer) triageProgCall(p *prog.Prog, info *ipc.CallInfo, call int,
 		return
 	}
 	fuzzer.Logf(2, "found new signal in call %d in %s", call, p)
-	fuzzer.startJob(&triageJob{
+	fuzzer.startJob(fuzzer.statJobsTriage, &triageJob{
 		p:           p.Clone(),
 		call:        call,
 		info:        *info,
@@ -179,10 +208,8 @@ type Candidate struct {
 
 func (fuzzer *Fuzzer) NextInput() *Request {
 	req := fuzzer.nextInput()
-	if req.stat == statCandidate {
-		if fuzzer.queuedCandidates.Add(-1) < 0 {
-			panic("queuedCandidates is out of sync")
-		}
+	if req.stat == fuzzer.statExecCandidate {
+		fuzzer.StatCandidates.Add(-1)
 	}
 	return req
 }
@@ -236,7 +263,7 @@ func (fuzzer *Fuzzer) generateFallback() {
 	}
 }
 
-func (fuzzer *Fuzzer) startJob(newJob job) {
+func (fuzzer *Fuzzer) startJob(stat *stats.Val, newJob job) {
 	fuzzer.Logf(2, "started %T", newJob)
 	if impl, ok := newJob.(jobSaveID); ok {
 		// E.g. for big and slow hint jobs, we would prefer not to serialize them,
@@ -244,9 +271,11 @@ func (fuzzer *Fuzzer) startJob(newJob job) {
 		impl.saveID(-fuzzer.nextJobID.Add(1))
 	}
 	go func() {
-		fuzzer.runningJobs.Add(1)
+		stat.Add(1)
+		fuzzer.statJobs.Add(1)
 		newJob.run(fuzzer)
-		fuzzer.runningJobs.Add(-1)
+		fuzzer.statJobs.Add(-1)
+		stat.Add(-1)
 	}()
 }
 
@@ -258,9 +287,9 @@ func (fuzzer *Fuzzer) Logf(level int, msg string, args ...interface{}) {
 }
 
 func (fuzzer *Fuzzer) AddCandidates(candidates []Candidate) {
-	fuzzer.queuedCandidates.Add(int64(len(candidates)))
+	fuzzer.StatCandidates.Add(len(candidates))
 	for _, candidate := range candidates {
-		fuzzer.pushExec(candidateRequest(candidate), priority{candidatePrio})
+		fuzzer.pushExec(candidateRequest(fuzzer, candidate), priority{candidatePrio})
 	}
 }
 
@@ -275,9 +304,6 @@ func (fuzzer *Fuzzer) nextRand() int64 {
 }
 
 func (fuzzer *Fuzzer) pushExec(req *Request, prio priority) {
-	if req.stat == "" {
-		panic("Request.Stat field must be set")
-	}
 	if req.NeedHints && (req.NeedCover || req.NeedSignal != rpctype.NoSignal) {
 		panic("Request.NeedHints is mutually exclusive with other fields")
 	}
@@ -354,7 +380,7 @@ func (fuzzer *Fuzzer) logCurrentStats() {
 		runtime.ReadMemStats(&m)
 
 		str := fmt.Sprintf("exec queue size: %d, running jobs: %d, heap (MB): %d",
-			fuzzer.nextExec.Len(), fuzzer.runningJobs.Load(), m.Alloc/1000/1000)
+			fuzzer.nextExec.Len(), fuzzer.statJobs.Val(), m.Alloc/1000/1000)
 		fuzzer.Logf(0, "%s", str)
 	}
 }
