@@ -132,25 +132,19 @@ func (mgr *Manager) collectStats() []UIStat {
 	if configName == "" {
 		configName = "config"
 	}
-	secs := uint64(1)
-	if !mgr.firstConnect.IsZero() {
-		secs = uint64(time.Since(mgr.firstConnect).Seconds()) + 1
-	}
-	rawStats := mgr.stats.all()
 	head := prog.GitRevisionBase
 	stats := []UIStat{
 		{Name: "revision", Value: fmt.Sprint(head[:8]), Link: vcs.LogLink(vcs.SyzkallerRepo, head)},
 		{Name: "config", Value: configName, Link: "/config"},
-		{Name: "uptime", Value: fmt.Sprint(time.Since(mgr.startTime) / 1e9 * 1e9)},
-		{Name: "fuzzing time", Value: fmt.Sprint(mgr.fuzzingTime / 60e9 * 60e9)},
-		//{Name: "corpus", Value: fmt.Sprint(mgr.corpus.Stats().Progs), Link: "/corpus"},
-		//{Name: "triage queue", Value: fmt.Sprint(mgr.stats.triageQueueLen.get())},
-		{Name: "crashes", Value: rateStat(rawStats["crashes"], secs)},
-		{Name: "crash types", Value: rateStat(rawStats["crash types"], secs)},
-		{Name: "suppressed", Value: rateStat(rawStats["suppressed"], secs)},
-		//{Name: "signal", Value: fmt.Sprint(rawStats["signal"])},
-		//{Name: "coverage", Value: fmt.Sprint(rawStats["coverage"]), Link: "/cover"},
-		{Name: "exec total", Value: rateStat(rawStats["exec total"], secs)},
+		//{Name: "uptime", Value: fmt.Sprint(time.Since(mgr.startTime) / 1e9 * 1e9)},
+		//{Name: "fuzzing time", Value: fmt.Sprint(mgr.fuzzingTime / 60e9 * 60e9)},
+	}
+	if mgr.checkResult != nil {
+		stats = append(stats, UIStat{
+			Name:  "syscalls",
+			Value: fmt.Sprint(len(mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox])),
+			Link:  "/syscalls",
+		})
 	}
 
 	level := statspkg.Simple
@@ -165,6 +159,7 @@ func (mgr *Manager) collectStats() []UIStat {
 		})
 	}
 
+/*
 	if mgr.coverFilter != nil {
 		stats = append(stats, UIStat{
 			Name: "filtered coverage",
@@ -176,48 +171,8 @@ func (mgr *Manager) collectStats() []UIStat {
 	} else {
 		delete(rawStats, "filtered coverage")
 	}
-	if mgr.checkResult != nil {
-		stats = append(stats, UIStat{
-			Name:  "syscalls",
-			Value: fmt.Sprint(len(mgr.checkResult.EnabledCalls[mgr.cfg.Sandbox])),
-			Link:  "/syscalls",
-		})
-	}
-	for _, stat := range stats {
-		delete(rawStats, stat.Name)
-	}
-	if mgr.expertMode {
-		var intStats []UIStat
-		for k, v := range rawStats {
-			val, link := "", ""
-			switch k {
-			case "exchange lat server (us)":
-				val = fmt.Sprint(v)
-				link = "/stat_histogram?name=server_lat"
-			case "fuzzer jobs", "exchange progs", "exchange lat client (us)":
-				val = fmt.Sprint(v)
-			default:
-				val = rateStat(v, secs)
-			}
-			intStats = append(intStats, UIStat{Name: k, Value: val, Link: link})
-		}
-		sort.Slice(intStats, func(i, j int) bool {
-			return intStats[i].Name < intStats[j].Name
-		})
-		stats = append(stats, intStats...)
-	}
+	*/
 	return stats
-}
-
-func rateStat(v, secs uint64) string {
-	if x := v / secs; x >= 10 {
-		return fmt.Sprintf("%v (%v/sec)", v, x)
-	}
-	if x := v * 60 / secs; x >= 10 {
-		return fmt.Sprintf("%v (%v/min)", v, x)
-	}
-	x := v * 60 * 60 / secs
-	return fmt.Sprintf("%v (%v/hour)", v, x)
 }
 
 func (mgr *Manager) httpStats(w http.ResponseWriter, r *http.Request) {

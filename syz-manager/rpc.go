@@ -29,7 +29,6 @@ type RPCServer struct {
 	port                  int
 	targetEnabledSyscalls map[*prog.Syscall]bool
 	coverFilter           map[uint32]uint32
-	stats                 *Stats
 	canonicalModules      *cover.Canonicalizer
 
 	mu          sync.Mutex
@@ -47,6 +46,7 @@ type RPCServer struct {
 	statExchangeProgs         *stats.Val
 	statExchangeServerLatency *stats.Val
 	statExchangeClientLatency *stats.Val
+	statCorpusCoverFiltered *stats.Val
 }
 
 type Runner struct {
@@ -79,12 +79,12 @@ func startRPCServer(mgr *Manager) (*RPCServer, error) {
 	serv := &RPCServer{
 		mgr:                       mgr,
 		cfg:                       mgr.cfg,
-		stats:                     mgr.stats,
 		statVMRestarts:            stats.Create("vm restarts", "Total number of VM starts", stats.Rate{}, stats.NoGraph),
 		statExchangeCalls:         stats.Create("exchange calls", "Number of RPC Exchange calls", stats.Rate{}),
 		statExchangeProgs:         stats.Create("exchange progs", "Test programs exchanged per RPC call", stats.Distribution{}),
 		statExchangeServerLatency: stats.Create("exchange manager latency", "Manager RPC Exchange call latency", stats.Distribution{}),
 		statExchangeClientLatency: stats.Create("exchange fuzzer latency", "End-to-end fuzzer RPC Exchange call latency", stats.Distribution{}),
+		statCorpusCoverFiltered: stats.Create("filtered coverage", "", ),
 	}
 	s, err := rpctype.NewRPCServer(mgr.cfg.RPC, "Manager", serv, mgr.netCompression)
 	if err != nil {
@@ -253,6 +253,7 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 	return nil
 }
 
+// TODO: move this into manager.go.
 func (serv *RPCServer) updateFilteredCover(pcs []uint32) error {
 	if len(pcs) == 0 || serv.coverFilter == nil {
 		return nil
@@ -268,7 +269,7 @@ func (serv *RPCServer) updateFilteredCover(pcs []uint32) error {
 			filtered++
 		}
 	}
-	serv.stats.corpusCoverFiltered.add(filtered)
+	serv.statCorpusCoverFiltered.Add(filtered)
 	return nil
 }
 

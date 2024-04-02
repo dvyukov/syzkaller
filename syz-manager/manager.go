@@ -59,10 +59,8 @@ type Manager struct {
 	corpus         *corpus.Corpus
 	corpusDB       *db.DB
 	corpusDBMu     sync.Mutex // for concurrent operations on corpusDB
-	startTime      time.Time
-	firstConnect   time.Time
+	firstConnect   atomic.Int64 // Unix time, or 0 if not connected
 	fuzzingTime    time.Duration
-	stats          *Stats
 	crashTypes     map[string]bool
 	vmStop         chan bool
 	checkResult    *rpctype.CheckArgs
@@ -105,7 +103,9 @@ type Manager struct {
 	assetStorage *asset.Storage
 
 	statExecs *stats.Val
-	//statNewInputs *stats.Val
+	statCrashes *stats.Val
+	statCrashTypes *stats.Val
+	statSuppressed *stats.Val
 }
 
 const (
@@ -180,8 +180,6 @@ func RunManager(cfg *mgrconfig.Config) {
 		sysTarget:          cfg.SysTarget,
 		reporter:           reporter,
 		crashdir:           crashdir,
-		startTime:          time.Now(),
-		stats:              &Stats{ /*haveHub: cfg.HubClient != ""*/ },
 		crashTypes:         make(map[string]bool),
 		disabledHashes:     make(map[string]struct{}),
 		memoryLeakFrames:   make(map[string]bool),
@@ -194,20 +192,39 @@ func RunManager(cfg *mgrconfig.Config) {
 		reproRequest:       make(chan chan map[string]bool),
 		usedFiles:          make(map[string]time.Time),
 		saturatedCalls:     make(map[string]bool),
+		statExecs: stats.Create("exec total", "Total test program executions", stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total")),
+		statCrashes: stats.Create("crashes", "Total number of VM crashes", stats.Simple, stats.Prometheus("syz_crash_total")),
+		statCrashTypes: stats.Create("crash types", "Number of unique crashes types", stats.Simple),
+		statSuppressed: stats.Create("suppressed", "Total number of suppressed VM crashes", stats.Simple),
 	}
 
+	stats.Create("uptime", "Total uptime in seconds", stats.Simple, func() int {
+		 firstConnect := mgr.firstConnect.Load()
+		 if firstConnect == 0 {
+		 	return 0
+		 }
+		 return time.Now().Unix() - firstConnect
+	})
+	stats.Create("fuzzing", "Total fuzzing time in all VMs in seconds", stats.Simple, func() int {
+		 firstConnect := mgr.firstConnect.Load()
+		 if firstConnect == 0 {
+		 	return 0
+		 }
+		 return time.Now().Unix() - firstConnect
+	})
+
+		vals["fuzzing"] = uint64(mgr.fuzzingTime) / 1e9
+		{Name: "fuzzing time", Value: fmt.Sprint(mgr.fuzzingTime / 60e9 * 60e9)},
+
+
 	// Stats imported from the fuzzer (names must match the the fuzzer names).
-	mgr.statExecs = stats.Create("exec total", "Total test program executions", stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total"))
 	stats.Create("executor restarts", "Number of times executor process was restarted", stats.Rate{})
 	stats.Create("buffer too small", "Program serialization overflowed exec buffer", stats.NoGraph)
 	stats.Create("no exec requests", "Number of times fuzzer was stalled with no exec requests", stats.Rate{})
 	stats.Create("no exec duration", "Total duration fuzzer was stalled with no exec requests (ns)", stats.Rate{})
 
-	//	statNewInputs:      stats.Create("new inputs", "Potential untriaged corpus candidates", stats.Graph("corpus")),
-
-	mgr.preloadCorpus()
-	mgr.initStats() // Initializes prometheus variables.
 	mgr.initHTTP()  // Creates HTTP server.
+	mgr.preloadCorpus()
 	mgr.collectUsedFiles()
 	go mgr.corpusInputHandler(corpusUpdates)
 
@@ -293,17 +310,15 @@ func (mgr *Manager) initBench() {
 		for {
 			time.Sleep(time.Minute)
 			vals := mgr.stats.all()
-			mgr.mu.Lock()
-			if mgr.firstConnect.IsZero() {
-				mgr.mu.Unlock()
-				continue
-			}
-			mgr.minimizeCorpusUnlocked()
-			vals["corpus"] = uint64(mgr.corpus.StatProgs.Val())
-			vals["uptime"] = uint64(time.Since(mgr.firstConnect)) / 1e9
-			vals["fuzzing"] = uint64(mgr.fuzzingTime) / 1e9
-			vals["candidates"] = uint64(mgr.fuzzer.Load().StatCandidates.Val())
-			mgr.mu.Unlock()
+			//mgr.mu.Lock()
+			//if mgr.firstConnect.IsZero() {
+			//	mgr.mu.Unlock()
+			//	continue
+			//}
+			//mgr.minimizeCorpusUnlocked()
+			//vals["corpus"] = uint64(mgr.corpus.StatProgs.Val())
+			//vals["candidates"] = uint64(mgr.fuzzer.Load().StatCandidates.Val())
+			//mgr.mu.Unlock()
 
 			data, err := json.MarshalIndent(vals, "", "  ")
 			if err != nil {
@@ -924,14 +939,14 @@ func (mgr *Manager) saveCrash(crash *Crash) bool {
 		// Collect all of them into a single bucket so that it's possible to control and assess them,
 		// e.g. if there are some spikes in suppressed reports.
 		crash.Title = "suppressed report"
-		mgr.stats.crashSuppressed.inc()
+		mgr.statSuppressed.Add(1)
 	}
 
-	mgr.stats.crashes.inc()
+	mgr.statCrashes.Add(1)
 	mgr.mu.Lock()
 	if !mgr.crashTypes[crash.Title] {
 		mgr.crashTypes[crash.Title] = true
-		mgr.stats.crashTypes.inc()
+		mgr.statCrashTypes.Add(1)
 	}
 	mgr.mu.Unlock()
 
@@ -1238,7 +1253,6 @@ func fullReproLog(stats *repro.Stats) []byte {
 
 func (mgr *Manager) corpusInputHandler(updates <-chan corpus.NewItemEvent) {
 	for update := range updates {
-		//mgr.statNewInputs.Add(1)
 		mgr.serv.updateFilteredCover(update.NewCover)
 
 		if update.Exists {
@@ -1405,7 +1419,7 @@ func (mgr *Manager) machineChecked(a *rpctype.CheckArgs, enabledSyscalls map[*pr
 	mgr.checkResult = a
 	mgr.targetEnabledSyscalls = enabledSyscalls
 	mgr.target.UpdateGlobs(a.GlobFiles)
-	mgr.firstConnect = time.Now()
+	mgr.firstConnect.Store(time.Now().Unix())
 
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	calls := make(map[*prog.Syscall]bool)
@@ -1578,24 +1592,21 @@ func (mgr *Manager) dashboardReporter() {
 	var lastCrashes, lastSuppressedCrashes, lastExecs uint64
 	for {
 		time.Sleep(time.Minute)
-		mgr.mu.Lock()
-		if mgr.firstConnect.IsZero() {
-			mgr.mu.Unlock()
+		if mgr.firstConnect.Load() == 0 {
 			continue
 		}
-		crashes := mgr.stats.crashes.get()
-		suppressedCrashes := mgr.stats.crashSuppressed.get()
+		mgr.mu.Lock()
 		req := &dashapi.ManagerStatsReq{
 			Name:              mgr.cfg.Name,
 			Addr:              webAddr,
-			UpTime:            time.Since(mgr.firstConnect),
+			UpTime:            uint64(mgr.StatUptime.Val()),
 			Corpus:            uint64(mgr.corpus.StatProgs.Val()),
 			PCs:               uint64(mgr.corpus.StatCover.Val()),
 			Cover:             uint64(mgr.corpus.StatSignal.Val()),
-			CrashTypes:        mgr.stats.crashTypes.get(),
+			CrashTypes:        uint64(mgr.statCrashTypes.Val()),
 			FuzzingTime:       mgr.fuzzingTime - lastFuzzingTime,
-			Crashes:           crashes - lastCrashes,
-			SuppressedCrashes: suppressedCrashes - lastSuppressedCrashes,
+			Crashes:           uint64(mgr.statCrashes.Val()) - lastCrashes,
+			SuppressedCrashes: uint64(mgr.statSuppressed.Val()) - lastSuppressedCrashes,
 			Execs:             uint64(mgr.statExecs.Val()) - lastExecs,
 		}
 		if mgr.phase >= phaseTriagedCorpus && !mgr.afterTriageStatSent {

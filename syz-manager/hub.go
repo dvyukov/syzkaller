@@ -42,7 +42,6 @@ func (mgr *Manager) hubSyncLoop(keyGet keyGetter) {
 		mgr:           mgr,
 		cfg:           mgr.cfg,
 		target:        mgr.target,
-		stats:         mgr.stats,
 		domain:        mgr.cfg.TargetOS + "/" + mgr.cfg.HubDomain,
 		enabledCalls:  mgr.targetEnabledSyscalls,
 		leak:          mgr.checkResult.Features[host.FeatureLeak].Enabled,
@@ -50,13 +49,13 @@ func (mgr *Manager) hubSyncLoop(keyGet keyGetter) {
 		hubReproQueue: mgr.externalReproQueue,
 		keyGet:        keyGet,
 
-		statSendProgAdd:   stats.Create("hub: send prog add", ""),
-		statSendProgDel:   stats.Create("hub: send prog del", ""),
-		statRecvProg:      stats.Create("hub: recv prog", ""),
-		statRecvProgDrop:  stats.Create("hub: recv prog drop", ""),
-		statSendRepro:     stats.Create("hub: send repro", "", stats.Graph("hub repros")),
-		statRecvRepro:     stats.Create("hub: recv repro", "", stats.Graph("hub repros")),
-		statRecvReproDrop: stats.Create("hub: recv repro drop", "", stats.Graph("hub repros")),
+		statSendProgAdd:   stats.Create("hub send prog add", "", stats.Graph("hub progs")),
+		statSendProgDel:   stats.Create("hub send prog del", "", stats.Graph("hub progs")),
+		statRecvProg:      stats.Create("hub recv prog", "", stats.Graph("hub progs")),
+		statRecvProgDrop:  stats.Create("hub recv prog drop", "", stats.NoGraph),
+		statSendRepro:     stats.Create("hub send repro", "", stats.Graph("hub repros")),
+		statRecvRepro:     stats.Create("hub recv repro", "", stats.Graph("hub repros")),
+		statRecvReproDrop: stats.Create("hub recv repro drop", "", stats.NoGraph),
 	}
 	if mgr.cfg.Reproduce && mgr.dash != nil {
 		hc.needMoreRepros = mgr.needMoreRepros
@@ -68,7 +67,6 @@ type HubConnector struct {
 	mgr            HubManagerView
 	cfg            *mgrconfig.Config
 	target         *prog.Target
-	stats          *Stats
 	domain         string
 	enabledCalls   map[*prog.Syscall]bool
 	leak           bool
