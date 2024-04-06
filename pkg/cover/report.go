@@ -76,19 +76,6 @@ type line struct {
 	pcProgCount map[uint64]int // some lines have multiple BBs
 }
 
-func coverageCallbackMismatch(debug bool, numPCs int, unmatchedProgPCs map[uint64]bool) error {
-	debugStr := ""
-	if debug {
-		debugStr += "\n\nUnmatched PCs:\n"
-		for pc := range unmatchedProgPCs {
-			debugStr += fmt.Sprintf("%x\n", pc)
-		}
-	}
-	// nolint: lll
-	return fmt.Errorf("%d out of %d PCs returned by kcov do not have matching coverage callbacks. Check the discoverModules() code.%s",
-		len(unmatchedProgPCs), numPCs, debugStr)
-}
-
 type fileMap map[string]*file
 
 func (rg *ReportGenerator) prepareFileMap(progs []Prog, debug bool) (fileMap, error) {
@@ -105,16 +92,15 @@ func (rg *ReportGenerator) prepareFileMap(progs []Prog, debug bool) (fileMap, er
 		}
 	}
 	progPCs := make(map[uint64]map[int]bool)
-	unmatchedProgPCs := make(map[uint64]bool)
-	verifyCallbackPoints := (len(rg.CallbackPoints) > 0)
+	unmatchedPCs := make(map[uint64]bool)
 	for i, prog := range progs {
 		for _, pc := range prog.PCs {
 			if progPCs[pc] == nil {
 				progPCs[pc] = make(map[int]bool)
 			}
 			progPCs[pc][i] = true
-			if verifyCallbackPoints && !rg.CallbackPoints[pc] {
-				unmatchedProgPCs[pc] = true
+			if rg.PreciseCoverage && !contains(rg.CallbackPoints, pc) {
+				unmatchedPCs[pc] = true
 			}
 		}
 	}
@@ -149,8 +135,8 @@ func (rg *ReportGenerator) prepareFileMap(progs []Prog, debug bool) (fileMap, er
 	}
 	// If the backend provided coverage callback locations for the binaries, use them to
 	// verify data returned by kcov.
-	if verifyCallbackPoints && (len(unmatchedProgPCs) > 0) {
-		return nil, coverageCallbackMismatch(debug, len(progPCs), unmatchedProgPCs)
+	if len(unmatchedPCs) > 0 {
+		return nil, coverageCallbackMismatch(debug, len(progPCs), unmatchedPCs)
 	}
 	for _, unit := range rg.Units {
 		f := files[unit.Name]
@@ -189,6 +175,23 @@ func uniquePCs(progs []Prog) []uint64 {
 		}
 	}
 	return maps.Keys(PCs)
+}
+
+func contains(pcs []uint64, pc uint64) bool {
+	idx := sort.Search(len(pcs), func(i int) bool { return pcs[i] >= pc })
+	return idx < len(pcs) && pcs[idx] == pc
+}
+
+func coverageCallbackMismatch(debug bool, numPCs int, unmatchedProgPCs map[uint64]bool) error {
+	debugStr := ""
+	if debug {
+		debugStr += "\n\nUnmatched PCs:\n"
+		for pc := range unmatchedProgPCs {
+			debugStr += fmt.Sprintf("%x\n", pc)
+		}
+	}
+	return fmt.Errorf("%d out of %d PCs returned by kcov do not have matching coverage callbacks."+
+		" Check the discoverModules() code.%s", len(unmatchedProgPCs), numPCs, debugStr)
 }
 
 func (rg *ReportGenerator) symbolizePCs(PCs []uint64) error {
