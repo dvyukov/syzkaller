@@ -136,28 +136,6 @@ func processModule(params *dwarfParams, module *Module, info *symbolInfo,
 	return result, nil
 }
 
-// Regexps to parse compiler version string in IsKcovBrokenInCompiler.
-// Some targets (e.g. NetBSD) use g++ instead of gcc.
-var gccRE = regexp.MustCompile(`gcc|GCC|g\+\+`)
-var gccVersionRE = regexp.MustCompile(`(gcc|GCC|g\+\+).* ([0-9]{1,2})\.[0-9]+\.[0-9]+`)
-
-// GCC < 14 incorrectly tail-calls kcov callbacks, which does not let syzkaller
-// verify that collected coverage points have matching callbacks.
-// See https://github.com/google/syzkaller/issues/4447 for more information.
-func IsKcovBrokenInCompiler(versionStr string) bool {
-	if !gccRE.MatchString(versionStr) {
-		return false
-	}
-	groups := gccVersionRE.FindStringSubmatch(versionStr)
-	if len(groups) > 0 {
-		version, err := strconv.Atoi(groups[2])
-		if err == nil {
-			return version < 14
-		}
-	}
-	return true
-}
-
 func makeDWARFUnsafe(params *dwarfParams) (*Impl, error) {
 	target := params.target
 	objDir := params.objDir
@@ -176,7 +154,7 @@ func makeDWARFUnsafe(params *dwarfParams) (*Impl, error) {
 	var allRanges []pcRange
 	var allUnits []*CompileUnit
 	var pcBase uint64
-	var verifyCoverPoints = true
+	preciseCoverage := true
 	for _, module := range modules {
 		errc := make(chan error, 1)
 		go func() {
@@ -211,8 +189,8 @@ func makeDWARFUnsafe(params *dwarfParams) (*Impl, error) {
 		}
 		allRanges = append(allRanges, ranges...)
 		allUnits = append(allUnits, units...)
-		if IsKcovBrokenInCompiler(params.getCompilerVersion(module.Path)) {
-			verifyCoverPoints = false
+		if isKcovBrokenInCompiler(params.getCompilerVersion(module.Path)) {
+			preciseCoverage = false
 		}
 	}
 
@@ -247,23 +225,15 @@ func makeDWARFUnsafe(params *dwarfParams) (*Impl, error) {
 		// On FreeBSD .text address in ELF is 0, but .text is actually mapped at 0xffffffff.
 		pcBase = ^uint64(0)
 	}
-	var allCoverPointsMap = make(map[uint64]bool)
-	if verifyCoverPoints {
-		for i := 0; i < 2; i++ {
-			for _, pc := range allCoverPoints[i] {
-				allCoverPointsMap[pc] = true
-			}
-		}
-	}
 	impl := &Impl{
 		Units:   allUnits,
 		Symbols: allSymbols,
 		Symbolize: func(pcs map[*Module][]uint64) ([]Frame, error) {
 			return symbolize(target, objDir, srcDir, buildDir, splitBuildDelimiters, pcs)
 		},
-		RestorePC:              makeRestorePC(params, pcBase),
-		CallbackPoints:         allCoverPointsMap,
-		CoverageCallbackPoints: allCoverPoints[0],
+		RestorePC:       makeRestorePC(params, pcBase),
+		CallbackPoints:  allCoverPoints[0],
+		PreciseCoverage: preciseCoverage,
 	}
 	return impl, nil
 }
@@ -280,8 +250,7 @@ func buildSymbols(symbols []*Symbol, ranges []pcRange, coverPoints [2][]uint64) 
 	selectPCs := func(u *ObjectUnit, typ int) *[]uint64 {
 		return [2]*[]uint64{&u.PCs, &u.CMPs}[typ]
 	}
-	for pcType := range coverPoints {
-		pcs := coverPoints[pcType]
+	for pcType, pcs := range coverPoints {
 		var curSymbol *Symbol
 		firstSymbolPC, symbolIdx := -1, 0
 		for i := 0; i < len(pcs); i++ {
@@ -333,6 +302,30 @@ func buildSymbols(symbols []*Symbol, ranges []pcRange, coverPoints [2][]uint64) 
 	}
 	return symbols
 }
+
+// GCC < 14 incorrectly tail-calls kcov callbacks, which does not let syzkaller
+// verify that collected coverage points have matching callbacks.
+// See https://github.com/google/syzkaller/issues/4447 for more information.
+func isKcovBrokenInCompiler(versionStr string) bool {
+	if !gccRE.MatchString(versionStr) {
+		return false
+	}
+	groups := gccVersionRE.FindStringSubmatch(versionStr)
+	if len(groups) > 0 {
+		version, err := strconv.Atoi(groups[2])
+		if err == nil {
+			return version < 14
+		}
+	}
+	return true
+}
+
+// Regexps to parse compiler version string in isKcovBrokenInCompiler.
+// Some targets (e.g. NetBSD) use g++ instead of gcc.
+var (
+	gccRE        = regexp.MustCompile(`gcc|GCC|g\+\+`)
+	gccVersionRE = regexp.MustCompile(`(gcc|GCC|g\+\+).* ([0-9]{1,2})\.[0-9]+\.[0-9]+`)
+)
 
 type symbolInfo struct {
 	textAddr uint64
