@@ -4,7 +4,9 @@
 package targets
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,6 +40,7 @@ type Target struct {
 	NeedSyscallDefine  func(nr uint64) bool
 	HostEndian         binary.ByteOrder
 	SyscallTrampolines map[string]string
+	Addr2Line          func() (string, error)
 
 	init      *sync.Once
 	initOther *sync.Once
@@ -775,6 +778,58 @@ func initTarget(target *Target, OS, arch string) {
 		target.ExecutorUsesForkServer = false
 		target.HostFuzzer = true
 	}
+	target.initAddr2Line()
+}
+
+func (target *Target) initAddr2Line() {
+	var (
+		init sync.Once
+		bin  string
+		err  error
+	)
+	target.Addr2Line = func() (string, error) {
+		init.Do(func() { bin, err = target.findAddr2Line() })
+		return bin, err
+	}
+}
+
+func (target *Target) findAddr2Line() (string, error) {
+	// First try to find llvm-addr2line as it's significantly faster on large binaries.
+	if path, err := exec.LookPath("llvm-addr2line"); err == nil {
+		return path, nil
+	}
+	// It may also be installed only as a versioned binary,
+	// the current syzbot container has only llvm-addr2line-15.
+	for ver := 100; ver > 10; ver-- {
+		if path, err := exec.LookPath(fmt.Sprintf("llvm-addr2line-%v", ver)); err == nil {
+			return path, nil
+		}
+	}
+	addr2line := "addr2line"
+	if target.Triple != "" {
+		addr2line = target.Triple + "-" + addr2line
+	}
+	path, err := exec.LookPath(addr2line)
+	if err != nil {
+		return "", errors.New("addr2line is not installed")
+	}
+	if target.OS != Darwin || target.Arch != AMD64 {
+		return path, nil
+	}
+	// A special check for darwin kernel to produce a more useful error.
+	cmd := exec.Command(path, "--help")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("addr2line execution failed: %w", err)
+	}
+	if !bytes.Contains(out, []byte("supported targets:")) {
+		return "", fmt.Errorf("addr2line output didn't contain supported targets")
+	}
+	if !bytes.Contains(out, []byte("mach-o-x86-64")) {
+		return "", fmt.Errorf("addr2line was built without mach-o-x86-64 support")
+	}
+	return path, nil
 }
 
 func (target *Target) Timeouts(slowdown int) Timeouts {
