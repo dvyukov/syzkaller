@@ -196,6 +196,7 @@ const (
 )
 
 type StopChan <-chan bool
+type InjectOutput io.Reader
 type OutputSize int
 
 // Run runs cmd inside of the VM (think of ssh cmd) and monitors command execution
@@ -209,6 +210,7 @@ func (inst *Instance) Run(timeout time.Duration, reporter *report.Reporter, comm
 	[]byte, *report.Report, error) {
 	exit := ExitNormal
 	var stop <-chan bool
+	var inject io.Reader
 	outputSize := beforeContextDefault
 	for _, o := range opts {
 		switch opt := o.(type) {
@@ -218,6 +220,8 @@ func (inst *Instance) Run(timeout time.Duration, reporter *report.Reporter, comm
 			stop = opt
 		case OutputSize:
 			outputSize = int(opt)
+		case InjectOutput:
+			inject = io.Reader(opt)
 		default:
 			panic(fmt.Sprintf("unknown option %#v", opt))
 		}
@@ -225,6 +229,9 @@ func (inst *Instance) Run(timeout time.Duration, reporter *report.Reporter, comm
 	merger, errc, err := inst.impl.Run(timeout, stop, command)
 	if err != nil {
 		return nil, nil, err
+	}
+	if inject != nil {
+		merger.Add("injected", io.NopCloser(inject))
 	}
 	mon := &monitor{
 		inst:          inst,
