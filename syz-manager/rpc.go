@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,8 @@ type RPCServer struct {
 	// They will be eventually given to other VMs.
 	rescuedInputs []*fuzzer.Request
 
+	statExecs                 *stats.Val
+	statExecRetries           *stats.Val
 	statVMRestarts            *stats.Val
 	statExchangeCalls         *stats.Val
 	statExchangeProgs         *stats.Val
@@ -50,7 +53,8 @@ type RPCServer struct {
 }
 
 type Runner struct {
-	name string
+	name      string
+	injectLog io.Writer
 
 	machineInfo []byte
 	instModules *cover.CanonicalizerInstance
@@ -60,7 +64,13 @@ type Runner struct {
 	newMaxSignal  signal.Signal
 	dropMaxSignal signal.Signal
 	nextRequestID atomic.Int64
-	requests      map[int64]*fuzzer.Request
+	requests      map[int64]Request
+}
+
+type Request struct {
+	req       *fuzzer.Request
+	executing bool
+	procID    int
 }
 
 type BugFrames struct {
@@ -77,8 +87,10 @@ type RPCManagerView interface {
 
 func startRPCServer(mgr *Manager) (*RPCServer, error) {
 	serv := &RPCServer{
-		mgr: mgr,
-		cfg: mgr.cfg,
+		mgr:             mgr,
+		cfg:             mgr.cfg,
+		statExecs:       mgr.statExecs,
+		statExecRetries: stats.Create("exec retries", "Number of times a test program was restarted because the first run failed"),
 		statVMRestarts: stats.Create("vm restarts", "Total number of VM starts",
 			stats.Rate{}, stats.NoGraph),
 		statExchangeCalls: stats.Create("exchange calls", "Number of RPC Exchange calls",
@@ -123,15 +135,15 @@ func (serv *RPCServer) Connect(a *rpctype.ConnectArgs, r *rpctype.ConnectRes) er
 
 	serv.coverFilter = coverFilter
 
-	runner := &Runner{
-		name:        a.Name,
-		machineInfo: a.MachineInfo,
-		instModules: serv.canonicalModules.NewInstance(a.Modules),
-		requests:    make(map[int64]*fuzzer.Request),
-	}
-	if _, loaded := serv.runners.LoadOrStore(a.Name, runner); loaded {
+	runner := serv.findRunner(a.Name)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if runner.machineInfo != nil {
 		return fmt.Errorf("duplicate connection from %s", a.Name)
 	}
+	runner.machineInfo = a.MachineInfo
+	runner.instModules = serv.canonicalModules.NewInstance(a.Modules)
+
 	r.MemoryLeakFrames = bugFrames.memoryLeaks
 	r.DataRaceFrames = bugFrames.dataRaces
 
@@ -193,14 +205,32 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *int) error {
 	return nil
 }
 
+func (serv *RPCServer) StartExecuting(a *rpctype.ExecutingRequest, r *int) error {
+	serv.statExecs.Add(1)
+	if a.Try != 0 {
+		serv.statExecRetries.Add(1)
+	}
+	runner := serv.findRunner(a.Name)
+	if runner == nil {
+		return nil
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	req, ok := runner.requests[a.ProgID]
+	if !ok {
+		return nil
+	}
+	fmt.Fprintf(runner.injectLog, "executing program %v:\n%s\n", req.req.Prog.Serialize())
+	req.executing = true
+	req.procID = a.ProcID
+	runner.requests[a.ProgID] = req
+	return nil
+}
+
 func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.ExchangeInfoReply) error {
 	start := time.Now()
-	var runner *Runner
-	if val, _ := serv.runners.Load(a.Name); val != nil {
-		runner = val.(*Runner)
-	} else {
-		// There might be a parallel shutdownInstance().
-		// Ignore the request then.
+	runner := serv.findRunner(a.Name)
+	if runner == nil {
 		return nil
 	}
 
@@ -257,6 +287,15 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 	return nil
 }
 
+func (serv *RPCServer) findRunner(name string) *Runner {
+	if val, _ := serv.runners.Load(name); val != nil {
+		return val.(*Runner)
+	}
+	// There might be a parallel shutdownInstance().
+	// Ignore requests then.
+	return nil
+}
+
 func (serv *RPCServer) updateFilteredCover(pcs []uint32) error {
 	if len(pcs) == 0 || serv.coverFilter == nil {
 		return nil
@@ -276,6 +315,17 @@ func (serv *RPCServer) updateFilteredCover(pcs []uint32) error {
 	return nil
 }
 
+func (serv *RPCServer) createInstance(name string, injectLog io.Writer) {
+	runner := &Runner{
+		name:      name,
+		requests:  make(map[int64]Request),
+		injectLog: injectLog,
+	}
+	if _, loaded := serv.runners.LoadOrStore(name, runner); loaded {
+		panic(fmt.Sprintf("duplicate instance %s", name))
+	}
+}
+
 func (serv *RPCServer) shutdownInstance(name string, crashed bool) []byte {
 	var runner *Runner
 	if val, _ := serv.runners.LoadAndDelete(name); val != nil {
@@ -293,20 +343,18 @@ func (serv *RPCServer) shutdownInstance(name string, crashed bool) []byte {
 	runner.requests = nil
 	runner.mu.Unlock()
 
-	if crashed {
-		// The VM likely crashed, so let's tell pkg/fuzzer to abort the affected jobs.
-		// fuzzerObj may be null, but in that case oldRequests would be empty as well.
-		fuzzerObj := serv.mgr.getFuzzer()
-		for _, req := range oldRequests {
-			fuzzerObj.Done(req, &fuzzer.Result{Stop: true})
+	// The VM likely crashed, so let's tell pkg/fuzzer to abort the affected jobs.
+	// fuzzerObj may be null, but in that case oldRequests would be empty as well.
+	serv.mu.Lock()
+	defer serv.mu.Unlock()
+	fuzzerObj := serv.mgr.getFuzzer()
+	for _, req := range oldRequests {
+		if crashed && req.executing {
+			fuzzerObj.Done(req.req, &fuzzer.Result{Stop: true})
+		} else {
+			// We will resend these inputs to another VM.
+			serv.rescuedInputs = append(serv.rescuedInputs, req.req)
 		}
-	} else {
-		// We will resend these inputs to another VM.
-		serv.mu.Lock()
-		for _, req := range oldRequests {
-			serv.rescuedInputs = append(serv.rescuedInputs, req)
-		}
-		serv.mu.Unlock()
 	}
 	return runner.machineInfo
 }
@@ -341,7 +389,7 @@ func (runner *Runner) doneRequest(resp rpctype.ExecutionResult, fuzzerObj *fuzze
 	}
 	info.Extra.Cover = runner.instModules.Canonicalize(info.Extra.Cover)
 	info.Extra.Signal = runner.instModules.Canonicalize(info.Extra.Signal)
-	fuzzerObj.Done(req, &fuzzer.Result{Info: info})
+	fuzzerObj.Done(req.req, &fuzzer.Result{Info: info})
 }
 
 func (runner *Runner) newRequest(req *fuzzer.Request) rpctype.ExecutionRequest {
@@ -354,7 +402,9 @@ func (runner *Runner) newRequest(req *fuzzer.Request) rpctype.ExecutionRequest {
 	id := runner.nextRequestID.Add(1)
 	runner.mu.Lock()
 	if runner.requests != nil {
-		runner.requests[id] = req
+		runner.requests[id] = Request{
+			req: req,
+		}
 	}
 	runner.mu.Unlock()
 	return rpctype.ExecutionRequest{

@@ -39,8 +39,6 @@ type FuzzerTool struct {
 	triagedCandidates uint32
 	timeouts          targets.Timeouts
 
-	logMu sync.Mutex
-
 	bufferTooSmall atomic.Uint64
 	noExecRequests atomic.Uint64
 	noExecDuration atomic.Uint64
@@ -321,6 +319,15 @@ func (tool *FuzzerTool) filterDataRaceFrames(frames []string) {
 	log.Logf(0, "%s", output)
 }
 
+func (tool *FuzzerTool) starExecutingCall(progID int64, pid, try int) {
+	tool.manager.AsyncCall("StartExecuting", &rpctype.ExecutingRequest{
+		Name:   tool.name,
+		ProgID: progID,
+		ProcID: pid,
+		Try: try,
+	})
+}
+
 func (tool *FuzzerTool) exchangeDataCall(needProgs int, results []executionResult,
 	latency time.Duration) time.Duration {
 	a := &rpctype.ExchangeInfoRequest{
@@ -394,7 +401,6 @@ func (tool *FuzzerTool) convertExecutionResult(res executionResult) rpctype.Exec
 func (tool *FuzzerTool) grabStats() map[string]uint64 {
 	stats := map[string]uint64{}
 	for _, proc := range tool.procs {
-		stats["exec total"] += atomic.SwapUint64(&proc.env.StatExecs, 0)
 		stats["executor restarts"] += atomic.SwapUint64(&proc.env.StatRestarts, 0)
 	}
 	stats["buffer too small"] = tool.bufferTooSmall.Swap(0)

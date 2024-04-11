@@ -56,6 +56,17 @@ type ExchangeInfoReply struct {
 	DropMaxSignal []uint32
 }
 
+// ExecutingRequest is notification from the fuzzer that it started executing
+// the program ProgID. We want this request to be as small and as fast as possible
+// b/c we want it to reach manager (or at least leave the VM) before it crashes
+// executing this program.
+type ExecutingRequest struct {
+	Name   string
+	ProgID int64
+	ProcID int
+	Try    int
+}
+
 // TODO: merge ExecutionRequest and ExecTask.
 type ExecTask struct {
 	Prog []byte
