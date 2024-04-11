@@ -43,10 +43,11 @@ type Instance interface {
 	Forward(port int) (string, error)
 
 	// Run runs cmd inside of the VM (think of ssh cmd).
-	// outc receives combined cmd and kernel console output.
+	// merger receives combined cmd and kernel console output.
 	// errc receives either command Wait return error or vmimpl.ErrTimeout.
 	// Command is terminated after timeout. Send on the stop chan can be used to terminate it earlier.
-	Run(timeout time.Duration, stop <-chan bool, command string) (outc <-chan []byte, errc <-chan error, err error)
+	Run(timeout time.Duration, stop <-chan bool, command string) (
+		merger *OutputMerger, errc <-chan error, err error)
 
 	// Diagnose retrieves additional debugging info from the VM
 	// (e.g. by sending some sys-rq's or SIGABORT'ing a Go program).
@@ -154,7 +155,7 @@ var (
 )
 
 func Multiplex(cmd *exec.Cmd, merger *OutputMerger, console io.Closer, timeout time.Duration,
-	stop, closed <-chan bool, debug bool) (<-chan []byte, <-chan error, error) {
+	stop, closed <-chan bool, debug bool) (*OutputMerger, <-chan error, error) {
 	errc := make(chan error, 1)
 	signal := func(err error) {
 		select {
@@ -190,7 +191,7 @@ func Multiplex(cmd *exec.Cmd, merger *OutputMerger, console io.Closer, timeout t
 		merger.Wait()
 		cmd.Wait()
 	}()
-	return merger.Output, errc, nil
+	return merger, errc, nil
 }
 
 // On VMs, pprof will be listening to this port.

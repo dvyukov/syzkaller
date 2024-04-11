@@ -510,7 +510,7 @@ func isRemoteCuttlefish(dev string) (bool, string) {
 }
 
 func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command string) (
-	<-chan []byte, <-chan error, error) {
+	*vmimpl.OutputMerger, <-chan error, error) {
 	var tty io.ReadCloser
 	var err error
 

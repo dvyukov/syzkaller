@@ -481,12 +481,11 @@ func (inst *instance) Run(
 	timeout time.Duration,
 	stop <-chan bool,
 	command string,
-) (<-chan []byte, <-chan error, error) {
+) (*vmimpl.OutputMerger, <-chan error, error) {
 	merger, wPipes := buildMerger("stdout", "stderr", "console")
 	receivedStdoutChunks := wPipes[0]
 	receivedStderrChunks := wPipes[1]
 	receivedConsoleChunks := wPipes[2]
-	outc := merger.Output
 
 	var reply proxyrpc.RunStartReply
 	err := inst.ProxyApp.Call(
@@ -542,7 +541,7 @@ func (inst *instance) Run(
 			break
 		}
 	}()
-	return outc, terminationError, nil
+	return merger, terminationError, nil
 }
 
 func (inst *instance) runStop(runID string) {

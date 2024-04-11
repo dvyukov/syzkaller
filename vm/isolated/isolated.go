@@ -315,7 +315,7 @@ func (inst *instance) Copy(hostSrc string) (string, error) {
 }
 
 func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command string) (
-	<-chan []byte, <-chan error, error) {
+	*vmimpl.OutputMerger, <-chan error, error) {
 	args := append(vmimpl.SSHArgs(inst.debug, inst.sshKey, inst.targetPort, inst.cfg.SystemSSHCfg),
 		inst.sshUser+"@"+inst.targetAddr)
 	dmesg, err := vmimpl.OpenRemoteConsole("ssh", args...)

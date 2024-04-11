@@ -172,7 +172,7 @@ func (inst *instance) Copy(hostSrc string) (string, error) {
 }
 
 func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command string) (
-	<-chan []byte, <-chan error, error) {
+	*vmimpl.OutputMerger, <-chan error, error) {
 	vmxDir := filepath.Dir(inst.vmx)
 	serial := filepath.Join(vmxDir, "serial")
 	dmesg, err := net.Dial("unix", serial)

@@ -252,7 +252,7 @@ func (inst *instance) Copy(hostSrc string) (string, error) {
 }
 
 func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command string) (
-	<-chan []byte, <-chan error, error) {
+	*vmimpl.OutputMerger, <-chan error, error) {
 	rpipe, wpipe, err := osutil.LongPipe()
 	if err != nil {
 		return nil, nil, err
@@ -299,7 +299,7 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 		cmd.Process.Kill()
 		cmd.Wait()
 	}()
-	return inst.merger.Output, errc, nil
+	return inst.merger, errc, nil
 }
 
 func (inst *instance) Diagnose(rep *report.Report) ([]byte, bool) {

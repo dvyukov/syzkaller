@@ -294,7 +294,7 @@ func (inst *instance) Copy(hostSrc string) (string, error) {
 }
 
 func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command string) (
-	<-chan []byte, <-chan error, error) {
+	*vmimpl.OutputMerger, <-chan error, error) {
 	args := []string{"exec", "-user=0:0"}
 	for _, c := range sandboxCaps {
 		args = append(args, "-cap", c)
@@ -363,7 +363,7 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 		close(w)
 		log.Logf(1, "%s exited with %s", inst.name, err)
 	}()
-	return inst.merger.Output, errc, nil
+	return inst.merger, errc, nil
 }
 
 func (inst *instance) guestProxy() (*os.File, error) {

@@ -222,13 +222,13 @@ func (inst *Instance) Run(timeout time.Duration, reporter *report.Reporter, comm
 			panic(fmt.Sprintf("unknown option %#v", opt))
 		}
 	}
-	outc, errc, err := inst.impl.Run(timeout, stop, command)
+	merger, errc, err := inst.impl.Run(timeout, stop, command)
 	if err != nil {
 		return nil, nil, err
 	}
 	mon := &monitor{
 		inst:          inst,
-		outc:          outc,
+		outc:          merger.Output,
 		errc:          errc,
 		reporter:      reporter,
 		beforeContext: outputSize,
