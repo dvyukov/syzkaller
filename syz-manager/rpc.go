@@ -279,12 +279,6 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 		return nil
 	}
 
-	fuzzerObj := serv.mgr.getFuzzer()
-	if fuzzerObj == nil {
-		// ExchangeInfo calls follow MachineCheck, so the fuzzer must have been initialized.
-		panic("exchange info call with nil fuzzer")
-	}
-
 	appendRequest := func(inp *fuzzer.Request) {
 		if req, ok := serv.newRequest(runner, inp); ok {
 			r.Requests = append(r.Requests, req)
@@ -293,7 +287,7 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 			// but so far we don't have a better handling than counting this.
 			// This error is observed a lot on the seeded syz_mount_image calls.
 			serv.statExecBufferTooSmall.Add(1)
-			fuzzerObj.Done(inp, &fuzzer.Result{Stop: true})
+			inp.Done(&fuzzer.Result{Stop: true})
 		}
 	}
 
@@ -312,12 +306,13 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 	// First query new inputs and only then post results.
 	// It should foster a more even distribution of executions
 	// across all VMs.
+	fuzzerObj := serv.mgr.getFuzzer()
 	for len(r.Requests) < a.NeedProgs {
 		appendRequest(fuzzerObj.NextInput())
 	}
 
 	for _, result := range a.Results {
-		serv.doneRequest(runner, result, fuzzerObj)
+		serv.doneRequest(runner, result)
 	}
 
 	stats.Import(a.StatsDelta)
@@ -379,13 +374,11 @@ func (serv *RPCServer) shutdownInstance(name string, crashed bool) []byte {
 	close(runner.injectStop)
 
 	// The VM likely crashed, so let's tell pkg/fuzzer to abort the affected jobs.
-	// fuzzerObj may be null, but in that case oldRequests would be empty as well.
 	serv.mu.Lock()
 	defer serv.mu.Unlock()
-	fuzzerObj := serv.mgr.getFuzzer()
 	for _, req := range oldRequests {
 		if crashed && req.try >= 0 {
-			fuzzerObj.Done(req.req, &fuzzer.Result{Stop: true})
+			req.req.Done(&fuzzer.Result{Stop: true})
 		} else {
 			// We will resend these inputs to another VM.
 			serv.rescuedInputs = append(serv.rescuedInputs, req.req)
@@ -405,7 +398,7 @@ func (serv *RPCServer) distributeSignalDelta(plus, minus signal.Signal) {
 	})
 }
 
-func (serv *RPCServer) doneRequest(runner *Runner, resp rpctype.ExecutionResult, fuzzerObj *fuzzer.Fuzzer) {
+func (serv *RPCServer) doneRequest(runner *Runner, resp rpctype.ExecutionResult) {
 	info := &resp.Info
 	if info.Freshness == 0 {
 		serv.statExecutorRestarts.Add(1)
@@ -435,7 +428,7 @@ func (serv *RPCServer) doneRequest(runner *Runner, resp rpctype.ExecutionResult,
 	}
 	info.Extra.Cover = runner.instModules.Canonicalize(info.Extra.Cover)
 	info.Extra.Signal = runner.instModules.Canonicalize(info.Extra.Signal)
-	fuzzerObj.Done(req.req, &fuzzer.Result{Info: info})
+	req.req.Done(&fuzzer.Result{Info: info})
 }
 
 func (serv *RPCServer) newRequest(runner *Runner, req *fuzzer.Request) (rpctype.ExecutionRequest, bool) {

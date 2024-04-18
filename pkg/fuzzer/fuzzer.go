@@ -83,6 +83,10 @@ type Request struct {
 	// will include subset of it even if it's not new.
 	SignalFilter     signal.Signal
 	SignalFilterCall int
+
+	// Must be called to notify that the request is finished.
+	Done func(res *Result)
+
 	// Fields that are only relevant within pkg/fuzzer.
 	flags   ProgTypes
 	stat    *stats.Val
@@ -102,7 +106,7 @@ type Result struct {
 	Stop bool
 }
 
-func (fuzzer *Fuzzer) Done(req *Request, res *Result) {
+func (fuzzer *Fuzzer) done(req *Request, res *Result) {
 	// Triage individual calls.
 	// We do it before unblocking the waiting threads because
 	// it may result it concurrent modification of req.Prog.
@@ -166,6 +170,9 @@ func (fuzzer *Fuzzer) NextInput() *Request {
 	req := fuzzer.nextInput()
 	if req.stat == fuzzer.statExecCandidate {
 		fuzzer.StatCandidates.Add(-1)
+	}
+	req.Done = func(res *Result) {
+		fuzzer.done(req, res)
 	}
 	return req
 }

@@ -127,7 +127,7 @@ func BenchmarkFuzzer(b *testing.B) {
 		for pb.Next() {
 			req := fuzzer.NextInput()
 			res, _, _ := emulateExec(req)
-			fuzzer.Done(req, res)
+			req.Done(res)
 		}
 	})
 }
@@ -264,7 +264,7 @@ func (f *testFuzzer) registerExecutor(proc *executorProc) {
 				f.crashes[crash]++
 				f.mu.Unlock()
 			}
-			f.fuzzer.Done(req, res)
+			req.Done(res)
 		}
 		return nil
 	})
