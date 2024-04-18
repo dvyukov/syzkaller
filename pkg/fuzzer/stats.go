@@ -6,22 +6,23 @@ package fuzzer
 import "github.com/google/syzkaller/pkg/stats"
 
 type Stats struct {
-	StatCandidates    *stats.Val
-	statNewInputs     *stats.Val
-	statJobs          *stats.Val
-	statJobsTriage    *stats.Val
-	statJobsSmash     *stats.Val
-	statJobsHints     *stats.Val
-	statExecTime      *stats.Val
-	statExecGenerate  *stats.Val
-	statExecFuzz      *stats.Val
-	statExecCandidate *stats.Val
-	statExecTriage    *stats.Val
-	statExecMinimize  *stats.Val
-	statExecSmash     *stats.Val
-	statExecHint      *stats.Val
-	statExecSeed      *stats.Val
-	statExecCollide   *stats.Val
+	StatCandidates         *stats.Val
+	statNewInputs          *stats.Val
+	statJobs               *stats.Val
+	statJobsTriage         *stats.Val
+	statJobsSmash          *stats.Val
+	statJobsHints          *stats.Val
+	statExecTime           *stats.Val
+	statExecGenerate       *stats.Val
+	statExecFuzz           *stats.Val
+	statExecCandidate      *stats.Val
+	statExecTriage         *stats.Val
+	statExecMinimize       *stats.Val
+	statExecSmash          *stats.Val
+	statExecHint           *stats.Val
+	statExecSeed           *stats.Val
+	statExecCollide        *stats.Val
+	statExecBufferTooSmall *stats.Val
 }
 
 func newStats() Stats {
@@ -53,5 +54,7 @@ func newStats() Stats {
 			stats.Rate{}, stats.StackedGraph("exec")),
 		statExecCollide: stats.Create("exec collide", "Executions of programs in collide mode",
 			stats.Rate{}, stats.StackedGraph("exec")),
+		statExecBufferTooSmall: stats.Create("buffer too small",
+			"Program serialization overflowed exec buffer", stats.NoGraph),
 	}
 }

@@ -47,7 +47,6 @@ type RPCServer struct {
 	statExecs                 *stats.Val
 	statExecRetries           *stats.Val
 	statExecutorRestarts      *stats.Val
-	statExecBufferTooSmall    *stats.Val
 	statVMRestarts            *stats.Val
 	statExchangeCalls         *stats.Val
 	statExchangeProgs         *stats.Val
@@ -102,8 +101,6 @@ func startRPCServer(mgr *Manager) (*RPCServer, error) {
 			stats.Rate{}, stats.Graph("executor")),
 		statExecutorRestarts: stats.Create("executor restarts",
 			"Number of times executor process was restarted", stats.Rate{}, stats.Graph("executor")),
-		statExecBufferTooSmall: stats.Create("buffer too small",
-			"Program serialization overflowed exec buffer", stats.NoGraph),
 		statVMRestarts: stats.Create("vm restarts", "Total number of VM starts",
 			stats.Rate{}, stats.NoGraph),
 		statExchangeCalls: stats.Create("exchange calls", "Number of RPC Exchange calls",
@@ -279,18 +276,6 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 		return nil
 	}
 
-	appendRequest := func(inp *fuzzer.Request) {
-		if req, ok := serv.newRequest(runner, inp); ok {
-			r.Requests = append(r.Requests, req)
-		} else {
-			// It's bad if we systematically fail to serialize programs,
-			// but so far we don't have a better handling than counting this.
-			// This error is observed a lot on the seeded syz_mount_image calls.
-			serv.statExecBufferTooSmall.Add(1)
-			inp.Done(&fuzzer.Result{Stop: true})
-		}
-	}
-
 	// Try to collect some of the postponed requests.
 	if serv.mu.TryLock() {
 		for len(serv.rescuedInputs) != 0 && len(r.Requests) < a.NeedProgs {
@@ -298,7 +283,7 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 			inp := serv.rescuedInputs[last]
 			serv.rescuedInputs[last] = nil
 			serv.rescuedInputs = serv.rescuedInputs[:last]
-			appendRequest(inp)
+			r.Requests = append(r.Requests, serv.newRequest(runner, inp))
 		}
 		serv.mu.Unlock()
 	}
@@ -308,7 +293,8 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 	// across all VMs.
 	fuzzerObj := serv.mgr.getFuzzer()
 	for len(r.Requests) < a.NeedProgs {
-		appendRequest(fuzzerObj.NextInput())
+		req := serv.newRequest(runner, fuzzerObj.NextInput())
+		r.Requests = append(r.Requests, req)
 	}
 
 	for _, result := range a.Results {
@@ -431,12 +417,10 @@ func (serv *RPCServer) doneRequest(runner *Runner, resp rpctype.ExecutionResult)
 	req.req.Done(&fuzzer.Result{Info: info})
 }
 
-func (serv *RPCServer) newRequest(runner *Runner, req *fuzzer.Request) (rpctype.ExecutionRequest, bool) {
-	progData, err := req.Prog.SerializeForExec()
-	if err != nil {
-		return rpctype.ExecutionRequest{}, false
+func (serv *RPCServer) newRequest(runner *Runner, req *fuzzer.Request) rpctype.ExecutionRequest {
+	if len(req.ProgData) == 0 {
+		panic("empty program")
 	}
-
 	var signalFilter signal.Signal
 	if req.SignalFilter != nil {
 		newRawSignal := runner.instModules.Decanonicalize(req.SignalFilter.ToRaw())
@@ -455,12 +439,12 @@ func (serv *RPCServer) newRequest(runner *Runner, req *fuzzer.Request) (rpctype.
 	runner.mu.Unlock()
 	return rpctype.ExecutionRequest{
 		ID:               id,
-		ProgData:         progData,
+		ProgData:         req.ProgData,
 		ExecOpts:         serv.createExecOpts(req),
 		NewSignal:        req.NeedSignal == fuzzer.NewSignal,
 		SignalFilter:     signalFilter,
 		SignalFilterCall: req.SignalFilterCall,
-	}, true
+	}
 }
 
 func (serv *RPCServer) createExecOpts(req *fuzzer.Request) ipc.ExecOpts {

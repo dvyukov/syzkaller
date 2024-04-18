@@ -76,6 +76,7 @@ type Config struct {
 
 type Request struct {
 	Prog       *prog.Prog
+	ProgData   []byte
 	NeedSignal SignalType
 	NeedCover  bool
 	NeedHints  bool
@@ -167,14 +168,26 @@ type Candidate struct {
 }
 
 func (fuzzer *Fuzzer) NextInput() *Request {
-	req := fuzzer.nextInput()
-	if req.stat == fuzzer.statExecCandidate {
-		fuzzer.StatCandidates.Add(-1)
+	for {
+		req := fuzzer.nextInput()
+		if req.stat == fuzzer.statExecCandidate {
+			fuzzer.StatCandidates.Add(-1)
+		}
+		req.Done = func(res *Result) {
+			fuzzer.done(req, res)
+		}
+		progData, err := req.Prog.SerializeForExec()
+		if err != nil {
+			// It's bad if we systematically fail to serialize programs,
+			// but so far we don't have a better handling than counting this.
+			// This error is observed a lot on the seeded syz_mount_image calls.
+			fuzzer.statExecBufferTooSmall.Add(1)
+			req.Done(&Result{Stop: true})
+			continue
+		}
+		req.ProgData = progData
+		return req
 	}
-	req.Done = func(res *Result) {
-		fuzzer.done(req, res)
-	}
-	return req
 }
 
 func (fuzzer *Fuzzer) nextInput() *Request {
