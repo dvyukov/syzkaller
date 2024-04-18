@@ -4,6 +4,7 @@
 package main
 
 import (
+	"sync/atomic"
 	"bytes"
 	"fmt"
 	"net"
@@ -36,6 +37,8 @@ type RPCServer struct {
 	checkFeatures         *host.Features
 	targetEnabledSyscalls map[*prog.Syscall]bool
 	canonicalModules      *cover.Canonicalizer
+
+	probingDone atomic.Bool
 
 	mu      sync.Mutex
 	runners sync.Map // Instead of map[string]*Runner.
@@ -271,9 +274,54 @@ func (serv *RPCServer) StartExecuting(a *rpctype.ExecutingRequest, r *int) error
 
 func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.ExchangeInfoReply) error {
 	start := time.Now()
+	stats.Import(a.StatsDelta)
 	runner := serv.findRunner(a.Name)
 	if runner == nil {
 		return nil
+	}
+	
+	serv.exchangeRequests(runner, a, r)
+	
+	runner.mu.Lock()
+	// Let's transfer new max signal in portions.
+	const transferMaxSignal = 500000
+	newSignal := runner.newMaxSignal.Split(transferMaxSignal)
+	dropSignal := runner.dropMaxSignal.Split(transferMaxSignal)
+	runner.mu.Unlock()
+
+	r.NewMaxSignal = runner.instModules.Decanonicalize(newSignal.ToRaw())
+	r.DropMaxSignal = runner.instModules.Decanonicalize(dropSignal.ToRaw())
+
+	log.Logf(2, "exchange with %s: %d done, %d new requests, %d new max signal, %d drop signal",
+		a.Name, len(a.Results), len(r.Requests), len(r.NewMaxSignal), len(r.DropMaxSignal))
+
+	serv.statExchangeCalls.Add(1)
+	serv.statExchangeProgs.Add(a.NeedProgs)
+	serv.statExchangeClientLatency.Add(int(a.Latency.Microseconds()))
+	serv.statExchangeServerLatency.Add(int(time.Since(start).Microseconds()))
+	return nil
+}
+
+func (serv *RPCServer) exchangeRequests(runner *Runner, a *rpctype.ExchangeInfoRequest, r *rpctype.ExchangeInfoReply) {
+	if !probingDone.Load() {
+		for _, res := range a.Results {
+			serv.checker.Done <- res
+		}
+		inp, ok := <-serv.checker.Requests
+		if ok {
+			req1, err := serv.newRequest(runner, inp)
+			if err != nil {
+				r.Requests = append(r.Requests, req)
+		
+		for req := range serv.checker.Requests {
+			r.Requests = append(r.Requests, req)
+			if len(r.Requests) >= a.NeedProgs {
+				break
+			}
+		}
+		if len(r.Requests) != 0 {
+			return nil
+		}
 	}
 
 	// Try to collect some of the postponed requests.
@@ -301,27 +349,6 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 		serv.doneRequest(runner, result)
 	}
 
-	stats.Import(a.StatsDelta)
-
-	runner.mu.Lock()
-	// Let's transfer new max signal in portions.
-
-	const transferMaxSignal = 500000
-	newSignal := runner.newMaxSignal.Split(transferMaxSignal)
-	dropSignal := runner.dropMaxSignal.Split(transferMaxSignal)
-	runner.mu.Unlock()
-
-	r.NewMaxSignal = runner.instModules.Decanonicalize(newSignal.ToRaw())
-	r.DropMaxSignal = runner.instModules.Decanonicalize(dropSignal.ToRaw())
-
-	log.Logf(2, "exchange with %s: %d done, %d new requests, %d new max signal, %d drop signal",
-		a.Name, len(a.Results), len(r.Requests), len(r.NewMaxSignal), len(r.DropMaxSignal))
-
-	serv.statExchangeCalls.Add(1)
-	serv.statExchangeProgs.Add(a.NeedProgs)
-	serv.statExchangeClientLatency.Add(int(a.Latency.Microseconds()))
-	serv.statExchangeServerLatency.Add(int(time.Since(start).Microseconds()))
-	return nil
 }
 
 func (serv *RPCServer) findRunner(name string) *Runner {

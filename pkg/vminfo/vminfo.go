@@ -21,21 +21,45 @@ import (
 
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/mgrconfig"
+	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/pkg/fuzzer"
 	"github.com/google/syzkaller/sys/targets"
 )
 
 type Checker struct {
+	Requests chan rpctype.ExecutionRequest
+	//Done chan rpctype.ExecutionResult
+	Checked chan *ProbeResult
+
 	checker
+	cfg *mgrconfig.Config
+}
+
+type ProbeResult struct {
+	EnabledCalls map[*prog.Syscall]bool
+	DisabledCalls map[*prog.Syscall]string
 }
 
 func New(cfg *mgrconfig.Config) *Checker {
+	impl := new(stub)
 	switch {
 	case cfg.TargetOS == targets.Linux:
-		return &Checker{new(linux)}
-	default:
-		return &Checker{new(stub)}
+		impl = new(linux)
 	}
+	chchecker:= &Checker{
+		Requests: make(chan rpctype.ExecutionRequest, 10*cfg.Procs),
+		Done: make(chan rpctype.ExecutionResult, 10*cfg.Procs),
+		Checked: make(chan *ProbeResult, 1),
+		checker: impl,
+		cfg: cfg,
+	}
+	go checker.loop()
+	return checker
 }
+
+//func (checker *Checker) NextInput() *fuzzer.Request {
+	//return nil
+//}
 
 func (checker *Checker) MachineInfo(fileInfos []host.FileInfo) ([]host.KernelModule, []byte, error) {
 	files := createFilesystem(fileInfos)
@@ -60,6 +84,10 @@ func (checker *Checker) MachineInfo(fileInfos []host.FileInfo) ([]host.KernelMod
 		fmt.Fprintf(info, "[%v]\n%s\n%v\n\n", name, tmp.Bytes(), strings.Repeat("-", 80))
 	}
 	return modules, info.Bytes(), nil
+}
+
+func (checker *Checker) loop() {
+	
 }
 
 type machineInfoFunc func(files filesystem, w io.Writer) (string, error)

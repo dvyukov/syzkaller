@@ -41,7 +41,11 @@ func testImage(hostAddr string, args *checkArgs) {
 	if err := checkRevisions(args); err != nil {
 		log.SyzFatalf("BUG: %v", err)
 	}
-	if _, err := checkMachine(args); err != nil {
+	res, err := checkMachine(args)
+	if err != nil {
+		log.SyzFatalf("BUG: %v", err)
+	}
+	if err := checkCalls(args, res); err != nil {
 		log.SyzFatalf("BUG: %v", err)
 	}
 }
@@ -148,15 +152,11 @@ func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
 	if err := checkSimpleProgram(args, features); err != nil {
 		return nil, err
 	}
-	res := &rpctype.CheckArgs{
+	return &rpctype.CheckArgs{
 		Features:      features,
 		EnabledCalls:  make(map[string][]int),
 		DisabledCalls: make(map[string][]rpctype.SyscallReason),
 	}
-	if err := checkCalls(args, res); err != nil {
-		return nil, err
-	}
-	return res, nil
 }
 
 func checkCalls(args *checkArgs, res *rpctype.CheckArgs) error {
