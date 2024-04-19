@@ -89,7 +89,9 @@ type NewItemEvent struct {
 	NewCover []uint32
 }
 
-func (corpus *Corpus) Save(inp NewInput) {
+// Save adds the input to the corpus, or merges it with an existing one for the same program.
+// Returns new corpus size, and if the input was added to the corpus (rather than merged).
+func (corpus *Corpus) Save(inp NewInput) (int, bool) {
 	progData := inp.Prog.Serialize()
 	sig := hash.String(progData)
 
@@ -108,6 +110,8 @@ func (corpus *Corpus) Save(inp NewInput) {
 		var newCover cover.Cover
 		newCover.Merge(old.Cover)
 		newCover.Merge(inp.Cover)
+		// Note: we cannot change the old Item b/c it can be concurrently read
+		// (Item/Items hands out pointers to items).
 		newItem := &Item{
 			Sig:      sig,
 			Prog:     old.Prog,
@@ -149,6 +153,7 @@ func (corpus *Corpus) Save(inp NewInput) {
 		}:
 		}
 	}
+	return len(corpus.progs), !exists
 }
 func (corpus *Corpus) Signal() signal.Signal {
 	corpus.mu.RLock()

@@ -67,7 +67,7 @@ func (jp *jobPriority) saveID(id int64) {
 func genProgRequest(fuzzer *Fuzzer, rnd *rand.Rand) *Request {
 	p := fuzzer.target.Generate(rnd,
 		prog.RecommendedCalls,
-		fuzzer.ChoiceTable())
+		fuzzer.choiceTable.Load())
 	return &Request{
 		Prog:       p,
 		NeedSignal: NewSignal,
@@ -83,7 +83,7 @@ func mutateProgRequest(fuzzer *Fuzzer, rnd *rand.Rand) *Request {
 	newP := p.Clone()
 	newP.Mutate(rnd,
 		prog.RecommendedCalls,
-		fuzzer.ChoiceTable(),
+		fuzzer.choiceTable.Load(),
 		fuzzer.Config.NoMutateCalls,
 		fuzzer.Config.Corpus.Programs(),
 	)
@@ -155,14 +155,13 @@ func (job *triageJob) run(fuzzer *Fuzzer) {
 			call: job.call,
 		})
 	}
-	input := corpus.NewInput{
+	fuzzer.saveInput(corpus.NewInput{
 		Prog:     job.p,
 		Call:     job.call,
 		Signal:   info.stableSignal,
 		Cover:    info.cover.Serialize(),
 		RawCover: info.rawCover,
-	}
-	fuzzer.Config.Corpus.Save(input)
+	})
 }
 
 type deflakedCover struct {
@@ -306,7 +305,7 @@ func (job *smashJob) run(fuzzer *Fuzzer) {
 	for i := 0; i < iters; i++ {
 		p := job.p.Clone()
 		p.Mutate(rnd, prog.RecommendedCalls,
-			fuzzer.ChoiceTable(),
+			fuzzer.choiceTable.Load(),
 			fuzzer.Config.NoMutateCalls,
 			fuzzer.Config.Corpus.Programs())
 		result := fuzzer.exec(job, &Request{

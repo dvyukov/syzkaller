@@ -29,10 +29,7 @@ type Fuzzer struct {
 	rnd    *rand.Rand
 	target *prog.Target
 
-	ct           *prog.ChoiceTable
-	ctProgs      int
-	ctMu         sync.Mutex // TODO: use RWLock.
-	ctRegenerate chan struct{}
+	choiceTable atomic.Pointer[prog.ChoiceTable]
 
 	nextExec  *priorityQueue[*Request]
 	nextJobID atomic.Int64
@@ -54,14 +51,9 @@ func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
 		rnd:    rnd,
 		target: target,
 
-		// We're okay to lose some of the messages -- if we are already
-		// regenerating the table, we don't want to repeat it right away.
-		ctRegenerate: make(chan struct{}),
-
 		nextExec: makePriorityQueue[*Request](),
 	}
-	f.updateChoiceTable(nil)
-	go f.choiceTableUpdater()
+	f.updateChoiceTable()
 	if cfg.Debug {
 		go f.logCurrentStats()
 	}
@@ -272,48 +264,19 @@ func (fuzzer *Fuzzer) exec(job job, req *Request) *Result {
 	}
 }
 
-func (fuzzer *Fuzzer) updateChoiceTable(programs []*prog.Prog) {
-	newCt := fuzzer.target.BuildChoiceTable(programs, fuzzer.Config.EnabledCalls)
-
-	fuzzer.ctMu.Lock()
-	defer fuzzer.ctMu.Unlock()
-	if len(programs) >= fuzzer.ctProgs {
-		fuzzer.ctProgs = len(programs)
-		fuzzer.ct = newCt
-	}
-}
-
-func (fuzzer *Fuzzer) choiceTableUpdater() {
-	for {
-		select {
-		case <-fuzzer.ctx.Done():
-			return
-		case <-fuzzer.ctRegenerate:
-		}
-		fuzzer.updateChoiceTable(fuzzer.Config.Corpus.Programs())
-	}
-}
-
-func (fuzzer *Fuzzer) ChoiceTable() *prog.ChoiceTable {
-	progs := fuzzer.Config.Corpus.Programs()
-
-	fuzzer.ctMu.Lock()
-	defer fuzzer.ctMu.Unlock()
-
+func (fuzzer *Fuzzer) saveInput(input corpus.NewInput) {
+	size, new := fuzzer.Config.Corpus.Save(input)
+	// Rebuild program choice table once in a while.
 	// There were no deep ideas nor any calculations behind these numbers.
-	regenerateEveryProgs := 333
-	if len(progs) < 100 {
-		regenerateEveryProgs = 33
+	if new && (size < 100 && size%33 == 0 || size%333 == 0) {
+		fuzzer.updateChoiceTable()
 	}
-	if fuzzer.ctProgs+regenerateEveryProgs < len(progs) {
-		select {
-		case fuzzer.ctRegenerate <- struct{}{}:
-		default:
-			// We're okay to lose the message.
-			// It means that we're already regenerating the table.
-		}
-	}
-	return fuzzer.ct
+}
+
+func (fuzzer *Fuzzer) updateChoiceTable() {
+	progs := fuzzer.Config.Corpus.Programs()
+	ct := fuzzer.target.BuildChoiceTable(progs, fuzzer.Config.EnabledCalls)
+	fuzzer.choiceTable.Store(ct)
 }
 
 func (fuzzer *Fuzzer) logCurrentStats() {
