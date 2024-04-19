@@ -52,7 +52,7 @@ func TestCorpusOperation(t *testing.T) {
 	assert.Equal(t, corpus.StatCover.Val(), 0)
 	assert.Equal(t, corpus.StatProgs.Val(), 2)
 
-	corpus.Minimize(true)
+	corpus.Minimize()
 }
 
 func TestCorpusCoverage(t *testing.T) {

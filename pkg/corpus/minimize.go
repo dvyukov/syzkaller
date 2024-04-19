@@ -9,7 +9,7 @@ import (
 	"github.com/google/syzkaller/pkg/signal"
 )
 
-func (corpus *Corpus) Minimize(cover bool) {
+func (corpus *Corpus) Minimize() {
 	corpus.mu.Lock()
 	defer corpus.mu.Unlock()
 

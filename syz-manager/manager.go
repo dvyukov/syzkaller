@@ -1251,7 +1251,7 @@ func (mgr *Manager) minimizeCorpusLocked() {
 	if currSize <= mgr.lastMinCorpus*103/100 {
 		return
 	}
-	mgr.corpus.Minimize(mgr.cfg.Cover)
+	mgr.corpus.Minimize()
 	newSize := mgr.corpus.StatProgs.Val()
 
 	log.Logf(1, "minimized corpus: %v -> %v", currSize, newSize)
