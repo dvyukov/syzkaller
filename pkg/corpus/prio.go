@@ -12,14 +12,14 @@ import (
 	"github.com/google/syzkaller/prog"
 )
 
-type ProgramsList struct {
+type programList struct {
 	mu       sync.RWMutex
 	progs    []*prog.Prog
 	sumPrios int64
 	accPrios []int64
 }
 
-func (pl *ProgramsList) saveProgram(p *prog.Prog, signal signal.Signal) {
+func (pl *programList) saveProgram(p *prog.Prog, signal signal.Signal) {
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	prio := int64(len(signal))
@@ -31,7 +31,7 @@ func (pl *ProgramsList) saveProgram(p *prog.Prog, signal signal.Signal) {
 	pl.progs = append(pl.progs, p)
 }
 
-func (pl *ProgramsList) ChooseProgram(r *rand.Rand) *prog.Prog {
+func (pl *programList) chooseProgram(r *rand.Rand) *prog.Prog {
 	pl.mu.RLock()
 	defer pl.mu.RUnlock()
 	if len(pl.progs) == 0 {
@@ -44,7 +44,7 @@ func (pl *ProgramsList) ChooseProgram(r *rand.Rand) *prog.Prog {
 	return pl.progs[idx]
 }
 
-func (pl *ProgramsList) Programs() []*prog.Prog {
+func (pl *programList) programs() []*prog.Prog {
 	pl.mu.RLock()
 	defer pl.mu.RUnlock()
 	return pl.progs

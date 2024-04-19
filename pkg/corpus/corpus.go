@@ -5,7 +5,9 @@ package corpus
 
 import (
 	"context"
+	"math/rand"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/syzkaller/pkg/cover"
 	"github.com/google/syzkaller/pkg/hash"
@@ -17,16 +19,16 @@ import (
 // Corpus object represents a set of syzkaller-found programs that
 // cover the kernel up to the currently reached frontiers.
 type Corpus struct {
-	ctx     context.Context
-	mu      sync.RWMutex
-	progs   map[string]*Item
-	signal  signal.Signal // total signal of all items
-	cover   cover.Cover   // total coverage of all items
-	updates chan<- NewItemEvent
-	*ProgramsList
-	StatProgs  *stats.Val
-	StatSignal *stats.Val
-	StatCover  *stats.Val
+	ctx         context.Context
+	mu          sync.RWMutex
+	progs       map[string]*Item
+	signal      signal.Signal // total signal of all items
+	cover       cover.Cover   // total coverage of all items
+	updates     chan<- NewItemEvent
+	programList atomic.Pointer[programList]
+	StatProgs   *stats.Val
+	StatSignal  *stats.Val
+	StatCover   *stats.Val
 }
 
 func NewCorpus(ctx context.Context) *Corpus {
@@ -35,11 +37,11 @@ func NewCorpus(ctx context.Context) *Corpus {
 
 func NewMonitoredCorpus(ctx context.Context, updates chan<- NewItemEvent) *Corpus {
 	corpus := &Corpus{
-		ctx:          ctx,
-		progs:        make(map[string]*Item),
-		updates:      updates,
-		ProgramsList: &ProgramsList{},
+		ctx:     ctx,
+		progs:   make(map[string]*Item),
+		updates: updates,
 	}
+	corpus.programList.Store(&programList{})
 	corpus.StatProgs = stats.Create("corpus", "Number of test programs in the corpus", stats.Console,
 		stats.Link("/corpus"), stats.Graph("corpus"), stats.LenOf(&corpus.progs, &corpus.mu))
 	corpus.StatSignal = stats.Create("signal", "Fuzzing signal in the corpus",
@@ -138,7 +140,7 @@ func (corpus *Corpus) Save(inp NewInput) (int, bool) {
 			Cover:    inp.Cover,
 			Updates:  []ItemUpdate{update},
 		}
-		corpus.saveProgram(inp.Prog, inp.Signal)
+		corpus.programList.Load().saveProgram(inp.Prog, inp.Signal)
 	}
 	corpus.signal.Merge(inp.Signal)
 	newCover := corpus.cover.MergeDiff(inp.Cover)
@@ -155,6 +157,15 @@ func (corpus *Corpus) Save(inp NewInput) (int, bool) {
 	}
 	return len(corpus.progs), !exists
 }
+
+func (corpus *Corpus) ChooseProgram(r *rand.Rand) *prog.Prog {
+	return corpus.programList.Load().chooseProgram(r)
+}
+
+func (corpus *Corpus) Programs() []*prog.Prog {
+	return corpus.programList.Load().programs()
+}
+
 func (corpus *Corpus) Signal() signal.Signal {
 	corpus.mu.RLock()
 	defer corpus.mu.RUnlock()

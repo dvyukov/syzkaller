@@ -72,6 +72,18 @@ func TestFuzz(t *testing.T) {
 		}
 	}()
 
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond).C
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker:
+				fuzzer.Config.Corpus.Minimize()
+			}
+		}
+	}()
+
 	tf := newTestFuzzer(t, fuzzer, map[string]bool{
 		"first bug":  true,
 		"second bug": true,

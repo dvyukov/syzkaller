@@ -40,7 +40,7 @@ func TestChooseProgram(t *testing.T) {
 		counters[corpus.ChooseProgram(r)]++
 	}
 	for p, prio := range priorities {
-		prob := float64(prio) / float64(corpus.sumPrios)
+		prob := float64(prio) / float64(corpus.programList.Load().sumPrios)
 		diff := math.Abs(prob*maxIters - float64(counters[p]))
 		if diff > eps*maxIters {
 			t.Fatalf("the difference (%f) is higher than %f%%", diff, eps*100)

@@ -34,10 +34,11 @@ func (corpus *Corpus) Minimize() {
 	corpus.progs = make(map[string]*Item)
 	// ProgramsList has its own mutex, so it'd be unsafe to
 	// overwrite it here, so let's create a new object.
-	corpus.ProgramsList = &ProgramsList{}
+	newList := &programList{}
 	for _, ctx := range signal.Minimize(inputs) {
 		inp := ctx.(*Item)
 		corpus.progs[inp.Sig] = inp
-		corpus.saveProgram(inp.Prog, inp.Signal)
+		newList.saveProgram(inp.Prog, inp.Signal)
 	}
+	corpus.programList.Store(newList)
 }
