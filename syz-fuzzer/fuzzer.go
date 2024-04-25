@@ -150,8 +150,6 @@ func main() {
 	}
 	var checkReq *rpctype.CheckArgs
 	if r.Features == nil {
-		checkArgs.enabledCalls = r.EnabledCalls
-		checkArgs.allSandboxes = r.AllSandboxes
 		checkArgs.featureFlags = featureFlags
 		checkReq, err = checkMachine(checkArgs)
 		if err != nil {
@@ -188,6 +186,16 @@ func main() {
 	log.Logf(0, "starting %v executor processes", *flagProcs)
 	for pid := 0; pid < *flagProcs; pid++ {
 		startProc(fuzzerTool, pid, config, *flagResetAccState)
+	}
+
+	go func() {
+		for _, req := range r.CheckProgs {
+			fuzzerTool.requests <- req
+		}
+	}()
+	for i := 0; i < len(r.CheckProgs); i++ {
+		res := fuzzerTool.convertExecutionResult(<-fuzzerTool.results)
+		checkReq.CheckProgs = append(checkReq.CheckProgs, res)
 	}
 
 	checkReq.Name = *flagName

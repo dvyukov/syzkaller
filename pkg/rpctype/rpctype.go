@@ -76,25 +76,23 @@ type ConnectArgs struct {
 }
 
 type ConnectRes struct {
-	EnabledCalls     []int
 	MemoryLeakFrames []string
 	DataRaceFrames   []string
-	AllSandboxes     bool
 	// This is forwarded from CheckArgs, if checking was already done.
 	Features *host.Features
 	// Fuzzer reads these files inside of the VM and returns contents in CheckArgs.Files.
-	ReadFiles []string
-	ReadGlobs []string
+	ReadFiles  []string
+	ReadGlobs  []string
+	CheckProgs []ExecutionRequest
 }
 
 type CheckArgs struct {
-	Name          string
-	Error         string
-	EnabledCalls  map[string][]int
-	DisabledCalls map[string][]SyscallReason
-	Features      *host.Features
-	Globs         map[string][]string
-	Files         []host.FileInfo
+	Name       string
+	Error      string
+	Features   *host.Features
+	Globs      map[string][]string
+	Files      []host.FileInfo
+	CheckProgs []ExecutionResult
 }
 
 type CheckRes struct {
