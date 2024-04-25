@@ -18,13 +18,18 @@ import (
 
 type linux int
 
-func (linux) RequiredFiles() []string {
+func (linux) requiredFiles() ([]string, []string) {
 	return []string{
-		"/proc/cpuinfo",
-		"/proc/modules",
-		"/sys/module/*/sections/.text",
-		"/sys/module/kvm*/parameters/*",
-	}
+			"/proc/cpuinfo",
+			"/proc/modules",
+			"/sys/module/*/sections/.text",
+			"/sys/module/kvm*/parameters/*",
+		}, []string{
+			"/proc/version",
+			"/proc/filesystems",
+			"/sys/kernel/security/lsm",
+			"/dev/raw-gadget",
+		}
 }
 
 func (linux) machineInfos() []machineInfoFunc {

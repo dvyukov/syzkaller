@@ -140,11 +140,13 @@ func (serv *RPCServer) Connect(a *rpctype.ConnectArgs, r *rpctype.ConnectRes) er
 
 	serv.mu.Lock()
 	defer serv.mu.Unlock()
-	r.EnabledCalls = serv.cfg.Syscalls
 	r.Features = serv.checkFeatures
-	r.ReadFiles = serv.checker.RequiredFiles()
+	infoFiles, checkFiles, checkProgs := serv.checker.RequiredThings()
+	r.ReadFiles = infoFiles
 	if !serv.checkDone {
+		r.ReadFiles = append(r.ReadFiles, checkFiles...)
 		r.ReadGlobs = serv.target.RequiredGlobs()
+		r.CheckProgs = checkProgs
 	}
 	return nil
 }
@@ -215,13 +217,9 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *rpctype.CheckRes) error {
 func (serv *RPCServer) check(a *rpctype.CheckArgs, modules []host.KernelModule) error {
 	// Note: need to print disbled syscalls before failing due to an error.
 	// This helps to debug "all system calls are disabled".
-	enabledCalls := make(map[*prog.Syscall]bool)
-	for _, call := range a.EnabledCalls[serv.cfg.Sandbox] {
-		enabledCalls[serv.cfg.Target.Syscalls[call]] = true
-	}
-	disabledCalls := make(map[*prog.Syscall]string)
-	for _, dc := range a.DisabledCalls[serv.cfg.Sandbox] {
-		disabledCalls[serv.cfg.Target.Syscalls[dc.ID]] = dc.Reason
+	enabledCalls, disabledCalls, err := serv.checker.Check(a.Files, a.CheckProgs)
+	if err != nil {
+		return fmt.Errorf("failed to detect enabled syscalls: %w", err)
 	}
 	enabledCalls, transitivelyDisabled := serv.target.TransitivelyEnabledCalls(enabledCalls)
 	buf := new(bytes.Buffer)
