@@ -476,7 +476,6 @@ type FuzzerCmdArgs struct {
 	Cover     bool
 	Debug     bool
 	Test      bool
-	Runtest   bool
 	Optional  *OptionalFuzzerArgs
 }
 
@@ -487,10 +486,6 @@ func FuzzerCmd(args *FuzzerCmdArgs) string {
 		// But speciying OS for all OSes breaks patch testing on syzbot
 		// because old execprog does not have os flag.
 		osArg = " -os=" + args.OS
-	}
-	runtestArg := ""
-	if args.Runtest {
-		runtestArg = " -runtest"
 	}
 	verbosityArg := ""
 	if args.Verbosity != 0 {
@@ -508,9 +503,9 @@ func FuzzerCmd(args *FuzzerCmdArgs) string {
 		optionalArg = " " + tool.OptionalFlags(flags)
 	}
 	return fmt.Sprintf("%v -executor=%v -name=%v -arch=%v%v -manager=%v -sandbox=%v"+
-		" -procs=%v -cover=%v -debug=%v -test=%v%v%v%v",
+		" -procs=%v -cover=%v -debug=%v -test=%v%v%v",
 		args.Fuzzer, args.Executor, args.Name, args.Arch, osArg, args.FwdAddr, args.Sandbox,
-		args.Procs, args.Cover, args.Debug, args.Test, runtestArg, verbosityArg, optionalArg)
+		args.Procs, args.Cover, args.Debug, args.Test, verbosityArg, optionalArg)
 }
 
 func OldFuzzerCmd(fuzzer, executor, name, OS, arch, fwdAddr, sandbox string, sandboxArg, procs int,
@@ -521,7 +516,7 @@ func OldFuzzerCmd(fuzzer, executor, name, OS, arch, fwdAddr, sandbox string, san
 	}
 	return FuzzerCmd(&FuzzerCmdArgs{Fuzzer: fuzzer, Executor: executor, Name: name,
 		OS: OS, Arch: arch, FwdAddr: fwdAddr, Sandbox: sandbox,
-		Procs: procs, Verbosity: 0, Cover: cover, Debug: false, Test: test, Runtest: false,
+		Procs: procs, Verbosity: 0, Cover: cover, Debug: false, Test: test,
 		Optional: optional})
 }
 
