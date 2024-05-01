@@ -47,15 +47,6 @@ func New(cfg *mgrconfig.Config) *Checker {
 	}
 }
 
-func (checker *Checker) RequiredThings() ([]string, []string, []rpctype.ExecutionRequest) {
-	infoFiles, checkFiles := checker.requiredFiles()
-	var checkProgs []rpctype.ExecutionRequest
-	if checker.checkContext != nil {
-		checkProgs = checker.checkContext.progs
-	}
-	return infoFiles, checkFiles, checkProgs
-}
-
 func (checker *Checker) MachineInfo(fileInfos []host.FileInfo) ([]host.KernelModule, []byte, error) {
 	files := createVirtualFilesystem(fileInfos)
 	modules, err := checker.parseModules(files)
@@ -81,7 +72,11 @@ func (checker *Checker) MachineInfo(fileInfos []host.FileInfo) ([]host.KernelMod
 	return modules, info.Bytes(), nil
 }
 
-func (checker *Checker) Check(files []host.FileInfo, progs []rpctype.ExecutionResult) (
+func (checker *Checker) StartCheck() ([]string, []rpctype.ExecutionRequest) {
+	return checker.checkFiles(), checker.checkContext.startCheck()
+}
+
+func (checker *Checker) FinishCheck(files []host.FileInfo, progs []rpctype.ExecutionResult) (
 	map[*prog.Syscall]bool, map[*prog.Syscall]string, error) {
 	ctx := checker.checkContext
 	checker.checkContext = nil
@@ -91,7 +86,8 @@ func (checker *Checker) Check(files []host.FileInfo, progs []rpctype.ExecutionRe
 type machineInfoFunc func(files filesystem, w io.Writer) (string, error)
 
 type checker interface {
-	requiredFiles() ([]string, []string)
+	RequiredFiles() []string
+	checkFiles() []string
 	parseModules(files filesystem) ([]host.KernelModule, error)
 	machineInfos() []machineInfoFunc
 	syscallCheck(*checkContext, *prog.Syscall) string
@@ -144,8 +140,12 @@ func (files filesystem) ReadDir(dir string) []string {
 
 type stub int
 
-func (stub) requiredFiles() ([]string, []string) {
-	return nil, nil
+func (stub) RequiredFiles() []string {
+	return nil
+}
+
+func (stub) checkFiles() []string {
+	return nil
 }
 
 func (stub) parseModules(files filesystem) ([]host.KernelModule, error) {

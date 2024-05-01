@@ -59,8 +59,6 @@ type checkContext struct {
 	// a goroutine that will send on requests).
 	requests        chan []*rpctype.ExecutionRequest
 	pendingRequests int
-	// All collected test programs that will be sent to VMs.
-	progs []rpctype.ExecutionRequest
 	// Ready channel is closed after we've recevied results of execution of test
 	// programs and file contents. After this results maps and fs are populated.
 	ready   chan bool
@@ -82,7 +80,7 @@ func newCheckContext(cfg *mgrconfig.Config, impl checker) *checkContext {
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
 	}
-	ctx := &checkContext{
+	return &checkContext{
 		impl:     impl,
 		cfg:      cfg,
 		target:   cfg.Target,
@@ -92,11 +90,9 @@ func newCheckContext(cfg *mgrconfig.Config, impl checker) *checkContext {
 		syscalls: make(chan syscallResult),
 		ready:    make(chan bool),
 	}
-	ctx.startCheck()
-	return ctx
 }
 
-func (ctx *checkContext) startCheck() {
+func (ctx *checkContext) startCheck() []rpctype.ExecutionRequest {
 	for _, id := range ctx.cfg.Syscalls {
 		call := ctx.target.Syscalls[id]
 		if call.Attrs.Disabled {
@@ -134,6 +130,7 @@ func (ctx *checkContext) startCheck() {
 			ctx.syscalls <- syscallResult{call, reason}
 		}()
 	}
+	var progs []rpctype.ExecutionRequest
 	dedup := make(map[hash.Sig]int64)
 	for i := 0; i < ctx.pendingRequests; i++ {
 		for _, req := range <-ctx.requests {
@@ -144,10 +141,11 @@ func (ctx *checkContext) startCheck() {
 			}
 			req.ID = int64(len(dedup) + 1)
 			dedup[sig] = req.ID
-			ctx.progs = append(ctx.progs, *req)
+			progs = append(progs, *req)
 		}
 	}
 	ctx.requests = nil
+	return progs
 }
 
 func (ctx *checkContext) finishCheck(fileInfos []host.FileInfo, progs []rpctype.ExecutionResult) (

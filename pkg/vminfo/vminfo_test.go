@@ -44,8 +44,7 @@ func TestHostMachineInfo(t *testing.T) {
 func hostChecker(t *testing.T) (*Checker, []host.FileInfo) {
 	cfg := testConfig(t, runtime.GOOS, runtime.GOARCH)
 	checker := New(cfg)
-	infoFiles, _, _ := checker.RequiredThings()
-	files := host.ReadFiles(infoFiles)
+	files := host.ReadFiles(checker.RequiredFiles())
 	return checker, files
 }
 
