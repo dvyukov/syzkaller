@@ -245,6 +245,11 @@ generate_go: format_cpp
 	$(GO) generate ./pkg/csource ./executor ./pkg/ifuzz ./pkg/build
 	$(GO) generate ./vm/proxyapp
 
+generate_rpc:
+	rm -f pkg/flatrpc/*.go
+	flatc --go pkg/flatrpc/schema.fbs
+	$(GO) install ./pkg/flatrpc
+
 generate_fidl:
 ifeq ($(TARGETOS),fuchsia)
 	$(HOSTGO) generate ./sys/fuchsia
