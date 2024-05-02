@@ -23,7 +23,7 @@ import (
 func TestLinuxSyscalls(t *testing.T) {
 	cfg := testConfig(t, targets.Linux, targets.AMD64)
 	checker := New(cfg)
-	_, _, checkProgs := checker.RequiredThings()
+	_, checkProgs := checker.StartCheck()
 	filesystems := []string{
 		"", "9p", "esdfs", "incremental-fs", "cgroup", "cgroup2",
 		"pvfs2", "nfs", "nfs4", "fuse", "fuseblk", "afs", "pipefs",
@@ -61,7 +61,7 @@ func TestLinuxSyscalls(t *testing.T) {
 		}
 		results = append(results, res)
 	}
-	enabled, disabled, err := checker.Check(files, results)
+	enabled, disabled, err := checker.FinishCheck(files, results)
 	if err != nil {
 		t.Fatal(err)
 	}

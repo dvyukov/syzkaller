@@ -188,16 +188,6 @@ func main() {
 		startProc(fuzzerTool, pid, config, *flagResetAccState)
 	}
 
-	go func() {
-		for _, req := range r.CheckProgs {
-			fuzzerTool.requests <- req
-		}
-	}()
-	for i := 0; i < len(r.CheckProgs); i++ {
-		res := fuzzerTool.convertExecutionResult(<-fuzzerTool.results)
-		checkReq.CheckProgs = append(checkReq.CheckProgs, res)
-	}
-
 	checkReq.Name = *flagName
 	checkReq.Files = host.ReadFiles(r.ReadFiles)
 	checkReq.Globs = make(map[string][]string)

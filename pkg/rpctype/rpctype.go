@@ -81,18 +81,16 @@ type ConnectRes struct {
 	// This is forwarded from CheckArgs, if checking was already done.
 	Features *host.Features
 	// Fuzzer reads these files inside of the VM and returns contents in CheckArgs.Files.
-	ReadFiles  []string
-	ReadGlobs  []string
-	CheckProgs []ExecutionRequest
+	ReadFiles []string
+	ReadGlobs []string
 }
 
 type CheckArgs struct {
-	Name       string
-	Error      string
-	Features   *host.Features
-	Globs      map[string][]string
-	Files      []host.FileInfo
-	CheckProgs []ExecutionResult
+	Name     string
+	Error    string
+	Features *host.Features
+	Globs    map[string][]string
+	Files    []host.FileInfo
 }
 
 type CheckRes struct {

@@ -18,18 +18,22 @@ import (
 
 type linux int
 
-func (linux) requiredFiles() ([]string, []string) {
+func (linux) RequiredFiles() []string {
 	return []string{
-			"/proc/cpuinfo",
-			"/proc/modules",
-			"/sys/module/*/sections/.text",
-			"/sys/module/kvm*/parameters/*",
-		}, []string{
-			"/proc/version",
-			"/proc/filesystems",
-			"/sys/kernel/security/lsm",
-			"/dev/raw-gadget",
-		}
+		"/proc/cpuinfo",
+		"/proc/modules",
+		"/sys/module/*/sections/.text",
+		"/sys/module/kvm*/parameters/*",
+	}
+}
+
+func (linux) checkFiles() []string {
+	return []string{
+		"/proc/version",
+		"/proc/filesystems",
+		"/sys/kernel/security/lsm",
+		"/dev/raw-gadget",
+	}
 }
 
 func (linux) machineInfos() []machineInfoFunc {
