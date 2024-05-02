@@ -109,39 +109,45 @@ func main() {
 		setupPprofHandler(*flagPprofPort)
 	}
 
-	checkArgs := &checkArgs{
-		target:         target,
-		sandbox:        sandbox,
-		ipcConfig:      config,
-		ipcExecOpts:    execOpts,
-		gitRevision:    prog.GitRevision,
-		targetRevision: target.Revision,
-	}
 	if *flagTest {
+		checkArgs := &checkArgs{
+			target:         target,
+			sandbox:        sandbox,
+			ipcConfig:      config,
+			ipcExecOpts:    execOpts,
+			gitRevision:    prog.GitRevision,
+			targetRevision: target.Revision,
+		}
 		testImage(*flagManager, checkArgs)
 		return
 	}
 
-	log.Logf(0, "dialing manager at %v", *flagManager)
-	manager, err := rpctype.NewRPCClient(*flagManager)
-	if err != nil {
-		log.SyzFatalf("failed to create an RPC client: %v ", err)
-	}
-
-	log.Logf(1, "connecting to manager...")
-	a := &rpctype.ConnectArgs{
-		Name:        *flagName,
-		GitRevision: prog.GitRevision,
-		SyzRevision: target.Revision,
-	}
-	a.ExecutorArch, a.ExecutorSyzRevision, a.ExecutorGitRevision, err = executorVersion(executor)
+	executorArch, executorSyzRevision, executorGitRevision, err := executorVersion(executor)
 	if err != nil {
 		log.SyzFatalf("failed to run executor version: %v ", err)
 	}
-	r := &rpctype.ConnectRes{}
-	if err := manager.Call("Manager.Connect", a, r); err != nil {
-		log.SyzFatalf("failed to call Manager.Connect(): %v ", err)
+
+	log.Logf(0, "dialing manager at %v", *flagManager)
+	conn, err := flatrpc.Dial(*flagManager, timeouts.Scale)
+	if err != nil {
+		log.SyzFatalf("failed to connect to host: %v ", err)
 	}
+
+	log.Logf(1, "connecting to manager...")
+	connectReq := &flatrpc.ConnectRequestT{
+		Name:        *flagName,
+		Arch:        executorArch,
+		GitRevision: executorGitRevision,
+		SyzRevision: executorSyzRevision,
+	}
+	if err := flatrpc.Send(conn, connectReq); err != nil {
+		log.SyzFatal(err)
+	}
+	connectReplyRaw, err := flatrpc.Recv[flatrpc.ConnectReply](conn)
+	if err != nil {
+		log.SyzFatal(err)
+	}
+	connectReply := connectReplyRaw.UnPack()
 	checkReq := &rpctype.CheckArgs{
 		Name:  *flagName,
 		Files: host.ReadFiles(r.ReadFiles),
@@ -152,6 +158,9 @@ func main() {
 		log.SyzFatalf("failed to setup features: %v ", err)
 	}
 	checkReq.Features = features
+
+	infoReq := &flatrpc.InfoRequest{
+	}
 	for _, glob := range r.ReadGlobs {
 		files, err := filepath.Glob(filepath.FromSlash(glob))
 		if err != nil && checkReq.Error == "" {
