@@ -3,6 +3,9 @@
 
 // +build
 
+// Currently this is unused (included only to test building).
+#include "flatrpc.h"
+
 #include <algorithm>
 #include <errno.h>
 #include <limits.h>
