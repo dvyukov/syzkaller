@@ -19,10 +19,12 @@ import (
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/rpctype"
+	//"github.com/google/flatbuffers"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/tool"
 	"github.com/google/syzkaller/prog"
@@ -79,7 +81,6 @@ func main() {
 		flagProcs          = flag.Int("procs", 1, "number of parallel test processes")
 		flagTest           = flag.Bool("test", false, "enable image testing mode") // used by syz-ci
 		flagPprofPort      = flag.Int("pprof_port", 0, "HTTP port for the pprof endpoint (disabled if 0)")
-		flagNetCompression = flag.Bool("net_compression", false, "use network compression for RPC calls")
 
 		// Experimental flags.
 		flagResetAccState = flag.Bool("reset_acc_state", false, "restarts executor before most executions")
@@ -112,6 +113,19 @@ func main() {
 		setupPprofHandler(*flagPprofPort)
 	}
 
+	executorArch, executorSyzRevision, executorGitRevision, err := executorVersion(executor)
+	if err != nil {
+		log.SyzFatalf("failed to run executor version: %v ", err)
+	}
+	if executorSyzRevision != target.Revision {
+		log.SyzFatalf("mismatching executor/fuzzer descriptions revisions: %v vs %v",
+			executorSyzRevision, target.Revision)
+	}
+	if executorGitRevision != prog.GitRevision {
+		log.SyzFatalf("mismatching executor/fuzzer git revisions: %v vs %v",
+			executorGitRevision, prog.GitRevision)
+	}
+
 	checkArgs := &checkArgs{
 		target:         target,
 		sandbox:        sandbox,
@@ -126,25 +140,34 @@ func main() {
 	}
 
 	log.Logf(0, "dialing manager at %v", *flagManager)
-	manager, err := rpctype.NewRPCClient(*flagManager, timeouts.Scale, false, *flagNetCompression)
+	conn, err := flatrpc.Dial(*flagManager, timeouts.Scale)
 	if err != nil {
-		log.SyzFatalf("failed to create an RPC client: %v ", err)
+		log.SyzFatalf("failed to connect to host: %v ", err)
 	}
 
 	log.Logf(1, "connecting to manager...")
-	a := &rpctype.ConnectArgs{
+	connectReq := &flatrpc.ConnectRequestT{
 		Name:        *flagName,
-		GitRevision: prog.GitRevision,
-		SyzRevision: target.Revision,
+		Arch: 		executorArch,
+		GitRevision: executorGitRevision,
+		SyzRevision: executorSyzRevision,
 	}
-	a.ExecutorArch, a.ExecutorSyzRevision, a.ExecutorGitRevision, err = executorVersion(executor)
-	if err != nil {
-		log.SyzFatalf("failed to run executor version: %v ", err)
+	if err := flatrpc.Send(conn, connectReq); err != nil {
+		log.SyzFatal(err)
 	}
-	r := &rpctype.ConnectRes{}
-	if err := manager.Call("Manager.Connect", a, r); err != nil {
-		log.SyzFatalf("failed to call Manager.Connect(): %v ", err)
-	}
+
+	connectReply, err := flatrpc.Recv[flatrpc.ConnectReply](conn)
+	_ = connectReply
+	_ = err
+
+
+       manager, err := rpctype.NewRPCClient(*flagManager, timeouts.Scale, false, false)
+        if err != nil {
+               log.SyzFatalf("failed to create an RPC client: %v ", err)
+        }
+
+	
+	
 	featureFlags, err := csource.ParseFeaturesFlags("none", "none", true)
 	if err != nil {
 		log.SyzFatalf("%v", err)

@@ -498,7 +498,6 @@ func FuzzerCmd(args *FuzzerCmdArgs) string {
 			{Name: "sandbox_arg", Value: fmt.Sprint(args.Optional.SandboxArg)},
 			{Name: "pprof_port", Value: fmt.Sprint(args.Optional.PprofPort)},
 			{Name: "reset_acc_state", Value: fmt.Sprint(args.Optional.ResetAccState)},
-			{Name: "net_compression", Value: fmt.Sprint(args.Optional.NetCompression)},
 		}
 		optionalArg = " " + tool.OptionalFlags(flags)
 	}

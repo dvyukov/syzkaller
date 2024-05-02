@@ -70,6 +70,7 @@ type RPCClient struct {
 }
 
 func Dial(addr string, timeScale time.Duration) (net.Conn, error) {
+	// TODO: remove timeScale and stdin support.
 	if timeScale <= 0 {
 		return nil, fmt.Errorf("bad rpc time scale %v", timeScale)
 	}
