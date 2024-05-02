@@ -111,7 +111,7 @@ func (v HostMessages) String() string {
 }
 
 type HostMessagesT struct {
-	Type HostMessages
+	Type  HostMessages
 	Value interface{}
 }
 
@@ -132,10 +132,10 @@ func (rcv HostMessages) UnPack(table flatbuffers.Table) *HostMessagesT {
 	switch rcv {
 	case HostMessagesExecRequest:
 		x := ExecRequest{_tab: table}
-		return &HostMessagesT{ Type: HostMessagesExecRequest, Value: x.UnPack() }
+		return &HostMessagesT{Type: HostMessagesExecRequest, Value: x.UnPack()}
 	case HostMessagesSignalUpdate:
 		x := SignalUpdate{_tab: table}
-		return &HostMessagesT{ Type: HostMessagesSignalUpdate, Value: x.UnPack() }
+		return &HostMessagesT{Type: HostMessagesSignalUpdate, Value: x.UnPack()}
 	}
 	return nil
 }
@@ -171,7 +171,7 @@ func (v ExecutorMessages) String() string {
 }
 
 type ExecutorMessagesT struct {
-	Type ExecutorMessages
+	Type  ExecutorMessages
 	Value interface{}
 }
 
@@ -194,13 +194,13 @@ func (rcv ExecutorMessages) UnPack(table flatbuffers.Table) *ExecutorMessagesT {
 	switch rcv {
 	case ExecutorMessagesExecResult:
 		x := ExecResult{_tab: table}
-		return &ExecutorMessagesT{ Type: ExecutorMessagesExecResult, Value: x.UnPack() }
+		return &ExecutorMessagesT{Type: ExecutorMessagesExecResult, Value: x.UnPack()}
 	case ExecutorMessagesExecuting:
 		x := ExecutingMessage{_tab: table}
-		return &ExecutorMessagesT{ Type: ExecutorMessagesExecuting, Value: x.UnPack() }
+		return &ExecutorMessagesT{Type: ExecutorMessagesExecuting, Value: x.UnPack()}
 	case ExecutorMessagesStats:
 		x := StatsMessage{_tab: table}
-		return &ExecutorMessagesT{ Type: ExecutorMessagesStats, Value: x.UnPack() }
+		return &ExecutorMessagesT{Type: ExecutorMessagesStats, Value: x.UnPack()}
 	}
 	return nil
 }
@@ -371,14 +371,16 @@ func (v CallFlag) String() string {
 }
 
 type ConnectRequestT struct {
-	Name string `json:"name"`
-	Arch string `json:"arch"`
+	Name        string `json:"name"`
+	Arch        string `json:"arch"`
 	GitRevision string `json:"git_revision"`
 	SyzRevision string `json:"syz_revision"`
 }
 
 func (t *ConnectRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	nameOffset := builder.CreateString(t.Name)
 	archOffset := builder.CreateString(t.Arch)
 	gitRevisionOffset := builder.CreateString(t.GitRevision)
@@ -399,7 +401,9 @@ func (rcv *ConnectRequest) UnPackTo(t *ConnectRequestT) {
 }
 
 func (rcv *ConnectRequest) UnPack() *ConnectRequestT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ConnectRequestT{}
 	rcv.UnPackTo(t)
 	return t
@@ -482,16 +486,19 @@ func ConnectRequestAddSyzRevision(builder *flatbuffers.Builder, syzRevision flat
 func ConnectRequestEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ConnectReplyT struct {
 	LeakFrames []string `json:"leak_frames"`
 	RaceFrames []string `json:"race_frames"`
-	Features Feature `json:"features"`
-	Files []string `json:"files"`
-	Globs []string `json:"globs"`
+	Features   Feature  `json:"features"`
+	Files      []string `json:"files"`
+	Globs      []string `json:"globs"`
 }
 
 func (t *ConnectReplyT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	leakFramesOffset := flatbuffers.UOffsetT(0)
 	if t.LeakFrames != nil {
 		leakFramesLength := len(t.LeakFrames)
@@ -578,7 +585,9 @@ func (rcv *ConnectReply) UnPackTo(t *ConnectReplyT) {
 }
 
 func (rcv *ConnectReply) UnPack() *ConnectReplyT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ConnectReplyT{}
 	rcv.UnPackTo(t)
 	return t
@@ -724,15 +733,18 @@ func ConnectReplyStartGlobsVector(builder *flatbuffers.Builder, numElems int) fl
 func ConnectReplyEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type InfoRequestT struct {
-	Error string `json:"error"`
-	Features Feature `json:"features"`
-	Globs []*GlobInfoT `json:"globs"`
-	Files []*FileInfoT `json:"files"`
+	Error    string       `json:"error"`
+	Features Feature      `json:"features"`
+	Globs    []*GlobInfoT `json:"globs"`
+	Files    []*FileInfoT `json:"files"`
 }
 
 func (t *InfoRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	errorOffset := builder.CreateString(t.Error)
 	globsOffset := flatbuffers.UOffsetT(0)
 	if t.Globs != nil {
@@ -788,7 +800,9 @@ func (rcv *InfoRequest) UnPackTo(t *InfoRequestT) {
 }
 
 func (rcv *InfoRequest) UnPack() *InfoRequestT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &InfoRequestT{}
 	rcv.UnPackTo(t)
 	return t
@@ -905,12 +919,15 @@ func InfoRequestStartFilesVector(builder *flatbuffers.Builder, numElems int) fla
 func InfoRequestEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type InfoReplyT struct {
 	CoverFilter []uint32 `json:"cover_filter"`
 }
 
 func (t *InfoReplyT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	coverFilterOffset := flatbuffers.UOffsetT(0)
 	if t.CoverFilter != nil {
 		coverFilterLength := len(t.CoverFilter)
@@ -934,7 +951,9 @@ func (rcv *InfoReply) UnPackTo(t *InfoReplyT) {
 }
 
 func (rcv *InfoReply) UnPack() *InfoReplyT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &InfoReplyT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1005,15 +1024,18 @@ func InfoReplyStartCoverFilterVector(builder *flatbuffers.Builder, numElems int)
 func InfoReplyEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type FileInfoT struct {
-	Name string `json:"name"`
-	Exists bool `json:"exists"`
-	Error string `json:"error"`
-	Data []int8 `json:"data"`
+	Name   string `json:"name"`
+	Exists bool   `json:"exists"`
+	Error  string `json:"error"`
+	Data   []int8 `json:"data"`
 }
 
 func (t *FileInfoT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	nameOffset := builder.CreateString(t.Name)
 	errorOffset := builder.CreateString(t.Error)
 	dataOffset := flatbuffers.UOffsetT(0)
@@ -1045,7 +1067,9 @@ func (rcv *FileInfo) UnPackTo(t *FileInfoT) {
 }
 
 func (rcv *FileInfo) UnPack() *FileInfoT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &FileInfoT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1153,13 +1177,16 @@ func FileInfoStartDataVector(builder *flatbuffers.Builder, numElems int) flatbuf
 func FileInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type GlobInfoT struct {
-	Name string `json:"name"`
+	Name  string   `json:"name"`
 	Files []string `json:"files"`
 }
 
 func (t *GlobInfoT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	nameOffset := builder.CreateString(t.Name)
 	filesOffset := flatbuffers.UOffsetT(0)
 	if t.Files != nil {
@@ -1190,7 +1217,9 @@ func (rcv *GlobInfo) UnPackTo(t *GlobInfoT) {
 }
 
 func (rcv *GlobInfo) UnPack() *GlobInfoT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &GlobInfoT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1263,14 +1292,17 @@ func GlobInfoStartFilesVector(builder *flatbuffers.Builder, numElems int) flatbu
 func GlobInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type HostMessageT struct {
 	Msg *HostMessagesT `json:"msg"`
 }
 
 func (t *HostMessageT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	msgOffset := t.Msg.Pack(builder)
-	
+
 	HostMessageStart(builder)
 	if t.Msg != nil {
 		HostMessageAddMsgType(builder, t.Msg.Type)
@@ -1287,7 +1319,9 @@ func (rcv *HostMessage) UnPackTo(t *HostMessageT) {
 }
 
 func (rcv *HostMessage) UnPack() *HostMessageT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &HostMessageT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1353,14 +1387,17 @@ func HostMessageAddMsg(builder *flatbuffers.Builder, msg flatbuffers.UOffsetT) {
 func HostMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ExecutorMessageT struct {
 	Msg *ExecutorMessagesT `json:"msg"`
 }
 
 func (t *ExecutorMessageT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	msgOffset := t.Msg.Pack(builder)
-	
+
 	ExecutorMessageStart(builder)
 	if t.Msg != nil {
 		ExecutorMessageAddMsgType(builder, t.Msg.Type)
@@ -1377,7 +1414,9 @@ func (rcv *ExecutorMessage) UnPackTo(t *ExecutorMessageT) {
 }
 
 func (rcv *ExecutorMessage) UnPack() *ExecutorMessageT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ExecutorMessageT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1443,20 +1482,23 @@ func ExecutorMessageAddMsg(builder *flatbuffers.Builder, msg flatbuffers.UOffset
 func ExecutorMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ExecRequestT struct {
-	Id int64 `json:"id"`
-	ProgData []int8 `json:"prog_data"`
-	Flags RequestFlag `json:"flags"`
-	ExecEnv ExecEnv `json:"exec_env"`
-	ExecFlags ExecFlag `json:"exec_flags"`
-	SandboxArg int64 `json:"sandbox_arg"`
-	SignalFilter []uint32 `json:"signal_filter"`
-	SignalFilterCall int32 `json:"signal_filter_call"`
-	Repeat int32 `json:"repeat"`
+	Id               int64       `json:"id"`
+	ProgData         []int8      `json:"prog_data"`
+	Flags            RequestFlag `json:"flags"`
+	ExecEnv          ExecEnv     `json:"exec_env"`
+	ExecFlags        ExecFlag    `json:"exec_flags"`
+	SandboxArg       int64       `json:"sandbox_arg"`
+	SignalFilter     []uint32    `json:"signal_filter"`
+	SignalFilterCall int32       `json:"signal_filter_call"`
+	Repeat           int32       `json:"repeat"`
 }
 
 func (t *ExecRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	progDataOffset := flatbuffers.UOffsetT(0)
 	if t.ProgData != nil {
 		progDataLength := len(t.ProgData)
@@ -1509,7 +1551,9 @@ func (rcv *ExecRequest) UnPackTo(t *ExecRequestT) {
 }
 
 func (rcv *ExecRequest) UnPack() *ExecRequestT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ExecRequestT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1717,13 +1761,16 @@ func ExecRequestAddRepeat(builder *flatbuffers.Builder, repeat int32) {
 func ExecRequestEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type SignalUpdateT struct {
-	NewMax []uint32 `json:"new_max"`
+	NewMax  []uint32 `json:"new_max"`
 	DropMax []uint32 `json:"drop_max"`
 }
 
 func (t *SignalUpdateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	newMaxOffset := flatbuffers.UOffsetT(0)
 	if t.NewMax != nil {
 		newMaxLength := len(t.NewMax)
@@ -1762,7 +1809,9 @@ func (rcv *SignalUpdate) UnPackTo(t *SignalUpdateT) {
 }
 
 func (rcv *SignalUpdate) UnPack() *SignalUpdateT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &SignalUpdateT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1865,14 +1914,17 @@ func SignalUpdateStartDropMaxVector(builder *flatbuffers.Builder, numElems int) 
 func SignalUpdateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ExecutingMessageT struct {
-	Id int64 `json:"id"`
+	Id     int64 `json:"id"`
 	ProcId int32 `json:"proc_id"`
-	Try int32 `json:"try"`
+	Try    int32 `json:"try"`
 }
 
 func (t *ExecutingMessageT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	ExecutingMessageStart(builder)
 	ExecutingMessageAddId(builder, t.Id)
 	ExecutingMessageAddProcId(builder, t.ProcId)
@@ -1887,7 +1939,9 @@ func (rcv *ExecutingMessage) UnPackTo(t *ExecutingMessageT) {
 }
 
 func (rcv *ExecutingMessage) UnPack() *ExecutingMessageT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ExecutingMessageT{}
 	rcv.UnPackTo(t)
 	return t
@@ -1971,13 +2025,16 @@ func ExecutingMessageAddTry(builder *flatbuffers.Builder, try int32) {
 func ExecutingMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type StatsMessageT struct {
-	NoexecCount int64 `json:"noexec_count"`
+	NoexecCount    int64 `json:"noexec_count"`
 	NoexecDuration int64 `json:"noexec_duration"`
 }
 
 func (t *StatsMessageT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	StatsMessageStart(builder)
 	StatsMessageAddNoexecCount(builder, t.NoexecCount)
 	StatsMessageAddNoexecDuration(builder, t.NoexecDuration)
@@ -1990,7 +2047,9 @@ func (rcv *StatsMessage) UnPackTo(t *StatsMessageT) {
 }
 
 func (rcv *StatsMessage) UnPack() *StatsMessageT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &StatsMessageT{}
 	rcv.UnPackTo(t)
 	return t
@@ -2059,16 +2118,19 @@ func StatsMessageAddNoexecDuration(builder *flatbuffers.Builder, noexecDuration 
 func StatsMessageEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type CallInfoT struct {
-	Flags CallFlag `json:"flags"`
-	Errno int32 `json:"errno"`
-	Signal []uint32 `json:"signal"`
-	Cover []uint32 `json:"cover"`
-	Comps []*ComparisonT `json:"comps"`
+	Flags  CallFlag       `json:"flags"`
+	Errno  int32          `json:"errno"`
+	Signal []uint32       `json:"signal"`
+	Cover  []uint32       `json:"cover"`
+	Comps  []*ComparisonT `json:"comps"`
 }
 
 func (t *CallInfoT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	signalOffset := flatbuffers.UOffsetT(0)
 	if t.Signal != nil {
 		signalLength := len(t.Signal)
@@ -2128,7 +2190,9 @@ func (rcv *CallInfo) UnPackTo(t *CallInfoT) {
 }
 
 func (rcv *CallInfo) UnPack() *CallInfoT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &CallInfoT{}
 	rcv.UnPackTo(t)
 	return t
@@ -2286,13 +2350,16 @@ func CallInfoStartCompsVector(builder *flatbuffers.Builder, numElems int) flatbu
 func CallInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ComparisonT struct {
 	Op1 uint64 `json:"op1"`
 	Op2 uint64 `json:"op2"`
 }
 
 func (t *ComparisonT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	return CreateComparison(builder, t.Op1, t.Op2)
 }
 func (rcv *Comparison) UnPackTo(t *ComparisonT) {
@@ -2301,7 +2368,9 @@ func (rcv *Comparison) UnPackTo(t *ComparisonT) {
 }
 
 func (rcv *Comparison) UnPack() *ComparisonT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ComparisonT{}
 	rcv.UnPackTo(t)
 	return t
@@ -2340,15 +2409,18 @@ func CreateComparison(builder *flatbuffers.Builder, op1 uint64, op2 uint64) flat
 	builder.PrependUint64(op1)
 	return builder.Offset()
 }
+
 type ProgInfoT struct {
-	Calls []*CallInfoT `json:"calls"`
-	Extra *CallInfoT `json:"extra"`
-	Elapsed uint64 `json:"elapsed"`
-	Freshness uint64 `json:"freshness"`
+	Calls     []*CallInfoT `json:"calls"`
+	Extra     *CallInfoT   `json:"extra"`
+	Elapsed   uint64       `json:"elapsed"`
+	Freshness uint64       `json:"freshness"`
 }
 
 func (t *ProgInfoT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	callsOffset := flatbuffers.UOffsetT(0)
 	if t.Calls != nil {
 		callsLength := len(t.Calls)
@@ -2385,7 +2457,9 @@ func (rcv *ProgInfo) UnPackTo(t *ProgInfoT) {
 }
 
 func (rcv *ProgInfo) UnPack() *ProgInfoT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ProgInfoT{}
 	rcv.UnPackTo(t)
 	return t
@@ -2496,15 +2570,18 @@ func ProgInfoAddFreshness(builder *flatbuffers.Builder, freshness uint64) {
 func ProgInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
+
 type ExecResultT struct {
 	Executing *ExecutingMessageT `json:"executing"`
-	Output []int8 `json:"output"`
-	Error string `json:"error"`
-	Info *ProgInfoT `json:"info"`
+	Output    []int8             `json:"output"`
+	Error     string             `json:"error"`
+	Info      *ProgInfoT         `json:"info"`
 }
 
 func (t *ExecResultT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
-	if t == nil { return 0 }
+	if t == nil {
+		return 0
+	}
 	executingOffset := t.Executing.Pack(builder)
 	outputOffset := flatbuffers.UOffsetT(0)
 	if t.Output != nil {
@@ -2537,7 +2614,9 @@ func (rcv *ExecResult) UnPackTo(t *ExecResultT) {
 }
 
 func (rcv *ExecResult) UnPack() *ExecResultT {
-	if rcv == nil { return nil }
+	if rcv == nil {
+		return nil
+	}
 	t := &ExecResultT{}
 	rcv.UnPackTo(t)
 	return t
