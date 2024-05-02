@@ -23,7 +23,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends
 	apt-get clean autoclean && \
 	rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
 
-RUN curl https://dl.google.com/go/go1.21.4.linux-amd64.tar.gz | tar -C /usr/local -xz
+RUN curl https://dl.google.com/go/go1.22.2.linux-amd64.tar.gz | tar -C /usr/local -xz
 ENV PATH /usr/local/go/bin:/gopath/bin:$PATH
 ENV GOPATH /gopath
 
@@ -40,11 +40,12 @@ RUN curl https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
 RUN add-apt-repository "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-15 main"
 RUN apt-get update --allow-releaseinfo-change
 RUN apt-get install -y -q --no-install-recommends clang-15 clang-format-15 clang-tidy-15
-RUN apt autoremove -y -q
+RUN apt-get install -y -q --no-install-recommends flatbuffers-compiler libflatbuffers-dev
 RUN sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-15 100
 RUN sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-15 100
 RUN sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-15 100
 RUN sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-15 100
+RUN apt autoremove -y -q
 
 # Install OS toolchains from pre-built archives.
 # These archives were created with:
