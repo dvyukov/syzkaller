@@ -45,7 +45,7 @@ table ConnectReply {
 
 table InfoRequest {
 	error			:string;
-	features		:Feature;
+	features		:[FeatureInfo];
 	globs			:[GlobInfo];
 	files			:[FileInfo];
 }
@@ -64,6 +64,12 @@ table FileInfo {
 table GlobInfo {
 	name			:string;
 	files			:[string];
+}
+
+table FeatureInfo {
+	id			:Feature;
+	need_setup		:bool;
+	reason			:string;
 }
 
 // Messages sent from the host to the executor.

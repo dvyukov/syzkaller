@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/csource"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/prog"
@@ -97,39 +98,61 @@ func Check(target *prog.Target) (*Features, error) {
 	return res, nil
 }
 
-// Setup enables and does any one-time setup for the requested features on the host.
+// SetupFeatures enables and does any one-time setup for the requested features on the host.
 // Note: this can be called multiple times and must be idempotent.
-func Setup(target *prog.Target, features *Features, featureFlags csource.Features, executor string) error {
+func SetupFeatures(target *prog.Target, executor string, mask flatrpc.Feature, flags csource.Features) (
+	[]flatrpc.FeatureInfoT, flatrpc.Feature, error) {
 	if noHostChecks(target) {
-		return nil
+		return nil, 0, nil
 	}
+	var results []flatrpc.FeatureInfoT
+	resultC := make(chan flatrpc.FeatureInfoT)
+	for feat := range flatrpc.EnumNamesFeature {
+		feat := feat
+		if mask&feat == 0 {
+			continue
+		}
+		if feat == flatrpc.FeatureBinFmtMisc && flags != nil && !flags["binfmt_misc"].Enabled {
+			continue
+		}
+		if feat == flatrpc.FeatureLRWPANEmulation && flags != nil && !flags["ieee802154"].Enabled {
+			continue
+		}
+		results = append(results, flatrpc.FeatureInfoT{})
+		go setupFeature(executor, feat, resultC)
+	}
+	// Feature 0 setups common things that are not part of any feature.
+	setupFeature(executor, 0, nil)
+	var enabled flatrpc.Feature
+	for i := range results {
+		res := <-resultC
+		results[i] = res
+		if res.Reason == "" {
+			enabled |= res.Id
+		}
+	}
+	return results, enabled, nil
+}
+
+func setupFeature(executor string, feat flatrpc.Feature, resultC chan flatrpc.FeatureInfoT) {
 	args := strings.Split(executor, " ")
 	executor = args[0]
-	args = append(args[1:], "setup")
-	if features[FeatureLeak].Enabled {
-		args = append(args, "leak")
-	}
-	if features[FeatureFault].Enabled {
-		args = append(args, "fault")
-	}
-	if target.OS == targets.Linux && featureFlags["binfmt_misc"].Enabled {
-		args = append(args, "binfmt_misc")
-	}
-	if features[FeatureKCSAN].Enabled {
-		args = append(args, "kcsan")
-	}
-	if features[FeatureUSBEmulation].Enabled {
-		args = append(args, "usb")
-	}
-	if featureFlags["ieee802154"].Enabled && features[Feature802154Emulation].Enabled {
-		args = append(args, "802154")
-	}
-	if features[FeatureSwap].Enabled {
-		args = append(args, "swap")
-	}
-	output, err := osutil.RunCmd(5*time.Minute, "", executor, args...)
+	args = append(args[1:], "setup", fmt.Sprint(feat))
+	output, err := osutil.RunCmd(3*time.Minute, "", executor, args...)
 	log.Logf(1, "executor %v\n%s", args, output)
-	return err
+	outputStr := string(output)
+	if err == nil {
+		outputStr = ""
+	} else if outputStr == "" {
+		outputStr = err.Error()
+	}
+	if resultC != nil {
+		resultC <- flatrpc.FeatureInfoT{
+			Id:        feat,
+			NeedSetup: !strings.Contains(outputStr, "TODO"),
+			Reason:    outputStr,
+		}
+	}
 }
 
 func featureCheckers(target *prog.Target) [numFeatures]func() string {

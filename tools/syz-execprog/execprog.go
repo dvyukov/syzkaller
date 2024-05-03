@@ -19,6 +19,7 @@ import (
 	"github.com/google/syzkaller/pkg/cover/backend"
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/db"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
@@ -80,24 +81,12 @@ func main() {
 	if len(progs) == 0 {
 		return
 	}
-	features, err := host.Check(target)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	if *flagOutput {
-		for _, feat := range features.Supported() {
-			log.Logf(0, "%-24v: %v", feat.Name, feat.Reason)
-		}
-	}
 	if *flagCollide {
 		log.Logf(0, "note: setting -collide to true is deprecated now and has no effect")
 	}
-	config, execOpts := createConfig(target, features, featuresFlags)
-	if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
-		log.Fatal(err)
-	}
+	config, execOpts, features := createConfig(target, featuresFlags)
 	var gateCallback func()
-	if features[host.FeatureLeak].Enabled {
+	if features&flatrpc.FeatureLeak != 0 {
 		gateCallback = func() {
 			output, err := osutil.RunCmd(10*time.Minute, "", config.Executor, "leak")
 			if err != nil {
@@ -355,8 +344,8 @@ func loadPrograms(target *prog.Target, files []string) []*prog.Prog {
 	return progs
 }
 
-func createConfig(target *prog.Target, features *host.Features, featuresFlags csource.Features) (
-	*ipc.Config, *ipc.ExecOpts) {
+func createConfig(target *prog.Target, featuresFlags csource.Features) (
+	*ipc.Config, *ipc.ExecOpts, flatrpc.Feature) {
 	config, execOpts, err := ipcconfig.Default(target)
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -375,6 +364,16 @@ func createConfig(target *prog.Target, features *host.Features, featuresFlags cs
 		}
 		execOpts.ExecFlags |= ipc.FlagCollectComps
 	}
+	featuresInfo, features, err := host.SetupFeatures(target, config.Executor, ^flatrpc.Feature(0), featuresFlags)
+	if err != nil {
+		log.Fatal(err)
+	}
+	//!!! run additional host checks
+	if *flagOutput {
+		for _, feat := range featuresInfo {
+			log.Logf(0, "%-24v: %v", flatrpc.EnumNamesFeature[feat.Id], feat.Reason)
+		}
+	}
 	execOpts.EnvFlags |= ipc.FeaturesToFlags(features, featuresFlags)
-	return config, execOpts
+	return config, execOpts, features
 }

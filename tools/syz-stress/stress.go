@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/db"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/ipc/ipcconfig"
@@ -70,10 +71,15 @@ func main() {
 		log.Fatalf("nothing to mutate (-generate=false and no corpus)")
 	}
 
-	features, err := host.Check(target)
+	config, execOpts, err := ipcconfig.Default(target)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, features, err := host.SetupFeatures(target, config.Executor, ^flatrpc.Feature(0), featuresFlags)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+	execOpts.EnvFlags |= ipc.FeaturesToFlags(features, featuresFlags)
 
 	var syscalls []string
 	if *flagSyscalls != "" {
@@ -82,13 +88,6 @@ func main() {
 	calls := buildCallList(target, syscalls)
 	ct := target.BuildChoiceTable(corpus, calls)
 
-	config, execOpts, err := createIPCConfig(target, features, featuresFlags)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
-		log.Fatal(err)
-	}
 	gate = ipc.NewGate(2**flagProcs, nil)
 	for pid := 0; pid < *flagProcs; pid++ {
 		pid := pid
@@ -144,36 +143,22 @@ func execute(pid int, env *ipc.Env, execOpts *ipc.ExecOpts, p *prog.Prog) {
 	}
 }
 
-func createIPCConfig(target *prog.Target, features *host.Features, featuresFlags csource.Features) (
-	*ipc.Config, *ipc.ExecOpts, error) {
-	config, execOpts, err := ipcconfig.Default(target)
-	if err != nil {
-		return nil, nil, err
-	}
-	execOpts.EnvFlags |= ipc.FeaturesToFlags(features, featuresFlags)
-	return config, execOpts, nil
-}
-
 func buildCallList(target *prog.Target, enabled []string) map[*prog.Syscall]bool {
-	enabledSyscalls := make(map[*prog.Syscall]bool)
+	calls := make(map[*prog.Syscall]bool)
 	if len(enabled) != 0 {
 		syscallsIDs, err := mgrconfig.ParseEnabledSyscalls(target, enabled, nil)
 		if err != nil {
 			log.Fatalf("failed to parse enabled syscalls: %v", err)
 		}
 		for _, id := range syscallsIDs {
-			enabledSyscalls[target.Syscalls[id]] = true
+			calls[target.Syscalls[id]] = true
+		}
+	} else {
+		for _, call := range target.Syscalls {
+			calls[call] = true
 		}
 	}
-
-	calls, disabled, err := host.DetectSupportedSyscalls(target, "none", enabledSyscalls)
-	if err != nil {
-		log.Fatalf("failed to detect host supported syscalls: %v", err)
-	}
-
-	for c, reason := range disabled {
-		log.Logf(0, "unsupported syscall: %v: %v", c.Name, reason)
-	}
+	var disabled map[*prog.Syscall]string
 	calls, disabled = target.TransitivelyEnabledCalls(calls)
 	for c, reason := range disabled {
 		log.Logf(0, "transitively unsupported: %v: %v", c.Name, reason)

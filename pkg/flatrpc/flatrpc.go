@@ -738,10 +738,10 @@ func ConnectReplyEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 }
 
 type InfoRequestT struct {
-	Error    string       `json:"error"`
-	Features Feature      `json:"features"`
-	Globs    []*GlobInfoT `json:"globs"`
-	Files    []*FileInfoT `json:"files"`
+	Error    string          `json:"error"`
+	Features []*FeatureInfoT `json:"features"`
+	Globs    []*GlobInfoT    `json:"globs"`
+	Files    []*FileInfoT    `json:"files"`
 }
 
 func (t *InfoRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -749,6 +749,19 @@ func (t *InfoRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return 0
 	}
 	errorOffset := builder.CreateString(t.Error)
+	featuresOffset := flatbuffers.UOffsetT(0)
+	if t.Features != nil {
+		featuresLength := len(t.Features)
+		featuresOffsets := make([]flatbuffers.UOffsetT, featuresLength)
+		for j := 0; j < featuresLength; j++ {
+			featuresOffsets[j] = t.Features[j].Pack(builder)
+		}
+		InfoRequestStartFeaturesVector(builder, featuresLength)
+		for j := featuresLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(featuresOffsets[j])
+		}
+		featuresOffset = builder.EndVector(featuresLength)
+	}
 	globsOffset := flatbuffers.UOffsetT(0)
 	if t.Globs != nil {
 		globsLength := len(t.Globs)
@@ -777,7 +790,7 @@ func (t *InfoRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	}
 	InfoRequestStart(builder)
 	InfoRequestAddError(builder, errorOffset)
-	InfoRequestAddFeatures(builder, t.Features)
+	InfoRequestAddFeatures(builder, featuresOffset)
 	InfoRequestAddGlobs(builder, globsOffset)
 	InfoRequestAddFiles(builder, filesOffset)
 	return InfoRequestEnd(builder)
@@ -785,7 +798,13 @@ func (t *InfoRequestT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 
 func (rcv *InfoRequest) UnPackTo(t *InfoRequestT) {
 	t.Error = string(rcv.Error())
-	t.Features = rcv.Features()
+	featuresLength := rcv.FeaturesLength()
+	t.Features = make([]*FeatureInfoT, featuresLength)
+	for j := 0; j < featuresLength; j++ {
+		x := FeatureInfo{}
+		rcv.Features(&x, j)
+		t.Features[j] = x.UnPack()
+	}
 	globsLength := rcv.GlobsLength()
 	t.Globs = make([]*GlobInfoT, globsLength)
 	for j := 0; j < globsLength; j++ {
@@ -846,16 +865,24 @@ func (rcv *InfoRequest) Error() []byte {
 	return nil
 }
 
-func (rcv *InfoRequest) Features() Feature {
+func (rcv *InfoRequest) Features(obj *FeatureInfo, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return Feature(rcv._tab.GetUint64(o + rcv._tab.Pos))
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
 	}
-	return 0
+	return false
 }
 
-func (rcv *InfoRequest) MutateFeatures(n Feature) bool {
-	return rcv._tab.MutateUint64Slot(6, uint64(n))
+func (rcv *InfoRequest) FeaturesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
 }
 
 func (rcv *InfoRequest) Globs(obj *GlobInfo, j int) bool {
@@ -904,8 +931,11 @@ func InfoRequestStart(builder *flatbuffers.Builder) {
 func InfoRequestAddError(builder *flatbuffers.Builder, error flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(error), 0)
 }
-func InfoRequestAddFeatures(builder *flatbuffers.Builder, features Feature) {
-	builder.PrependUint64Slot(1, uint64(features), 0)
+func InfoRequestAddFeatures(builder *flatbuffers.Builder, features flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(features), 0)
+}
+func InfoRequestStartFeaturesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func InfoRequestAddGlobs(builder *flatbuffers.Builder, globs flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(globs), 0)
@@ -1292,6 +1322,114 @@ func GlobInfoStartFilesVector(builder *flatbuffers.Builder, numElems int) flatbu
 	return builder.StartVector(4, numElems, 4)
 }
 func GlobInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	return builder.EndObject()
+}
+
+type FeatureInfoT struct {
+	Id        Feature `json:"id"`
+	NeedSetup bool    `json:"need_setup"`
+	Reason    string  `json:"reason"`
+}
+
+func (t *FeatureInfoT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
+	if t == nil {
+		return 0
+	}
+	reasonOffset := builder.CreateString(t.Reason)
+	FeatureInfoStart(builder)
+	FeatureInfoAddId(builder, t.Id)
+	FeatureInfoAddNeedSetup(builder, t.NeedSetup)
+	FeatureInfoAddReason(builder, reasonOffset)
+	return FeatureInfoEnd(builder)
+}
+
+func (rcv *FeatureInfo) UnPackTo(t *FeatureInfoT) {
+	t.Id = rcv.Id()
+	t.NeedSetup = rcv.NeedSetup()
+	t.Reason = string(rcv.Reason())
+}
+
+func (rcv *FeatureInfo) UnPack() *FeatureInfoT {
+	if rcv == nil {
+		return nil
+	}
+	t := &FeatureInfoT{}
+	rcv.UnPackTo(t)
+	return t
+}
+
+type FeatureInfo struct {
+	_tab flatbuffers.Table
+}
+
+func GetRootAsFeatureInfo(buf []byte, offset flatbuffers.UOffsetT) *FeatureInfo {
+	n := flatbuffers.GetUOffsetT(buf[offset:])
+	x := &FeatureInfo{}
+	x.Init(buf, n+offset)
+	return x
+}
+
+func GetSizePrefixedRootAsFeatureInfo(buf []byte, offset flatbuffers.UOffsetT) *FeatureInfo {
+	n := flatbuffers.GetUOffsetT(buf[offset+flatbuffers.SizeUint32:])
+	x := &FeatureInfo{}
+	x.Init(buf, n+offset+flatbuffers.SizeUint32)
+	return x
+}
+
+func (rcv *FeatureInfo) Init(buf []byte, i flatbuffers.UOffsetT) {
+	rcv._tab.Bytes = buf
+	rcv._tab.Pos = i
+}
+
+func (rcv *FeatureInfo) Table() flatbuffers.Table {
+	return rcv._tab
+}
+
+func (rcv *FeatureInfo) Id() Feature {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
+	if o != 0 {
+		return Feature(rcv._tab.GetUint64(o + rcv._tab.Pos))
+	}
+	return 0
+}
+
+func (rcv *FeatureInfo) MutateId(n Feature) bool {
+	return rcv._tab.MutateUint64Slot(4, uint64(n))
+}
+
+func (rcv *FeatureInfo) NeedSetup() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *FeatureInfo) MutateNeedSetup(n bool) bool {
+	return rcv._tab.MutateBoolSlot(6, n)
+}
+
+func (rcv *FeatureInfo) Reason() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func FeatureInfoStart(builder *flatbuffers.Builder) {
+	builder.StartObject(3)
+}
+func FeatureInfoAddId(builder *flatbuffers.Builder, id Feature) {
+	builder.PrependUint64Slot(0, uint64(id), 0)
+}
+func FeatureInfoAddNeedSetup(builder *flatbuffers.Builder, needSetup bool) {
+	builder.PrependBoolSlot(1, needSetup, false)
+}
+func FeatureInfoAddReason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(reason), 0)
+}
+func FeatureInfoEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
 }
 

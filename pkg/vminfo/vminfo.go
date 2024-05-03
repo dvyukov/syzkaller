@@ -77,11 +77,11 @@ func (checker *Checker) StartCheck() ([]string, []rpctype.ExecutionRequest) {
 	return checker.checkFiles(), checker.checkContext.startCheck()
 }
 
-func (checker *Checker) FinishCheck(files []flatrpc.FileInfoT, progs []rpctype.ExecutionResult) (
-	map[*prog.Syscall]bool, map[*prog.Syscall]string, error) {
+func (checker *Checker) FinishCheck(files []flatrpc.FileInfoT, progs []rpctype.ExecutionResult,
+	featureInfos []flatrpc.FeatureInfoT) (map[*prog.Syscall]bool, map[*prog.Syscall]string, Features, error) {
 	ctx := checker.checkContext
 	checker.checkContext = nil
-	return ctx.finishCheck(files, progs)
+	return ctx.finishCheck(files, progs, featureInfos)
 }
 
 type machineInfoFunc func(files filesystem, w io.Writer) (string, error)
@@ -92,6 +92,7 @@ type checker interface {
 	parseModules(files filesystem) ([]cover.KernelModule, error)
 	machineInfos() []machineInfoFunc
 	syscallCheck(*checkContext, *prog.Syscall) string
+	featureCheck(feat flatrpc.Feature) string
 }
 
 type filesystem map[string]flatrpc.FileInfoT
@@ -159,4 +160,8 @@ func (stub) machineInfos() []machineInfoFunc {
 
 func (stub) syscallCheck(*checkContext, *prog.Syscall) string {
 	return ""
+}
+
+func (stub) featureCheck(feat flatrpc.Feature) string {
+	return featureNotImplemented
 }

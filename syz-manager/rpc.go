@@ -16,7 +16,6 @@ import (
 	"github.com/google/syzkaller/pkg/cover"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer"
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
@@ -35,14 +34,17 @@ type RPCServer struct {
 	checker *vminfo.Checker
 	port    int
 
+	infoDone         bool
 	checkDone        atomic.Bool
 	checkFiles       []string
 	checkFilesInfo   []flatrpc.FileInfoT
+	checkFeatureInfo []flatrpc.FeatureInfoT
 	checkProgs       []rpctype.ExecutionRequest
 	checkResults     []rpctype.ExecutionResult
 	needCheckResults int
 	checkFailures    int
-	checkFeatures    *host.Features
+	enabledFeatures  flatrpc.Feature
+	setupFeatures    flatrpc.Feature
 	modules          []cover.KernelModule
 	canonicalModules *cover.Canonicalizer
 	execCoverFilter  map[uint32]uint32
@@ -98,7 +100,7 @@ type BugFrames struct {
 // RPCManagerView restricts interface between RPCServer and Manager.
 type RPCManagerView interface {
 	currentBugFrames() BugFrames
-	machineChecked(features *host.Features, enabledSyscalls map[*prog.Syscall]bool)
+	machineChecked(features flatrpc.Feature, enabledSyscalls map[*prog.Syscall]bool)
 	getFuzzer() *fuzzer.Fuzzer
 }
 
@@ -152,11 +154,19 @@ func (serv *RPCServer) Connect(a *rpctype.ConnectArgs, r *rpctype.ConnectRes) er
 
 	serv.mu.Lock()
 	defer serv.mu.Unlock()
-	r.Features = serv.checkFeatures
 	r.ReadFiles = serv.checker.RequiredFiles()
-	if serv.checkFeatures == nil {
+	if serv.checkDone.Load() {
+		r.Features = serv.setupFeatures
+	} else if serv.infoDone {
+		for _, feat := range serv.checkFeatureInfo {
+			if feat.Reason == "" && feat.NeedSetup {
+				r.Features |= feat.Id
+			}
+		}
+	} else {
 		r.ReadFiles = append(r.ReadFiles, serv.checkFiles...)
 		r.ReadGlobs = serv.target.RequiredGlobs()
+		r.Features = ^flatrpc.Feature(0)
 	}
 	return nil
 }
@@ -204,8 +214,9 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *rpctype.CheckRes) error {
 		return fmt.Errorf("machine check failed: %v", a.Error)
 	}
 
-	if serv.checkFeatures == nil {
-		serv.checkFeatures = a.Features
+	if !serv.infoDone {
+		serv.infoDone = true
+		serv.checkFeatureInfo = a.Features
 		serv.checkFilesInfo = a.Files
 		serv.modules = modules
 		serv.target.UpdateGlobs(a.Globs)
@@ -238,7 +249,8 @@ func (serv *RPCServer) Check(a *rpctype.CheckArgs, r *rpctype.CheckRes) error {
 func (serv *RPCServer) finishCheck() error {
 	// Note: need to print disbled syscalls before failing due to an error.
 	// This helps to debug "all system calls are disabled".
-	enabledCalls, disabledCalls, err := serv.checker.FinishCheck(serv.checkFilesInfo, serv.checkResults)
+	enabledCalls, disabledCalls, features, err := serv.checker.FinishCheck(
+		serv.checkFilesInfo, serv.checkResults, serv.checkFeatureInfo)
 	if err != nil {
 		return fmt.Errorf("failed to detect enabled syscalls: %w", err)
 	}
@@ -278,16 +290,26 @@ func (serv *RPCServer) finishCheck() error {
 	if hasFileErrors {
 		fmt.Fprintf(buf, "\n")
 	}
-	fmt.Fprintf(buf, "%-24v: %v/%v\n", "syscalls", len(enabledCalls), len(serv.cfg.Target.Syscalls))
-	for _, feat := range serv.checkFeatures.Supported() {
-		fmt.Fprintf(buf, "%-24v: %v\n", feat.Name, feat.Reason)
+	var lines []string
+	lines = append(lines, fmt.Sprintf("%-24v: %v/%v\n", "syscalls",
+		len(enabledCalls), len(serv.cfg.Target.Syscalls)))
+	for feat, info := range features {
+		lines = append(lines, fmt.Sprintf("%-24v: %v\n",
+			flatrpc.EnumNamesFeature[feat], info.Reason))
 	}
+	sort.Strings(lines)
+	buf.WriteString(strings.Join(lines, ""))
 	fmt.Fprintf(buf, "\n")
 	log.Logf(0, "machine check:\n%s", buf.Bytes())
 	if len(enabledCalls) == 0 {
 		log.Fatalf("all system calls are disabled")
 	}
-	serv.mgr.machineChecked(serv.checkFeatures, enabledCalls)
+	serv.enabledFeatures = features.Enabled()
+	serv.setupFeatures = features.NeedSetup()
+	if feat := features[flatrpc.FeatureCoverage]; !feat.Enabled && serv.cfg.Cover {
+		log.Fatalf("coverage is not supported: %v", feat.Reason)
+	}
+	serv.mgr.machineChecked(serv.enabledFeatures, enabledCalls)
 	return nil
 }
 
@@ -341,6 +363,7 @@ func (serv *RPCServer) ExchangeInfo(a *rpctype.ExchangeInfoRequest, r *rpctype.E
 				serv.checkResults = nil
 				serv.checkFiles = nil
 				serv.checkFilesInfo = nil
+				serv.checkFeatureInfo = nil
 				serv.checkDone.Store(true)
 			}
 		}
@@ -576,7 +599,7 @@ func (serv *RPCServer) newRequest(runner *Runner, req *fuzzer.Request) (rpctype.
 }
 
 func (serv *RPCServer) createExecOpts(req *fuzzer.Request) ipc.ExecOpts {
-	env := ipc.FeaturesToFlags(serv.checkFeatures, nil)
+	env := ipc.FeaturesToFlags(serv.enabledFeatures, nil)
 	if *flagDebug {
 		env |= ipc.FlagDebug
 	}

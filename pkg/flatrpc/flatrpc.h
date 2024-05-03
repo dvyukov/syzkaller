@@ -39,6 +39,10 @@ struct GlobInfo;
 struct GlobInfoBuilder;
 struct GlobInfoT;
 
+struct FeatureInfo;
+struct FeatureInfoBuilder;
+struct FeatureInfoT;
+
 struct HostMessage;
 struct HostMessageBuilder;
 struct HostMessageT;
@@ -841,7 +845,7 @@ flatbuffers::Offset<ConnectReply> CreateConnectReply(flatbuffers::FlatBufferBuil
 struct InfoRequestT : public flatbuffers::NativeTable {
   typedef InfoRequest TableType;
   std::string error{};
-  rpc::Feature features = static_cast<rpc::Feature>(0);
+  std::vector<std::unique_ptr<rpc::FeatureInfoT>> features{};
   std::vector<std::unique_ptr<rpc::GlobInfoT>> globs{};
   std::vector<std::unique_ptr<rpc::FileInfoT>> files{};
   InfoRequestT() = default;
@@ -862,8 +866,8 @@ struct InfoRequest FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const flatbuffers::String *error() const {
     return GetPointer<const flatbuffers::String *>(VT_ERROR);
   }
-  rpc::Feature features() const {
-    return static_cast<rpc::Feature>(GetField<uint64_t>(VT_FEATURES, 0));
+  const flatbuffers::Vector<flatbuffers::Offset<rpc::FeatureInfo>> *features() const {
+    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<rpc::FeatureInfo>> *>(VT_FEATURES);
   }
   const flatbuffers::Vector<flatbuffers::Offset<rpc::GlobInfo>> *globs() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<rpc::GlobInfo>> *>(VT_GLOBS);
@@ -875,7 +879,9 @@ struct InfoRequest FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ERROR) &&
            verifier.VerifyString(error()) &&
-           VerifyField<uint64_t>(verifier, VT_FEATURES, 8) &&
+           VerifyOffset(verifier, VT_FEATURES) &&
+           verifier.VerifyVector(features()) &&
+           verifier.VerifyVectorOfTables(features()) &&
            VerifyOffset(verifier, VT_GLOBS) &&
            verifier.VerifyVector(globs()) &&
            verifier.VerifyVectorOfTables(globs()) &&
@@ -896,8 +902,8 @@ struct InfoRequestBuilder {
   void add_error(flatbuffers::Offset<flatbuffers::String> error) {
     fbb_.AddOffset(InfoRequest::VT_ERROR, error);
   }
-  void add_features(rpc::Feature features) {
-    fbb_.AddElement<uint64_t>(InfoRequest::VT_FEATURES, static_cast<uint64_t>(features), 0);
+  void add_features(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<rpc::FeatureInfo>>> features) {
+    fbb_.AddOffset(InfoRequest::VT_FEATURES, features);
   }
   void add_globs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<rpc::GlobInfo>>> globs) {
     fbb_.AddOffset(InfoRequest::VT_GLOBS, globs);
@@ -919,13 +925,13 @@ struct InfoRequestBuilder {
 inline flatbuffers::Offset<InfoRequest> CreateInfoRequest(
     flatbuffers::FlatBufferBuilder &_fbb,
     flatbuffers::Offset<flatbuffers::String> error = 0,
-    rpc::Feature features = static_cast<rpc::Feature>(0),
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<rpc::FeatureInfo>>> features = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<rpc::GlobInfo>>> globs = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<rpc::FileInfo>>> files = 0) {
   InfoRequestBuilder builder_(_fbb);
-  builder_.add_features(features);
   builder_.add_files(files);
   builder_.add_globs(globs);
+  builder_.add_features(features);
   builder_.add_error(error);
   return builder_.Finish();
 }
@@ -933,16 +939,17 @@ inline flatbuffers::Offset<InfoRequest> CreateInfoRequest(
 inline flatbuffers::Offset<InfoRequest> CreateInfoRequestDirect(
     flatbuffers::FlatBufferBuilder &_fbb,
     const char *error = nullptr,
-    rpc::Feature features = static_cast<rpc::Feature>(0),
+    const std::vector<flatbuffers::Offset<rpc::FeatureInfo>> *features = nullptr,
     const std::vector<flatbuffers::Offset<rpc::GlobInfo>> *globs = nullptr,
     const std::vector<flatbuffers::Offset<rpc::FileInfo>> *files = nullptr) {
   auto error__ = error ? _fbb.CreateString(error) : 0;
+  auto features__ = features ? _fbb.CreateVector<flatbuffers::Offset<rpc::FeatureInfo>>(*features) : 0;
   auto globs__ = globs ? _fbb.CreateVector<flatbuffers::Offset<rpc::GlobInfo>>(*globs) : 0;
   auto files__ = files ? _fbb.CreateVector<flatbuffers::Offset<rpc::FileInfo>>(*files) : 0;
   return rpc::CreateInfoRequest(
       _fbb,
       error__,
-      features,
+      features__,
       globs__,
       files__);
 }
@@ -1193,6 +1200,94 @@ inline flatbuffers::Offset<GlobInfo> CreateGlobInfoDirect(
 }
 
 flatbuffers::Offset<GlobInfo> CreateGlobInfo(flatbuffers::FlatBufferBuilder &_fbb, const GlobInfoT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct FeatureInfoT : public flatbuffers::NativeTable {
+  typedef FeatureInfo TableType;
+  rpc::Feature id = static_cast<rpc::Feature>(0);
+  bool need_setup = false;
+  std::string reason{};
+};
+
+struct FeatureInfo FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef FeatureInfoT NativeTableType;
+  typedef FeatureInfoBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ID = 4,
+    VT_NEED_SETUP = 6,
+    VT_REASON = 8
+  };
+  rpc::Feature id() const {
+    return static_cast<rpc::Feature>(GetField<uint64_t>(VT_ID, 0));
+  }
+  bool need_setup() const {
+    return GetField<uint8_t>(VT_NEED_SETUP, 0) != 0;
+  }
+  const flatbuffers::String *reason() const {
+    return GetPointer<const flatbuffers::String *>(VT_REASON);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
+           VerifyField<uint8_t>(verifier, VT_NEED_SETUP, 1) &&
+           VerifyOffset(verifier, VT_REASON) &&
+           verifier.VerifyString(reason()) &&
+           verifier.EndTable();
+  }
+  FeatureInfoT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(FeatureInfoT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<FeatureInfo> Pack(flatbuffers::FlatBufferBuilder &_fbb, const FeatureInfoT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct FeatureInfoBuilder {
+  typedef FeatureInfo Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_id(rpc::Feature id) {
+    fbb_.AddElement<uint64_t>(FeatureInfo::VT_ID, static_cast<uint64_t>(id), 0);
+  }
+  void add_need_setup(bool need_setup) {
+    fbb_.AddElement<uint8_t>(FeatureInfo::VT_NEED_SETUP, static_cast<uint8_t>(need_setup), 0);
+  }
+  void add_reason(flatbuffers::Offset<flatbuffers::String> reason) {
+    fbb_.AddOffset(FeatureInfo::VT_REASON, reason);
+  }
+  explicit FeatureInfoBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<FeatureInfo> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<FeatureInfo>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<FeatureInfo> CreateFeatureInfo(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    rpc::Feature id = static_cast<rpc::Feature>(0),
+    bool need_setup = false,
+    flatbuffers::Offset<flatbuffers::String> reason = 0) {
+  FeatureInfoBuilder builder_(_fbb);
+  builder_.add_id(id);
+  builder_.add_reason(reason);
+  builder_.add_need_setup(need_setup);
+  return builder_.Finish();
+}
+
+inline flatbuffers::Offset<FeatureInfo> CreateFeatureInfoDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    rpc::Feature id = static_cast<rpc::Feature>(0),
+    bool need_setup = false,
+    const char *reason = nullptr) {
+  auto reason__ = reason ? _fbb.CreateString(reason) : 0;
+  return rpc::CreateFeatureInfo(
+      _fbb,
+      id,
+      need_setup,
+      reason__);
+}
+
+flatbuffers::Offset<FeatureInfo> CreateFeatureInfo(flatbuffers::FlatBufferBuilder &_fbb, const FeatureInfoT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
 struct HostMessageT : public flatbuffers::NativeTable {
   typedef HostMessage TableType;
@@ -2147,8 +2242,9 @@ inline flatbuffers::Offset<ConnectReply> CreateConnectReply(flatbuffers::FlatBuf
 }
 
 inline InfoRequestT::InfoRequestT(const InfoRequestT &o)
-      : error(o.error),
-        features(o.features) {
+      : error(o.error) {
+  features.reserve(o.features.size());
+  for (const auto &features_ : o.features) { features.emplace_back((features_) ? new rpc::FeatureInfoT(*features_) : nullptr); }
   globs.reserve(o.globs.size());
   for (const auto &globs_ : o.globs) { globs.emplace_back((globs_) ? new rpc::GlobInfoT(*globs_) : nullptr); }
   files.reserve(o.files.size());
@@ -2173,7 +2269,7 @@ inline void InfoRequest::UnPackTo(InfoRequestT *_o, const flatbuffers::resolver_
   (void)_o;
   (void)_resolver;
   { auto _e = error(); if (_e) _o->error = _e->str(); }
-  { auto _e = features(); _o->features = _e; }
+  { auto _e = features(); if (_e) { _o->features.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->features[_i] = std::unique_ptr<rpc::FeatureInfoT>(_e->Get(_i)->UnPack(_resolver)); } } }
   { auto _e = globs(); if (_e) { _o->globs.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->globs[_i] = std::unique_ptr<rpc::GlobInfoT>(_e->Get(_i)->UnPack(_resolver)); } } }
   { auto _e = files(); if (_e) { _o->files.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->files[_i] = std::unique_ptr<rpc::FileInfoT>(_e->Get(_i)->UnPack(_resolver)); } } }
 }
@@ -2187,7 +2283,7 @@ inline flatbuffers::Offset<InfoRequest> CreateInfoRequest(flatbuffers::FlatBuffe
   (void)_o;
   struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const InfoRequestT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _error = _o->error.empty() ? 0 : _fbb.CreateString(_o->error);
-  auto _features = _o->features;
+  auto _features = _o->features.size() ? _fbb.CreateVector<flatbuffers::Offset<rpc::FeatureInfo>> (_o->features.size(), [](size_t i, _VectorArgs *__va) { return CreateFeatureInfo(*__va->__fbb, __va->__o->features[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _globs = _o->globs.size() ? _fbb.CreateVector<flatbuffers::Offset<rpc::GlobInfo>> (_o->globs.size(), [](size_t i, _VectorArgs *__va) { return CreateGlobInfo(*__va->__fbb, __va->__o->globs[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _files = _o->files.size() ? _fbb.CreateVector<flatbuffers::Offset<rpc::FileInfo>> (_o->files.size(), [](size_t i, _VectorArgs *__va) { return CreateFileInfo(*__va->__fbb, __va->__o->files[i].get(), __va->__rehasher); }, &_va ) : 0;
   return rpc::CreateInfoRequest(
@@ -2286,6 +2382,38 @@ inline flatbuffers::Offset<GlobInfo> CreateGlobInfo(flatbuffers::FlatBufferBuild
       _fbb,
       _name,
       _files);
+}
+
+inline FeatureInfoT *FeatureInfo::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<FeatureInfoT>(new FeatureInfoT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void FeatureInfo::UnPackTo(FeatureInfoT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = id(); _o->id = _e; }
+  { auto _e = need_setup(); _o->need_setup = _e; }
+  { auto _e = reason(); if (_e) _o->reason = _e->str(); }
+}
+
+inline flatbuffers::Offset<FeatureInfo> FeatureInfo::Pack(flatbuffers::FlatBufferBuilder &_fbb, const FeatureInfoT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateFeatureInfo(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<FeatureInfo> CreateFeatureInfo(flatbuffers::FlatBufferBuilder &_fbb, const FeatureInfoT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const FeatureInfoT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _id = _o->id;
+  auto _need_setup = _o->need_setup;
+  auto _reason = _o->reason.empty() ? 0 : _fbb.CreateString(_o->reason);
+  return rpc::CreateFeatureInfo(
+      _fbb,
+      _id,
+      _need_setup,
+      _reason);
 }
 
 inline HostMessageT *HostMessage::UnPack(const flatbuffers::resolver_function_t *_resolver) const {

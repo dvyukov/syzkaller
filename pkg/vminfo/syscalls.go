@@ -68,10 +68,16 @@ type checkContext struct {
 	// The main goroutine will wait for exactly pendingSyscalls messages.
 	syscalls        chan syscallResult
 	pendingSyscalls int
+	features        chan featureResult
 }
 
 type syscallResult struct {
 	call   *prog.Syscall
+	reason string
+}
+
+type featureResult struct {
+	id     flatrpc.Feature
 	reason string
 }
 
@@ -88,6 +94,7 @@ func newCheckContext(cfg *mgrconfig.Config, impl checker) *checkContext {
 		requests: make(chan []*rpctype.ExecutionRequest),
 		results:  make(map[int64]*ipc.ProgInfo),
 		syscalls: make(chan syscallResult),
+		features: make(chan featureResult),
 		ready:    make(chan bool),
 	}
 }
@@ -130,6 +137,15 @@ func (ctx *checkContext) startCheck() []rpctype.ExecutionRequest {
 			ctx.syscalls <- syscallResult{call, reason}
 		}()
 	}
+	for feat := range flatrpc.EnumNamesFeature {
+		feat := feat
+		ctx.pendingRequests++
+		go func() {
+			reason := ctx.impl.featureCheck(feat)
+			ctx.waitForResults()
+			ctx.features <- featureResult{feat, reason}
+		}()
+	}
 	var progs []rpctype.ExecutionRequest
 	dedup := make(map[hash.Sig]int64)
 	for i := 0; i < ctx.pendingRequests; i++ {
@@ -148,8 +164,8 @@ func (ctx *checkContext) startCheck() []rpctype.ExecutionRequest {
 	return progs
 }
 
-func (ctx *checkContext) finishCheck(fileInfos []flatrpc.FileInfoT, progs []rpctype.ExecutionResult) (
-	map[*prog.Syscall]bool, map[*prog.Syscall]string, error) {
+func (ctx *checkContext) finishCheck(fileInfos []flatrpc.FileInfoT, progs []rpctype.ExecutionResult,
+	featureInfos []flatrpc.FeatureInfoT) (map[*prog.Syscall]bool, map[*prog.Syscall]string, Features, error) {
 	ctx.fs = createVirtualFilesystem(fileInfos)
 	for i := range progs {
 		res := &progs[i]
@@ -166,7 +182,30 @@ func (ctx *checkContext) finishCheck(fileInfos []flatrpc.FileInfoT, progs []rpct
 			disabled[res.call] = res.reason
 		}
 	}
-	return enabled, disabled, nil
+	features := make(Features)
+	for _, info := range featureInfos {
+		features[info.Id] = Feature{
+			Reason:    info.Reason,
+			NeedSetup: info.NeedSetup,
+		}
+	}
+	for range flatrpc.EnumNamesFeature {
+		res := <-ctx.features
+		if res.reason == featureNotImplemented {
+			delete(features, res.id)
+			continue
+		}
+		feat := features[res.id]
+		if feat.Reason == "" {
+			feat.Reason = res.reason
+		}
+		if feat.Reason == "" {
+			feat.Reason = "enabled"
+			feat.Enabled = true
+		}
+		features[res.id] = feat
+	}
+	return enabled, disabled, features, nil
 }
 
 func (ctx *checkContext) rootCanOpen(file string) string {
