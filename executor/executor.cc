@@ -65,6 +65,7 @@ typedef unsigned char uint8;
 // Note: zircon max fd is 256.
 // Some common_OS.h files know about this constant for RLIMIT_NOFILE.
 const int kMaxFd = 250;
+const int kFdLimit = 256;
 const int kMaxThreads = 32;
 const int kInPipeFd = kMaxFd - 1; // remapped from stdin
 const int kOutPipeFd = kMaxFd - 2; // remapped from stdout
@@ -412,6 +413,8 @@ static void setup_features(char** enable, int n);
 
 #include "cov_filter.h"
 
+#include "executor_runner.h"
+
 #include "test.h"
 
 #if SYZ_HAVE_SANDBOX_ANDROID
@@ -423,6 +426,10 @@ int main(int argc, char** argv)
 	if (argc == 2 && strcmp(argv[1], "version") == 0) {
 		puts(GOOS " " GOARCH " " SYZ_REVISION " " GIT_REVISION);
 		return 0;
+	}
+	if (argc >= 2 && strcmp(argv[1], "runner") == 0) {
+		runner(argv, argc);
+		fail("runner returned");
 	}
 	if (argc >= 2 && strcmp(argv[1], "setup") == 0) {
 		setup_features(argv + 2, argc - 2);
