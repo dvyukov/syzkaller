@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sync"
@@ -39,6 +40,7 @@ type TestbedConfig struct {
 	Workdir       string           `json:"workdir"`        // instances will be checked out there
 	ReproConfig   ReproTestConfig  `json:"repro_config"`   // syz-repro benchmarking config
 	ManagerConfig json.RawMessage  `json:"manager_config"` // base manager config
+	ManagerMode   string           `json:"manager_mode"`   // manager mode flag
 	Checkouts     []CheckoutConfig `json:"checkouts"`
 }
 
@@ -71,13 +73,16 @@ type TestbedContext struct {
 
 func main() {
 	flag.Parse()
+	benchcmp, _ := exec.LookPath("syz-benchcmp")
 	cfg := &TestbedConfig{
-		Name:    "testbed",
-		Target:  "syz-manager",
-		RunTime: DurationConfig{24 * time.Hour},
+		Name:     "testbed",
+		Target:   "syz-manager",
+		RunTime:  DurationConfig{24 * time.Hour},
+		BenchCmp: benchcmp,
 		ReproConfig: ReproTestConfig{
 			CrashesPerBug: 1,
 		},
+		ManagerMode: "fuzzing",
 	}
 	err := config.LoadFile(*flagConfig, &cfg)
 	if err != nil {
