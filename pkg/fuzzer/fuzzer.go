@@ -143,7 +143,10 @@ func (fuzzer *Fuzzer) processResult(req *queue.Request, res *queue.Result, flags
 	if req.Risky() {
 		maxCandidateAttempts = 2
 	}
-	if !triaging && flags&ProgFromCorpus != 0 && attempt < maxCandidateAttempts {
+	if flags&ProgFromCorpus != 0 && (triaging && attempt == 0 || !triaging && attempt < maxCandidateAttempts) {
+		if triaging {
+			flags &= ^ProgFromCorpus
+		}
 		fuzzer.enqueue(fuzzer.candidateQueue, req, flags, attempt+1)
 		return false
 	}
