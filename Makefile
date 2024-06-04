@@ -98,7 +98,7 @@ ifeq ("$(TARGETOS)", "trusty")
 endif
 
 .PHONY: all clean host target \
-	manager runtest fuzzer executor \
+	manager runtest executor \
 	ci hub \
 	execprog mutate prog2c trace2syz repro upgrade db \
 	usbgen symbolize cover kconf syz-build crush \
@@ -113,7 +113,7 @@ endif
 
 all: host target
 host: manager runtest repro mutate prog2c db upgrade
-target: fuzzer execprog executor
+target: execprog executor
 
 executor: descriptions
 ifeq ($(TARGETOS),fuchsia)
@@ -159,9 +159,6 @@ manager: descriptions
 runtest: descriptions
 	# TODO: fold syz-runtest into syz-manager.
 	# GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(HOSTGO) build $(GOHOSTFLAGS) -o ./bin/syz-runtest github.com/google/syzkaller/tools/syz-runtest
-
-fuzzer: descriptions
-	GOOS=$(TARGETGOOS) GOARCH=$(TARGETGOARCH) $(GO) build $(GOTARGETFLAGS) -o ./bin/$(TARGETOS)_$(TARGETVMARCH)/syz-fuzzer$(EXE) github.com/google/syzkaller/syz-fuzzer
 
 execprog: descriptions
 	GOOS=$(TARGETGOOS) GOARCH=$(TARGETGOARCH) $(GO) build $(GOTARGETFLAGS) -o ./bin/$(TARGETOS)_$(TARGETVMARCH)/syz-execprog$(EXE) github.com/google/syzkaller/tools/syz-execprog
@@ -215,11 +212,11 @@ bisect: descriptions
 	GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(HOSTGO) build $(GOHOSTFLAGS) -o ./bin/syz-bisect github.com/google/syzkaller/tools/syz-bisect
 
 verifier: descriptions
-	# TODO: switch syz-verifier to use syz-fuzzer.
+	# TODO: switch syz-verifier to use syz-executor.
 	# GOOS=$(HOSTOS) GOARCH=$(HOSTARCH) $(HOSTGO) build $(GOHOSTFLAGS) -o ./bin/syz-verifier github.com/google/syzkaller/syz-verifier
 
 runner:  descriptions
-	# TODO: switch syz-verifier to use syz-fuzzer.
+	# TODO: switch syz-verifier to use syz-executor.
 	# GOOS=$(TARGETGOOS) GOARCH=$(TARGETGOARCH) $(GO) build $(GOTARGETFLAGS) -o ./bin/$(TARGETOS)_$(TARGETVMARCH)/syz-runner$(EXE) github.com/google/syzkaller/syz-runner
 
 # `extract` extracts const files from various kernel sources, and may only

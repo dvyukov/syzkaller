@@ -617,7 +617,7 @@ func (inst *instance) Copy(hostSrc string) (string, error) {
 	base := filepath.Base(hostSrc)
 	vmDst := filepath.Join(inst.targetDir(), base)
 	if inst.target.HostFuzzer {
-		if base == "syz-fuzzer" || base == "syz-execprog" {
+		if base == "syz-execprog" {
 			return hostSrc, nil // we will run these on host
 		}
 		if inst.files == nil {
@@ -648,8 +648,7 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 
 	sshArgs := vmimpl.SSHArgsForward(inst.debug, inst.sshkey, inst.port, inst.forwardPort, false)
 	args := strings.Split(command, " ")
-	if bin := filepath.Base(args[0]); inst.target.HostFuzzer &&
-		(bin == "syz-fuzzer" || bin == "syz-execprog") {
+	if bin := filepath.Base(args[0]); inst.target.HostFuzzer && bin == "syz-execprog" {
 		// Weird mode for Fuchsia.
 		// Fuzzer and execprog are on host (we did not copy them), so we will run them as is,
 		// but we will also wrap executor with ssh invocation.

@@ -3,9 +3,6 @@
 
 // +build
 
-// Currently this is unused (included only to test building).
-#include "pkg/flatrpc/flatrpc.h"
-
 #include <algorithm>
 #include <errno.h>
 #include <limits.h>
@@ -18,11 +15,16 @@
 #include <string.h>
 #include <time.h>
 
+#include <atomic>
+#include <optional>
+
 #if !GOOS_windows
 #include <unistd.h>
 #endif
 
 #include "defs.h"
+
+#include "pkg/flatrpc/flatrpc.h"
 
 #if defined(__GNUC__)
 #define SYSCALLAPI
@@ -75,6 +77,7 @@ typedef unsigned char uint8;
 // Note: zircon max fd is 256.
 // Some common_OS.h files know about this constant for RLIMIT_NOFILE.
 const int kMaxFd = 250;
+const int kFdLimit = 256;
 const int kMaxThreads = 32;
 const int kInPipeFd = kMaxFd - 1; // remapped from stdin
 const int kOutPipeFd = kMaxFd - 2; // remapped from stdout
@@ -90,8 +93,8 @@ const int kCoverOptimizedPreMmap = 3; // this many will be mmapped inside main()
 const int kCoverDefaultCount = 6; // otherwise we only init kcov instances inside main()
 
 // Logical error (e.g. invalid input program), use as an assert() alternative.
-// If such error happens 10+ times in a row, it will be detected as a bug by syz-fuzzer.
-// syz-fuzzer will fail and syz-manager will create a bug for this.
+// If such error happens 10+ times in a row, it will be detected as a bug by the runner process.
+// The runner will fail and syz-manager will create a bug for this.
 // Note: err is used for bug deduplication, thus distinction between err (constant message)
 // and msg (varying part).
 static NORETURN void fail(const char* err);
@@ -111,19 +114,15 @@ static NORETURN void doexit_thread(int status);
 static PRINTF(1, 2) void debug(const char* msg, ...);
 void debug_dump_data(const char* data, int length);
 
-#if 0
+#if 1
 #define debug_verbose(...) debug(__VA_ARGS__)
 #else
 #define debug_verbose(...) (void)0
 #endif
 
 static void receive_execute();
-static void reply_execute(int status);
-
-#if SYZ_EXECUTOR_USES_FORK_SERVER
+static void reply_execute(uint32 status);
 static void receive_handshake();
-static void reply_handshake();
-#endif
 
 #if SYZ_EXECUTOR_USES_FORK_SERVER
 // Allocating (and forking) virtual memory for each executed process is expensive, so we only mmap
@@ -133,28 +132,86 @@ const int kMaxOutputCoverage = 6 << 20; // coverage is needed in ~ up to 1/3 of 
 const int kMaxOutputSignal = 4 << 20;
 const int kMinOutput = 256 << 10; // if we don't need to send signal, the output is rather short.
 const int kInitialOutput = kMinOutput; // the minimal size to be allocated in the parent process
+const int kMaxOutput = kMaxOutputComparisons;
 #else
 // We don't fork and allocate the memory only once, so prepare for the worst case.
 const int kInitialOutput = 14 << 20;
+const int kMaxOutput = kInitialOutput;
 #endif
+
+// For use with flatrpc bit flags.
+template <typename T>
+bool IsSet(T flags, T f)
+{
+	return (flags & f) != T::NONE;
+}
 
 // TODO: allocate a smaller amount of memory in the parent once we merge the patches that enable
 // prog execution with neither signal nor coverage. Likely 64kb will be enough in that case.
 
+const uint32 kMaxCalls = 100;
+
+class ShmemBuilder : flatbuffers::Allocator, public flatbuffers::FlatBufferBuilder
+{
+public:
+	ShmemBuilder(void* buf, size_t size, size_t offset = 0)
+	    : FlatBufferBuilder(size, this), buf_(buf), size_(size)
+	{
+		if (offset)
+			FlatBufferBuilder::buf_.make_space(offset);
+	}
+
+private:
+	void* buf_;
+	size_t size_;
+	bool allocated_ = false;
+
+	uint8_t* allocate(size_t size) override
+	{
+		if (allocated_ || size != size_)
+			failmsg("bad allocate request", "allocated=%d size=%zu/%zu", allocated_, size_, size);
+		allocated_ = true;
+		return static_cast<uint8_t*>(buf_);
+	}
+
+	void deallocate(uint8_t* p, size_t size) override
+	{
+		if (!allocated_ || buf_ != p || size_ != size)
+			failmsg("bad deallocate request", "allocated=%d buf=%p/%p size=%zu/%zu",
+				allocated_, buf_, p, size_, size);
+		allocated_ = false;
+	}
+
+	uint8_t* reallocate_downward(uint8_t* old_p, size_t old_size,
+				     size_t new_size, size_t in_use_back,
+				     size_t in_use_front) override
+	{
+		fail("can't reallocate");
+	}
+};
+
+struct alignas(8) OutputData {
+	std::atomic<uint32> completed;
+	uint32 output_size;
+	struct {
+		int index;
+		uint32 data_size;
+		flatbuffers::Offset<rpc::CallInfoRaw> offset;
+	} calls[kMaxCalls];
+};
+
 const int kInFd = 3;
 const int kOutFd = 4;
-static uint32* output_data;
-static uint32* output_pos;
-static int output_size;
-static void mmap_output(int size);
-static uint32* write_output(uint32 v);
-static uint32* write_output_64(uint64 v);
-static void write_completed(uint32 completed);
+const int kMaxSignalFd = 5;
+const int kCoverFilterFd = 6;
+static OutputData* output_data;
+static std::optional<ShmemBuilder> output_builder;
+static uint32 output_size;
+static void mmap_output(uint32 size);
 static uint32 hash(uint32 a);
 static bool dedup(uint32 sig);
 
-uint64 start_time_ms = 0;
-
+static uint64 start_time_ms = 0;
 static bool flag_debug;
 static bool flag_coverage;
 static bool flag_sandbox_none;
@@ -294,24 +351,17 @@ struct res_t {
 static res_t results[kMaxCommands];
 
 const uint64 kInMagic = 0xbadc0ffeebadface;
-const uint32 kOutMagic = 0xbadf00d;
 
 struct handshake_req {
 	uint64 magic;
-	uint64 flags; // env flags
+	rpc::ExecEnv flags;
 	uint64 pid;
 	uint64 sandbox_arg;
-	uint64 cover_filter_size;
-	// Followed by uint64[cover_filter_size] filter.
-};
-
-struct handshake_reply {
-	uint32 magic;
 };
 
 struct execute_req {
 	uint64 magic;
-	uint64 env_flags;
+	rpc::ExecEnv env_flags;
 	uint64 exec_flags;
 	uint64 pid;
 	uint64 syscall_timeout_ms;
@@ -323,25 +373,6 @@ struct execute_reply {
 	uint32 magic;
 	uint32 done;
 	uint32 status;
-};
-
-// call_reply.flags
-const uint32 call_flag_executed = 1 << 0;
-const uint32 call_flag_finished = 1 << 1;
-const uint32 call_flag_blocked = 1 << 2;
-const uint32 call_flag_fault_injected = 1 << 3;
-
-struct call_reply {
-	execute_reply header;
-	uint32 magic;
-	uint32 call_index;
-	uint32 call_num;
-	uint32 reserrno;
-	uint32 flags;
-	uint32 signal_size;
-	uint32 cover_size;
-	uint32 comps_size;
-	// signal/cover/comps follow
 };
 
 enum {
@@ -359,11 +390,6 @@ struct kcov_comparison_t {
 	uint64 arg1;
 	uint64 arg2;
 	uint64 pc;
-
-	bool ignore() const;
-	void write();
-	bool operator==(const struct kcov_comparison_t& other) const;
-	bool operator<(const struct kcov_comparison_t& other) const;
 };
 
 typedef char kcov_comparison_size[sizeof(kcov_comparison_t) == 4 * sizeof(uint64) ? 1 : -1];
@@ -390,8 +416,8 @@ static uint64 swap(uint64 v, uint64 size, uint64 bf);
 static void copyin(char* addr, uint64 val, uint64 size, uint64 bf, uint64 bf_off, uint64 bf_len);
 static bool copyout(char* addr, uint64 size, uint64* res);
 static void setup_control_pipes();
-static void setup_features(char** enable, int n);
 static bool coverage_filter(uint64 pc);
+static std::tuple<rpc::ComparisonRaw, bool, bool> convert(const kcov_comparison_t& cmp);
 
 #include "syscalls.h"
 
@@ -419,8 +445,11 @@ static feature_t features[] = {};
 
 #include "cover_filter.h"
 
+#include "executor_runner.h"
+
 #include "test.h"
 
+static std::optional<CoverFilter> max_signal;
 static std::optional<CoverFilter> cover_filter;
 
 #if SYZ_HAVE_SANDBOX_ANDROID
@@ -429,27 +458,15 @@ static uint64 sandbox_arg = 0;
 
 int main(int argc, char** argv)
 {
-	if (argc == 2 && strcmp(argv[1], "version") == 0) {
-		puts(GOOS " " GOARCH " " SYZ_REVISION " " GIT_REVISION);
-		return 0;
-	}
-	if (argc >= 2 && strcmp(argv[1], "setup") == 0) {
-		setup_features(argv + 2, argc - 2);
-		return 0;
+	if (argc >= 2 && strcmp(argv[1], "runner") == 0) {
+		runner(argv, argc);
+		fail("runner returned");
 	}
 	if (argc >= 2 && strcmp(argv[1], "leak") == 0) {
 #if SYZ_HAVE_LEAK_CHECK
 		check_leaks(argv + 2, argc - 2);
 #else
 		fail("leak checking is not implemented");
-#endif
-		return 0;
-	}
-	if (argc >= 2 && strcmp(argv[1], "setup_kcsan_filterlist") == 0) {
-#if SYZ_HAVE_KCSAN
-		setup_kcsan_filterlist(argv + 2, argc - 2, true);
-#else
-		fail("KCSAN is not implemented");
 #endif
 		return 0;
 	}
@@ -482,12 +499,24 @@ int main(int argc, char** argv)
 	// For SYZ_EXECUTOR_USES_FORK_SERVER, close(kOutFd) is invoked in the forked child,
 	// after the program has been received.
 
+	if (fcntl(kMaxSignalFd, F_GETFD) != -1) {
+		// Use random addresses for coverage filters to not collide with output_data.
+		max_signal.emplace(kMaxSignalFd, reinterpret_cast<void*>(0x110c230000ull));
+		close(kMaxSignalFd);
+	}
+	if (fcntl(kCoverFilterFd, F_GETFD) != -1) {
+		cover_filter.emplace(kCoverFilterFd, reinterpret_cast<void*>(0x110f230000ull));
+		close(kCoverFilterFd);
+	}
+
 	use_temporary_dir();
 	install_segv_handler();
 	setup_control_pipes();
-#if SYZ_EXECUTOR_USES_FORK_SERVER
 	receive_handshake();
-#else
+#if !SYZ_EXECUTOR_USES_FORK_SERVER
+	// We receive/reply handshake when fork server is disabled just to simplify runner logic.
+	// It's a bit suboptimal, but no fork server is much slower anyway.
+	reply_execute(0);
 	receive_execute();
 #endif
 	if (flag_coverage) {
@@ -537,10 +566,6 @@ int main(int argc, char** argv)
 
 #if SYZ_EXECUTOR_USES_FORK_SERVER
 	fprintf(stderr, "loop exited with status %d\n", status);
-	// Other statuses happen when fuzzer processes manages to kill loop, e.g. with:
-	// ptrace(PTRACE_SEIZE, 1, 0, 0x100040)
-	if (status != kFailStatus)
-		status = 0;
 	// If an external sandbox process wraps executor, the out pipe will be closed
 	// before the sandbox process exits this will make ipc package kill the sandbox.
 	// As the result sandbox process will exit with exit status 9 instead of the executor
@@ -557,7 +582,7 @@ int main(int argc, char** argv)
 
 // This method can be invoked as many times as one likes - MMAP_FIXED can overwrite the previous
 // mapping without any problems. The only precondition - kOutFd must not be closed.
-static void mmap_output(int size)
+static void mmap_output(uint32 size)
 {
 	if (size <= output_size)
 		return;
@@ -568,7 +593,8 @@ static void mmap_output(int size)
 	if (output_data == NULL) {
 		if (kAddressSanitizer) {
 			// Don't use fixed address under ASAN b/c it may overlap with shadow.
-			fixed_flag = 0;
+			//fixed_flag = 0;
+			mmap_at = (uint32*)0x7f0000000000ull;
 		} else {
 			// It's the first time we map output region - generate its location.
 			// The output region is the only thing in executor process for which consistency matters.
@@ -591,7 +617,7 @@ static void mmap_output(int size)
 	if (result == MAP_FAILED || (mmap_at && result != mmap_at))
 		failmsg("mmap of output file failed", "want %p, got %p", mmap_at, result);
 	if (output_data == NULL)
-		output_data = static_cast<uint32*>(result);
+		output_data = static_cast<OutputData*>(result);
 	output_size = size;
 }
 
@@ -609,33 +635,28 @@ void setup_control_pipes()
 		fail("dup2(2, 0) failed");
 }
 
-void parse_env_flags(uint64 flags)
+void parse_env_flags(rpc::ExecEnv flags)
 {
 	// Note: Values correspond to ordering in pkg/ipc/ipc.go, e.g. FlagSandboxNamespace
-	flag_debug = flags & (1 << 0);
-	flag_coverage = flags & (1 << 1);
-	if (flags & (1 << 2))
-		flag_sandbox_setuid = true;
-	else if (flags & (1 << 3))
-		flag_sandbox_namespace = true;
-	else if (flags & (1 << 4))
-		flag_sandbox_android = true;
-	else
-		flag_sandbox_none = true;
-	flag_extra_coverage = flags & (1 << 5);
-	flag_net_injection = flags & (1 << 6);
-	flag_net_devices = flags & (1 << 7);
-	flag_net_reset = flags & (1 << 8);
-	flag_cgroups = flags & (1 << 9);
-	flag_close_fds = flags & (1 << 10);
-	flag_devlink_pci = flags & (1 << 11);
-	flag_vhci_injection = flags & (1 << 12);
-	flag_wifi = flags & (1 << 13);
-	flag_delay_kcov_mmap = flags & (1 << 14);
-	flag_nic_vf = flags & (1 << 15);
+	flag_debug = (bool)(flags & rpc::ExecEnv::Debug);
+	flag_coverage = (bool)(flags & rpc::ExecEnv::Signal);
+	flag_sandbox_none = (bool)(flags & rpc::ExecEnv::SandboxNone);
+	flag_sandbox_setuid = (bool)(flags & rpc::ExecEnv::SandboxSetuid);
+	flag_sandbox_namespace = (bool)(flags & rpc::ExecEnv::SandboxNamespace);
+	flag_sandbox_android = (bool)(flags & rpc::ExecEnv::SandboxAndroid);
+	flag_extra_coverage = (bool)(flags & rpc::ExecEnv::ExtraCover);
+	flag_net_injection = (bool)(flags & rpc::ExecEnv::EnableTun);
+	flag_net_devices = (bool)(flags & rpc::ExecEnv::EnableNetDev);
+	flag_net_reset = (bool)(flags & rpc::ExecEnv::EnableNetReset);
+	flag_cgroups = (bool)(flags & rpc::ExecEnv::EnableCgroups);
+	flag_close_fds = (bool)(flags & rpc::ExecEnv::EnableCloseFds);
+	flag_devlink_pci = (bool)(flags & rpc::ExecEnv::EnableDevlinkPCI);
+	flag_vhci_injection = (bool)(flags & rpc::ExecEnv::EnableVhciInjection);
+	flag_wifi = (bool)(flags & rpc::ExecEnv::EnableWifi);
+	flag_delay_kcov_mmap = (bool)(flags & rpc::ExecEnv::DelayKcovMmap);
+	flag_nic_vf = (bool)(flags & rpc::ExecEnv::EnableNicVF);
 }
 
-#if SYZ_EXECUTOR_USES_FORK_SERVER
 void receive_handshake()
 {
 	handshake_req req = {};
@@ -649,36 +670,16 @@ void receive_handshake()
 #endif
 	parse_env_flags(req.flags);
 	procid = req.pid;
-	if (!req.cover_filter_size)
-		return;
-	// A random address for bitmap. Don't corrupt output_data.
-	cover_filter.emplace("syz-cover-filer", reinterpret_cast<void*>(0x110f230000ull));
-	std::vector<uint64> pcs(req.cover_filter_size);
-	const ssize_t filter_size = req.cover_filter_size * sizeof(uint64);
-	n = read(kInPipeFd, &pcs[0], filter_size);
-	if (n != filter_size)
-		failmsg("failed to read cover filter", "read=%zu", n);
-	for (auto pc : pcs)
-		cover_filter->Insert(pc);
-	cover_filter->Seal();
 }
-
-void reply_handshake()
-{
-	handshake_reply reply = {};
-	reply.magic = kOutMagic;
-	if (write(kOutPipeFd, &reply, sizeof(reply)) != sizeof(reply))
-		fail("control pipe write failed");
-}
-#endif
 
 static execute_req last_execute_req;
 
 void receive_execute()
 {
 	execute_req& req = last_execute_req;
-	if (read(kInPipeFd, &req, sizeof(req)) != (ssize_t)sizeof(req))
-		fail("control pipe read failed");
+	ssize_t n = read(kInPipeFd, &req, sizeof(req));
+	if (n != (ssize_t)sizeof(req))
+		failmsg("control pipe read failed", "read=%zd want=%zd", n, sizeof(req));
 	if (req.magic != kInMagic)
 		failmsg("bad execute request magic", "magic=0x%llx", req.magic);
 	parse_env_flags(req.env_flags);
@@ -693,10 +694,10 @@ void receive_execute()
 	flag_threaded = req.exec_flags & (1 << 4);
 
 	debug("[%llums] exec opts: procid=%llu threaded=%d cover=%d comps=%d dedup=%d signal=%d "
-	      " timeouts=%llu/%llu/%llu\n",
+	      " sandbox=%d/%d/%d/%d timeouts=%llu/%llu/%llu\n",
 	      current_time_ms() - start_time_ms, procid, flag_threaded, flag_collect_cover,
-	      flag_comparisons, flag_dedup_cover, flag_collect_signal, syscall_timeout_ms,
-	      program_timeout_ms, slowdown_scale);
+	      flag_comparisons, flag_dedup_cover, flag_collect_signal, flag_sandbox_none, flag_sandbox_setuid,
+	      flag_sandbox_namespace, flag_sandbox_android, syscall_timeout_ms, program_timeout_ms, slowdown_scale);
 	if (syscall_timeout_ms == 0 || program_timeout_ms <= syscall_timeout_ms || slowdown_scale == 0)
 		failmsg("bad timeouts", "syscall=%llu, program=%llu, scale=%llu",
 			syscall_timeout_ms, program_timeout_ms, slowdown_scale);
@@ -707,13 +708,9 @@ bool cover_collection_required()
 	return flag_coverage && (flag_collect_signal || flag_collect_cover || flag_comparisons);
 }
 
-void reply_execute(int status)
+void reply_execute(uint32 status)
 {
-	execute_reply reply = {};
-	reply.magic = kOutMagic;
-	reply.done = true;
-	reply.status = status;
-	if (write(kOutPipeFd, &reply, sizeof(reply)) != sizeof(reply))
+	if (write(kOutPipeFd, &status, sizeof(status)) != sizeof(status))
 		fail("control pipe write failed");
 }
 
@@ -734,19 +731,30 @@ void realloc_output_data()
 // execute_one executes program stored in input_data.
 void execute_one()
 {
+fprintf(stderr, "EXECUTE ONE\n");
+
 	in_execute_one = true;
+fprintf(stderr, "HERE %d\n", __LINE__);
 	realloc_output_data();
-	output_pos = output_data;
-	write_output(0); // Number of executed syscalls (updated later).
+fprintf(stderr, "HERE %d\n", __LINE__);
+	size_t builder_size = output_size - sizeof(*output_data);
+fprintf(stderr, "HERE %d\n", __LINE__);
+	output_builder.emplace(output_data + 1, builder_size);
+fprintf(stderr, "HERE %d\n", __LINE__);
+	output_data->output_size = output_size;
+fprintf(stderr, "HERE %d\n", __LINE__);
 	uint64 start = current_time_ms();
+fprintf(stderr, "HERE %d\n", __LINE__);
 	uint8* input_pos = input_data;
 
 	if (cover_collection_required()) {
+debug_verbose("HERE %d\n", __LINE__);
 		if (!flag_threaded)
 			cover_enable(&threads[0].cov, flag_comparisons, false);
 		if (flag_extra_coverage)
 			cover_reset(&extra_cov);
 	}
+debug_verbose("HERE %d\n", __LINE__);
 
 	int call_index = 0;
 	uint64 prog_extra_timeout = 0;
@@ -754,9 +762,12 @@ void execute_one()
 	call_props_t call_props;
 	memset(&call_props, 0, sizeof(call_props));
 
+debug_verbose("HERE %d\n", __LINE__);
+
 	read_input(&input_pos); // total number of calls
 	for (;;) {
 		uint64 call_num = read_input(&input_pos);
+debug_verbose("read call num = %llu\n", call_num);
 		if (call_num == instr_eof)
 			break;
 		if (call_num == instr_copyin) {
@@ -991,55 +1002,90 @@ thread_t* schedule_call(int call_index, int call_num, uint64 copyout_index, uint
 }
 
 template <typename cover_data_t>
-void write_coverage_signal(cover_t* cov, uint32* signal_count_pos, uint32* cover_count_pos)
+uint32 write_signal(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
 {
 	// Write out feedback signals.
 	// Currently it is code edges computed as xor of two subsequent basic block PCs.
+	fbb.StartVector(0, sizeof(uint64));
 	cover_data_t* cover_data = (cover_data_t*)(cov->data + cov->data_offset);
-	if (flag_collect_signal) {
-		uint32 nsig = 0;
-		cover_data_t prev_pc = 0;
-		bool prev_filter = true;
-		for (uint32 i = 0; i < cov->size; i++) {
-			cover_data_t pc = cover_data[i] + cov->pc_offset;
-			uint64 sig = pc;
-			if (is_kernel_pc(pc) < 0)
-				exitf("got bad pc: 0x%llx", (uint64)pc);
-			if (use_cover_edges(pc)) {
-				// Only hash the lower 12 bits so the hash is independent of any module offsets.
-				const uint64 mask = (1 << 12) - 1;
-				sig ^= hash(prev_pc & mask) & mask;
-			}
-			bool filter = coverage_filter(pc);
-			// Ignore the edge only if both current and previous PCs are filtered out
-			// to capture all incoming and outcoming edges into the interesting code.
-			bool ignore = !filter && !prev_filter;
-			prev_pc = pc;
-			prev_filter = filter;
-			if (ignore || dedup(sig))
-				continue;
-			write_output_64(sig);
-			nsig++;
+	uint32 nsig = 0;
+	cover_data_t prev_pc = 0;
+	bool prev_filter = true;
+	for (uint32 i = 0; i < cov->size; i++) {
+		cover_data_t pc = cover_data[i] + cov->pc_offset;
+		if (is_kernel_pc(pc) < 0)
+			exitf("got bad pc: 0x%llx", (uint64)pc);
+		uint64 sig = pc;
+		if (use_cover_edges(pc)) {
+			// Only hash the lower 12 bits so the hash is independent of any module offsets.
+			const uint64 mask = (1 << 12) - 1;
+			sig ^= hash(prev_pc & mask) & mask;
 		}
-		// Write out number of signals.
-		*signal_count_pos = nsig;
+		bool filter = coverage_filter(pc);
+		// Ignore the edge only if both current and previous PCs are filtered out
+		// to capture all incoming and outcoming edges into the interesting code.
+		bool ignore = !filter && !prev_filter;
+		prev_pc = pc;
+		prev_filter = filter;
+		if (ignore || dedup(sig))
+			continue;
+		//!!! max_signal
+		fbb.PushElement(uint64(sig));
+		nsig++;
 	}
+	return fbb.EndVector(nsig);
+}
 
-	if (flag_collect_cover) {
-		// Write out real coverage (basic block PCs).
-		uint32 cover_size = cov->size;
-		if (flag_dedup_cover) {
-			cover_data_t* end = cover_data + cover_size;
-			cover_unprotect(cov);
-			std::sort(cover_data, end);
-			cover_size = std::unique(cover_data, end) - cover_data;
-			cover_protect(cov);
-		}
-		// Always sent uint64 PCs.
-		for (uint32 i = 0; i < cover_size; i++)
-			write_output_64(cover_data[i] + cov->pc_offset);
-		*cover_count_pos = cover_size;
+template <typename cover_data_t>
+uint32 write_cover(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
+{
+	uint32 cover_size = cov->size;
+	cover_data_t* cover_data = (cover_data_t*)(cov->data + cov->data_offset);
+	if (flag_dedup_cover) {
+		cover_data_t* end = cover_data + cover_size;
+		cover_unprotect(cov);
+		std::sort(cover_data, end);
+		cover_size = std::unique(cover_data, end) - cover_data;
+		cover_protect(cov);
 	}
+	fbb.StartVector(cover_size, sizeof(uint64));
+	for (uint32 i = 0; i < cover_size; i++)
+		fbb.PushElement(uint64(cover_data[i] + cov->pc_offset));
+	return fbb.EndVector(cover_size);
+}
+
+uint32 write_comparisons(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
+{
+	// Collect only the comparisons
+	uint64 ncomps = *(uint64_t*)cov->data;
+	kcov_comparison_t* cov_start = (kcov_comparison_t*)(cov->data + sizeof(uint64));
+	if ((char*)(cov_start + ncomps) > cov->data_end)
+		failmsg("too many comparisons", "ncomps=%llu", ncomps);
+	cover_unprotect(cov);
+	rpc::ComparisonRaw* start = (rpc::ComparisonRaw*)cov_start;
+	rpc::ComparisonRaw* end = start;
+	// We will convert kcov_comparison_t to ComparisonRaw inplace
+	// and potentially double number of elements, so ensure we have space.
+	static_assert(sizeof(kcov_comparison_t) >= 2 * sizeof(rpc::ComparisonRaw));
+	for (uint32 i = 0; i < ncomps; i++) {
+		auto [raw, swap, ok] = convert(cov_start[i]);
+		if (!ok)
+			continue;
+		*end++ = raw;
+		if (swap)
+			*end++ = {raw.op2(), raw.op1()};
+	}
+	std::sort(start, end, [](rpc::ComparisonRaw a, rpc::ComparisonRaw b) -> bool {
+		if (a.op1() != b.op1())
+			return a.op1() < b.op1();
+		return a.op2() < b.op2();
+	});
+	ncomps = std::unique(start, end, [](rpc::ComparisonRaw a, rpc::ComparisonRaw b) -> bool {
+			 return a.op1() == b.op1() && a.op2() == b.op2();
+		 }) -
+		 start;
+	cover_protect(cov);
+	return fbb.CreateVectorOfStructs(start, ncomps).o;
 }
 
 bool coverage_filter(uint64 pc)
@@ -1109,56 +1155,64 @@ void copyout_call_results(thread_t* th)
 	}
 }
 
+void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
+{
+	auto& fbb = *output_builder;
+	const uint32 start_size = output_builder->GetSize();
+	uint32 signal_off = 0;
+	uint32 cover_off = 0;
+	uint32 comps_off = 0;
+	if (flag_comparisons) {
+		comps_off = write_comparisons(fbb, cov);
+	} else {
+		if (flag_collect_signal) {
+			if (is_kernel_64_bit)
+				signal_off = write_signal<uint64>(fbb, cov);
+			else
+				signal_off = write_signal<uint32>(fbb, cov);
+		}
+		if (flag_collect_cover) {
+			if (is_kernel_64_bit)
+				cover_off = write_cover<uint64>(fbb, cov);
+			else
+				cover_off = write_cover<uint32>(fbb, cov);
+		}
+	}
+
+	rpc::CallInfoRawBuilder builder(*output_builder);
+	builder.add_flags(flags);
+	builder.add_error(error);
+	if (signal_off)
+		builder.add_signal(signal_off);
+	if (cover_off)
+		builder.add_cover(cover_off);
+	if (comps_off)
+		builder.add_comps(comps_off);
+	auto off = builder.Finish();
+	uint32 slot = output_data->completed.load(std::memory_order_relaxed);
+	//!!! increase size and check that we have space
+	auto& call = output_data->calls[slot];
+	call.index = index;
+	call.data_size = output_builder->GetSize();
+	call.offset = off;
+	output_data->completed.store(slot + 1, std::memory_order_release);
+	debug_verbose("out #%u: index=%u errno=%d flags=0x%x total_size=%u\n",
+		      slot + 1, index, error, static_cast<unsigned>(flags), call.data_size - start_size);
+}
+
 void write_call_output(thread_t* th, bool finished)
 {
 	uint32 reserrno = ENOSYS;
-	const bool blocked = finished && th != last_scheduled;
-	uint32 call_flags = call_flag_executed | (blocked ? call_flag_blocked : 0);
+	rpc::CallFlag flags = rpc::CallFlag::Executed;
+	if (finished && th != last_scheduled)
+		flags |= rpc::CallFlag::Blocked;
 	if (finished) {
 		reserrno = th->res != -1 ? 0 : th->reserrno;
-		call_flags |= call_flag_finished |
-			      (th->fault_injected ? call_flag_fault_injected : 0);
+		flags |= rpc::CallFlag::Finished;
+		if (th->fault_injected)
+			flags |= rpc::CallFlag::FaultInjected;
 	}
-	write_output(kOutMagic);
-	write_output(th->call_index);
-	write_output(th->call_num);
-	write_output(reserrno);
-	write_output(call_flags);
-	uint32* signal_count_pos = write_output(0); // filled in later
-	uint32* cover_count_pos = write_output(0); // filled in later
-	uint32* comps_count_pos = write_output(0); // filled in later
-
-	if (flag_comparisons) {
-		// Collect only the comparisons
-		uint64 ncomps = *(uint64_t*)th->cov.data;
-		kcov_comparison_t* start = (kcov_comparison_t*)(th->cov.data + sizeof(uint64));
-		kcov_comparison_t* end = start + ncomps;
-		if ((char*)end > th->cov.data_end)
-			failmsg("too many comparisons", "ncomps=%llu", ncomps);
-		cover_unprotect(&th->cov);
-		std::sort(start, end);
-		ncomps = std::unique(start, end) - start;
-		cover_protect(&th->cov);
-		uint32 comps_size = 0;
-		for (uint32 i = 0; i < ncomps; ++i) {
-			if (start[i].ignore())
-				continue;
-			comps_size++;
-			start[i].write();
-		}
-		// Write out number of comparisons.
-		*comps_count_pos = comps_size;
-	} else if (flag_collect_signal || flag_collect_cover) {
-		if (is_kernel_64_bit)
-			write_coverage_signal<uint64>(&th->cov, signal_count_pos, cover_count_pos);
-		else
-			write_coverage_signal<uint32>(&th->cov, signal_count_pos, cover_count_pos);
-	}
-	debug_verbose("out #%u: index=%u num=%u errno=%d finished=%d blocked=%d sig=%u cover=%u comps=%llu\n",
-		      completed, th->call_index, th->call_num, reserrno, finished, blocked,
-		      *signal_count_pos, *cover_count_pos, *comps_count_pos);
-	completed++;
-	write_completed(completed);
+	write_output(th->call_index, &th->cov, flags, reserrno);
 }
 
 void write_extra_output()
@@ -1168,22 +1222,7 @@ void write_extra_output()
 	cover_collect(&extra_cov);
 	if (!extra_cov.size)
 		return;
-	write_output(kOutMagic);
-	write_output(-1); // call index
-	write_output(-1); // call num
-	write_output(999); // errno
-	write_output(0); // call flags
-	uint32* signal_count_pos = write_output(0); // filled in later
-	uint32* cover_count_pos = write_output(0); // filled in later
-	write_output(0); // comps_count_pos
-	if (is_kernel_64_bit)
-		write_coverage_signal<uint64>(&extra_cov, signal_count_pos, cover_count_pos);
-	else
-		write_coverage_signal<uint32>(&extra_cov, signal_count_pos, cover_count_pos);
-	cover_reset(&extra_cov);
-	debug_verbose("extra: sig=%u cover=%u\n", *signal_count_pos, *cover_count_pos);
-	completed++;
-	write_completed(completed);
+	write_output(-1, &extra_cov, rpc::CallFlag::NONE, 997);
 }
 
 void thread_create(thread_t* th, int id, bool need_coverage)
@@ -1518,45 +1557,42 @@ uint64 read_input(uint8** input_posp, bool peek)
 	return v;
 }
 
-uint32* write_output(uint32 v)
+std::tuple<rpc::ComparisonRaw, bool, bool> convert(const kcov_comparison_t& cmp)
 {
-	if (output_pos < output_data || (char*)output_pos >= (char*)output_data + output_size)
-		failmsg("output overflow", "pos=%p region=[%p:%p]",
-			output_pos, output_data, (char*)output_data + output_size);
-	*output_pos = v;
-	return output_pos++;
-}
+	if (cmp.type > (KCOV_CMP_CONST | KCOV_CMP_SIZE_MASK))
+		failmsg("invalid kcov comp type", "type=%llx", cmp.type);
+	uint64 arg1 = cmp.arg1;
+	uint64 arg2 = cmp.arg2;
+	// Comparisons with 0 are not interesting, fuzzer should be able to guess 0's without help.
+	if (arg1 == 0 && (arg2 == 0 || (cmp.type & KCOV_CMP_CONST)))
+		return {};
+	// Successful comparison is not interesting.
+	if (arg1 == arg2)
+		return {};
 
-uint32* write_output_64(uint64 v)
-{
-	if (output_pos < output_data || (char*)(output_pos + 1) >= (char*)output_data + output_size)
-		failmsg("output overflow", "pos=%p region=[%p:%p]",
-			output_pos, output_data, (char*)output_data + output_size);
-	*(uint64*)output_pos = v;
-	output_pos += 2;
-	return output_pos;
-}
+	// This can be a pointer (assuming 64-bit kernel).
+	// First of all, we want avert fuzzer from our output region.
+	// Without this fuzzer manages to discover and corrupt it.
+	uint64 out_start = (uint64)output_data;
+	uint64 out_end = out_start + output_size;
+	if (arg1 >= out_start && arg1 <= out_end)
+		return {};
+	if (arg2 >= out_start && arg2 <= out_end)
+		return {};
+	// Filter out kernel physical memory addresses.
+	// These are internal kernel comparisons and should not be interesting.
+	bool kptr1 = is_kernel_data(arg1) || is_kernel_pc(arg1) > 0 || arg1 == 0;
+	bool kptr2 = is_kernel_data(arg2) || is_kernel_pc(arg2) > 0 || arg2 == 0;
+	if (kptr1 && kptr2)
+		return {};
+	if (!coverage_filter(cmp.pc))
+		return {};
 
-void write_completed(uint32 completed)
-{
-	__atomic_store_n(output_data, completed, __ATOMIC_RELEASE);
-}
-
-void kcov_comparison_t::write()
-{
-	if (type > (KCOV_CMP_CONST | KCOV_CMP_SIZE_MASK))
-		failmsg("invalid kcov comp type", "type=%llx", type);
-
-	// Write order: type arg1 arg2 pc.
-	write_output((uint32)type);
-
-	// KCOV converts all arguments of size x first to uintx_t and then to
-	// uint64. We want to properly extend signed values, e.g we want
-	// int8 c = 0xfe to be represented as 0xfffffffffffffffe.
-	// Note that uint8 c = 0xfe will be represented the same way.
-	// This is ok because during hints processing we will anyways try
-	// the value 0x00000000000000fe.
-	switch (type & KCOV_CMP_SIZE_MASK) {
+	// KCOV converts all arguments of size x first to uintx_t and then to uint64.
+	// We want to properly extend signed values, e.g we want int8 c = 0xfe to be represented
+	// as 0xfffffffffffffffe. Note that uint8 c = 0xfe will be represented the same way.
+	// This is ok because during hints processing we will anyways try the value 0x00000000000000fe.
+	switch (cmp.type & KCOV_CMP_SIZE_MASK) {
 	case KCOV_CMP_SIZE1:
 		arg1 = (uint64)(long long)(signed char)arg1;
 		arg2 = (uint64)(long long)(signed char)arg2;
@@ -1570,88 +1606,8 @@ void kcov_comparison_t::write()
 		arg2 = (uint64)(long long)(int)arg2;
 		break;
 	}
-	bool is_size_8 = (type & KCOV_CMP_SIZE_MASK) == KCOV_CMP_SIZE8;
-	if (!is_size_8) {
-		write_output((uint32)arg1);
-		write_output((uint32)arg2);
-	} else {
-		write_output_64(arg1);
-		write_output_64(arg2);
-	}
-}
 
-bool kcov_comparison_t::ignore() const
-{
-	// Comparisons with 0 are not interesting, fuzzer should be able to guess 0's without help.
-	if (arg1 == 0 && (arg2 == 0 || (type & KCOV_CMP_CONST)))
-		return true;
-	// This can be a pointer (assuming 64-bit kernel).
-	// First of all, we want avert fuzzer from our output region.
-	// Without this fuzzer manages to discover and corrupt it.
-	uint64 out_start = (uint64)output_data;
-	uint64 out_end = out_start + output_size;
-	if (arg1 >= out_start && arg1 <= out_end)
-		return true;
-	if (arg2 >= out_start && arg2 <= out_end)
-		return true;
-	// Filter out kernel physical memory addresses.
-	// These are internal kernel comparisons and should not be interesting.
-	bool kptr1 = is_kernel_data(arg1) || is_kernel_pc(arg1) > 0 || arg1 == 0;
-	bool kptr2 = is_kernel_data(arg2) || is_kernel_pc(arg2) > 0 || arg2 == 0;
-	if (kptr1 && kptr2)
-		return true;
-	return !coverage_filter(pc);
-}
-
-bool kcov_comparison_t::operator==(const struct kcov_comparison_t& other) const
-{
-	// We don't check for PC equality now, because it is not used.
-	return type == other.type && arg1 == other.arg1 && arg2 == other.arg2;
-}
-
-bool kcov_comparison_t::operator<(const struct kcov_comparison_t& other) const
-{
-	if (type != other.type)
-		return type < other.type;
-	if (arg1 != other.arg1)
-		return arg1 < other.arg1;
-	// We don't check for PC equality now, because it is not used.
-	return arg2 < other.arg2;
-}
-
-void setup_features(char** enable, int n)
-{
-	// This does any one-time setup for the requested features on the machine.
-	// Note: this can be called multiple times and must be idempotent.
-	flag_debug = true;
-	if (n != 1)
-		fail("setup: more than one feature");
-	char* endptr = nullptr;
-	auto feature = static_cast<rpc::Feature>(strtoull(enable[0], &endptr, 10));
-	if (endptr == enable[0] || (feature > rpc::Feature::ANY) ||
-	    __builtin_popcountll(static_cast<uint64>(feature)) > 1)
-		failmsg("setup: failed to parse feature", "feature='%s'", enable[0]);
-	if (feature == rpc::Feature::NONE) {
-#if SYZ_HAVE_FEATURES
-		setup_sysctl();
-		setup_cgroups();
-#endif
-#if SYZ_HAVE_SETUP_EXT
-		// This can be defined in common_ext.h.
-		setup_ext();
-#endif
-		return;
-	}
-	for (size_t i = 0; i < sizeof(features) / sizeof(features[0]); i++) {
-		if (features[i].id == feature) {
-			const char* reason = features[i].setup();
-			if (reason)
-				fail(reason);
-			return;
-		}
-	}
-	// Note: pkg/host knows about this error message.
-	fail("feature setup is not needed");
+	return {{arg2, arg1}, !(cmp.type & KCOV_CMP_CONST), true};
 }
 
 void failmsg(const char* err, const char* msg, ...)

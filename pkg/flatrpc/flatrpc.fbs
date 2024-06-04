@@ -8,6 +8,7 @@ enum Feature : uint64 (bit_flags) {
 	Comparisons,
 	ExtraCoverage,
 	DelayKcovMmap,
+	SandboxNone,
 	SandboxSetuid,
 	SandboxNamespace,
 	SandboxAndroid,
@@ -100,8 +101,6 @@ enum RequestFlag : uint64 (bit_flags) {
 	// If set, prog_data contains compiled executable binary
 	// that needs to be written to disk and executed.
 	IsBinary,
-	// If set, fully reset executor state befor executing the test.
-	ResetState,
 	// If set, collect program output and return in output field.
 	ReturnOutput,
 	// If set, don't fail on program failures, instead return the error in error field.
@@ -112,6 +111,8 @@ enum RequestFlag : uint64 (bit_flags) {
 enum ExecEnv : uint64 (bit_flags) {
 	Debug,			// debug output from executor
 	Signal,			// collect feedback signals (coverage)
+	ResetState,    		// fully reset executor state befor executing the test
+	SandboxNone,		// minimal sandboxing
 	SandboxSetuid,		// impersonate nobody user
 	SandboxNamespace,	// use namespaces for sandboxing
 	SandboxAndroid,		// use Android sandboxing for the untrusted_app domain

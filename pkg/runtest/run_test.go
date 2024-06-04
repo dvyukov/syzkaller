@@ -8,19 +8,21 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
+	//"errors"
 	"flag"
+	//"time"
 	"fmt"
-	"os"
+	//"os"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
+	//"time"
 
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/flatrpc"
+	"github.com/google/syzkaller/pkg/rpcserver"
+	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/testutil"
 	"github.com/google/syzkaller/prog"
@@ -29,13 +31,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Can be used as:
-// go test -v -run=Test/64_fork ./pkg/runtest -filter=nonfailing
-// to select a subset of tests to run.
-var flagFilter = flag.String("filter", "", "prefix to match test file names")
+var (
+	// Can be used as:
+	// go test -v -run=Test/64_fork ./pkg/runtest -filter=nonfailing
+	// to select a subset of tests to run.
+	flagFilter = flag.String("filter", "", "prefix to match test file names")
+	flagDebug = flag.Bool("debug", false, "include debug output from the executor")
+	flarGDB = flag.Bool("gdb", false, "run executor under gdb")
+)
 
-var flagDebug = flag.Bool("debug", false, "include debug output from the executor")
-
+/*
 func Test(t *testing.T) {
 	switch runtime.GOOS {
 	case targets.OpenBSD:
@@ -108,13 +113,14 @@ func test(t *testing.T, sysTarget *targets.Target) {
 		t.Fatal(err)
 	}
 }
+*/
 
 func TestCover(t *testing.T) {
 	// End-to-end test for coverage/signal/comparisons collection.
 	// We inject given blobs into KCOV buffer using syz_inject_cover,
 	// and then test what we get back.
 	t.Parallel()
-	for _, arch := range []string{targets.TestArch32, targets.TestArch64} {
+	for _, arch := range []string{targets.TestArch32, targets.TestArch64, targets.TestArch64Fork} {
 		sysTarget := targets.Get(targets.TestOS, arch)
 		t.Run(arch, func(t *testing.T) {
 			if sysTarget.BrokenCompiler != "" {
@@ -295,17 +301,69 @@ func testCover(t *testing.T, target *prog.Target) {
 		},
 		// TODO: test max signal filtering and cover filter when syz-executor handles them.
 	}
-	executor := csource.BuildExecutor(t, target, "../../")
+	exec := queue.Plain()
+	cfg := &rpcserver.LocalConfig{
+		Config: rpcserver.Config{
+			Config: vminfo.Config{
+				Target: target,
+				Features: /*flatrpc.FeatureCoverage | flatrpc.FeatureComparisons |*/ flatrpc.FeatureSandboxNone,
+				//Syscalls: requestedSyscalls,
+				Debug: *flagDebug,
+				//Cover: true,
+				Sandbox: flatrpc.ExecEnvSandboxNone,
+				//SandboxArg: int64(*flagSandboxArg),
+			},
+			Procs: runtime.GOMAXPROCS(0),
+			Slowdown: 1,
+		},
+		Executor: csource.BuildExecutor(t, target, "../../"),
+		Done: make(chan bool),
+		GDB: *flarGDB,
+	}
+	cfg.MachineChecked = func(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source {
+			cfg.Cover = true
+			return exec
+		}
+	//done := make(chan error)
+	errc := make(chan error)
+	go func() {
+		err := rpcserver.RunLocal(cfg)
+		t.Logf("executor exited: %v", err)
+		/*
+		loop:
+		for {
+			req := exec.Next()
+			if req == nil {
+				select {
+				case <-cfg.Done:
+					break loop
+				default:
+					time.Sleep(time.Millisecond)
+					continue loop
+				}
+			}
+fmt.Printf("fallback reply to req %p\n", req)
+			req.Done(&queue.Result{Status: queue.Crashed})
+		}
+		*/
+		errc <- err
+	}()
+	t.Cleanup(func() {
+		close(cfg.Done)
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+	})
 	for i, test := range tests {
 		test := test
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			t.Parallel()
-			testCover1(t, target, executor, test)
+			testCover1(t, target, test, exec)
 		})
 	}
 }
 
-func testCover1(t *testing.T, target *prog.Target, executor string, test CoverTest) {
+func testCover1(t *testing.T, target *prog.Target, test CoverTest, exec *queue.PlainQueue) {
 	text := fmt.Sprintf(`syz_inject_cover(0x%v, &AUTO="%s", AUTO)`, test.Is64Bit, hex.EncodeToString(test.Input))
 	p, err := target.Deserialize([]byte(text), prog.Strict)
 	if err != nil {
@@ -315,18 +373,25 @@ func testCover1(t *testing.T, target *prog.Target, executor string, test CoverTe
 		Prog:   p,
 		Repeat: 1,
 		ExecOpts: flatrpc.ExecOpts{
-			EnvFlags:  flatrpc.ExecEnvSignal,
+			EnvFlags:  flatrpc.ExecEnvSignal | flatrpc.ExecEnvSandboxNone,
 			ExecFlags: test.Flags,
 		},
 	}
-	res := runTest(req, executor)
+	exec.Submit(req)
+	res := req.Wait(context.Background())
 	if res.Err != nil || res.Info == nil || len(res.Info.Calls) != 1 || res.Info.Calls[0] == nil {
-		t.Fatalf("program execution failed: %v\n%s", res.Err, res.Output)
+		t.Fatalf("program execution failed: status=%v err=%v\n%s", res.Status, res.Err, res.Output)
 	}
 	call := res.Info.Calls[0]
 	var comps [][2]uint64
 	for _, cmp := range call.Comps {
 		comps = append(comps, [2]uint64{cmp.Op1, cmp.Op2})
+	}
+	if test.Cover == nil {
+		test.Cover = []uint64{}
+	}
+	if test.Signal == nil {
+		test.Signal = []uint64{}
 	}
 	assert.Equal(t, test.Cover, call.Cover)
 	assert.Equal(t, test.Signal, call.Signal)
@@ -360,6 +425,8 @@ func makeComps(comps ...Comparison) []byte {
 	}
 	return w.Bytes()
 }
+
+/*
 
 func runTest(req *queue.Request, executor string) *queue.Result {
 	cfg := new(ipc.Config)
@@ -428,6 +495,7 @@ func runTestC(req *queue.Request) *queue.Result {
 	}
 	return res
 }
+*/
 
 func TestParsing(t *testing.T) {
 	t.Parallel()

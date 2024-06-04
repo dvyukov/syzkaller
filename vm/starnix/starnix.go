@@ -283,6 +283,7 @@ func (inst *instance) restartAdbAsRoot() error {
 }
 
 // Script for telling syz-fuzzer how to connect to syz-executor.
+// TODO: this needs some adjustment.
 func (inst *instance) createAdbScript() error {
 	adbScript := fmt.Sprintf(
 		`#!/usr/bin/env bash
@@ -318,8 +319,8 @@ func (inst *instance) Forward(port int) (string, error) {
 func (inst *instance) Copy(hostSrc string) (string, error) {
 	startTime := time.Now()
 	base := filepath.Base(hostSrc)
-	if base == "syz-fuzzer" || base == "syz-execprog" {
-		return hostSrc, nil // we will run these on host.
+	if base == "syz-execprog" {
+		return hostSrc, nil // we will run it on host.
 	}
 	vmDst := filepath.Join(targetDir, base)
 
@@ -398,7 +399,7 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 	inst.merger.Add("adb", rpipe)
 
 	args := strings.Split(command, " ")
-	if bin := filepath.Base(args[0]); bin == "syz-fuzzer" || bin == "syz-execprog" {
+	if filepath.Base(args[0]) == "syz-execprog" {
 		for i, arg := range args {
 			if strings.HasPrefix(arg, "-executor=") {
 				args[i] = fmt.Sprintf("-executor=%s %d", inst.executor, inst.port)

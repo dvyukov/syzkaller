@@ -4,7 +4,9 @@
 package flatrpc
 
 import (
+	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -63,10 +65,7 @@ func TestConn(t *testing.T) {
 	}
 	defer serv.Close()
 
-	c, err := Dial(serv.Addr.String(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := dial(t, serv.Addr.String())
 	defer c.Close()
 
 	if err := Send(c, connectReq); err != nil {
@@ -122,10 +121,7 @@ func BenchmarkConn(b *testing.B) {
 	}
 	defer serv.Close()
 
-	c, err := Dial(serv.Addr.String(), 1)
-	if err != nil {
-		b.Fatal(err)
-	}
+	c := dial(b, serv.Addr.String())
 	defer c.Close()
 
 	b.ReportAllocs()
@@ -139,4 +135,12 @@ func BenchmarkConn(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func dial(t testing.TB, addr string) *Conn {
+	conn, err := net.DialTimeout("tcp", addr, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewConn(conn)
 }

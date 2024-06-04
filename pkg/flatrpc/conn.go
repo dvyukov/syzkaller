@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"slices"
 	"sync"
-	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/google/syzkaller/pkg/log"
@@ -50,7 +48,7 @@ func ListenAndServe(addr string, handler func(*Conn)) (*Serv, error) {
 				continue
 			}
 			go func() {
-				c := newConn(conn)
+				c := NewConn(conn)
 				defer c.Close()
 				handler(c)
 			}()
@@ -77,22 +75,7 @@ type Conn struct {
 	lastMsg int
 }
 
-func Dial(addr string, timeScale time.Duration) (*Conn, error) {
-	var conn net.Conn
-	var err error
-	if addr == "stdin" {
-		// This is used by vm/gvisor which passes us a unix socket connection in stdin.
-		conn, err = net.FileConn(os.Stdin)
-	} else {
-		conn, err = net.DialTimeout("tcp", addr, time.Minute*timeScale)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return newConn(conn), nil
-}
-
-func newConn(conn net.Conn) *Conn {
+func NewConn(conn net.Conn) *Conn {
 	return &Conn{
 		conn:    conn,
 		builder: flatbuffers.NewBuilder(0),

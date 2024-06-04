@@ -88,33 +88,35 @@ enum class Feature : uint64_t {
   Comparisons = 2ULL,
   ExtraCoverage = 4ULL,
   DelayKcovMmap = 8ULL,
-  SandboxSetuid = 16ULL,
-  SandboxNamespace = 32ULL,
-  SandboxAndroid = 64ULL,
-  Fault = 128ULL,
-  Leak = 256ULL,
-  NetInjection = 512ULL,
-  NetDevices = 1024ULL,
-  KCSAN = 2048ULL,
-  DevlinkPCI = 4096ULL,
-  NicVF = 8192ULL,
-  USBEmulation = 16384ULL,
-  VhciInjection = 32768ULL,
-  WifiEmulation = 65536ULL,
-  LRWPANEmulation = 131072ULL,
-  BinFmtMisc = 262144ULL,
-  Swap = 524288ULL,
+  SandboxNone = 16ULL,
+  SandboxSetuid = 32ULL,
+  SandboxNamespace = 64ULL,
+  SandboxAndroid = 128ULL,
+  Fault = 256ULL,
+  Leak = 512ULL,
+  NetInjection = 1024ULL,
+  NetDevices = 2048ULL,
+  KCSAN = 4096ULL,
+  DevlinkPCI = 8192ULL,
+  NicVF = 16384ULL,
+  USBEmulation = 32768ULL,
+  VhciInjection = 65536ULL,
+  WifiEmulation = 131072ULL,
+  LRWPANEmulation = 262144ULL,
+  BinFmtMisc = 524288ULL,
+  Swap = 1048576ULL,
   NONE = 0,
-  ANY = 1048575ULL
+  ANY = 2097151ULL
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(Feature, uint64_t)
 
-inline const Feature (&EnumValuesFeature())[20] {
+inline const Feature (&EnumValuesFeature())[21] {
   static const Feature values[] = {
     Feature::Coverage,
     Feature::Comparisons,
     Feature::ExtraCoverage,
     Feature::DelayKcovMmap,
+    Feature::SandboxNone,
     Feature::SandboxSetuid,
     Feature::SandboxNamespace,
     Feature::SandboxAndroid,
@@ -141,6 +143,7 @@ inline const char *EnumNameFeature(Feature e) {
     case Feature::Comparisons: return "Comparisons";
     case Feature::ExtraCoverage: return "ExtraCoverage";
     case Feature::DelayKcovMmap: return "DelayKcovMmap";
+    case Feature::SandboxNone: return "SandboxNone";
     case Feature::SandboxSetuid: return "SandboxSetuid";
     case Feature::SandboxNamespace: return "SandboxNamespace";
     case Feature::SandboxAndroid: return "SandboxAndroid";
@@ -398,18 +401,16 @@ bool VerifyExecutorMessagesRawVector(flatbuffers::Verifier &verifier, const flat
 
 enum class RequestFlag : uint64_t {
   IsBinary = 1ULL,
-  ResetState = 2ULL,
-  ReturnOutput = 4ULL,
-  ReturnError = 8ULL,
+  ReturnOutput = 2ULL,
+  ReturnError = 4ULL,
   NONE = 0,
-  ANY = 15ULL
+  ANY = 7ULL
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(RequestFlag, uint64_t)
 
-inline const RequestFlag (&EnumValuesRequestFlag())[4] {
+inline const RequestFlag (&EnumValuesRequestFlag())[3] {
   static const RequestFlag values[] = {
     RequestFlag::IsBinary,
-    RequestFlag::ResetState,
     RequestFlag::ReturnOutput,
     RequestFlag::ReturnError
   };
@@ -417,13 +418,9 @@ inline const RequestFlag (&EnumValuesRequestFlag())[4] {
 }
 
 inline const char * const *EnumNamesRequestFlag() {
-  static const char * const names[9] = {
+  static const char * const names[5] = {
     "IsBinary",
-    "ResetState",
-    "",
     "ReturnOutput",
-    "",
-    "",
     "",
     "ReturnError",
     nullptr
@@ -440,29 +437,33 @@ inline const char *EnumNameRequestFlag(RequestFlag e) {
 enum class ExecEnv : uint64_t {
   Debug = 1ULL,
   Signal = 2ULL,
-  SandboxSetuid = 4ULL,
-  SandboxNamespace = 8ULL,
-  SandboxAndroid = 16ULL,
-  ExtraCover = 32ULL,
-  EnableTun = 64ULL,
-  EnableNetDev = 128ULL,
-  EnableNetReset = 256ULL,
-  EnableCgroups = 512ULL,
-  EnableCloseFds = 1024ULL,
-  EnableDevlinkPCI = 2048ULL,
-  EnableVhciInjection = 4096ULL,
-  EnableWifi = 8192ULL,
-  DelayKcovMmap = 16384ULL,
-  EnableNicVF = 32768ULL,
+  ResetState = 4ULL,
+  SandboxNone = 8ULL,
+  SandboxSetuid = 16ULL,
+  SandboxNamespace = 32ULL,
+  SandboxAndroid = 64ULL,
+  ExtraCover = 128ULL,
+  EnableTun = 256ULL,
+  EnableNetDev = 512ULL,
+  EnableNetReset = 1024ULL,
+  EnableCgroups = 2048ULL,
+  EnableCloseFds = 4096ULL,
+  EnableDevlinkPCI = 8192ULL,
+  EnableVhciInjection = 16384ULL,
+  EnableWifi = 32768ULL,
+  DelayKcovMmap = 65536ULL,
+  EnableNicVF = 131072ULL,
   NONE = 0,
-  ANY = 65535ULL
+  ANY = 262143ULL
 };
 FLATBUFFERS_DEFINE_BITMASK_OPERATORS(ExecEnv, uint64_t)
 
-inline const ExecEnv (&EnumValuesExecEnv())[16] {
+inline const ExecEnv (&EnumValuesExecEnv())[18] {
   static const ExecEnv values[] = {
     ExecEnv::Debug,
     ExecEnv::Signal,
+    ExecEnv::ResetState,
+    ExecEnv::SandboxNone,
     ExecEnv::SandboxSetuid,
     ExecEnv::SandboxNamespace,
     ExecEnv::SandboxAndroid,
@@ -485,6 +486,8 @@ inline const char *EnumNameExecEnv(ExecEnv e) {
   switch (e) {
     case ExecEnv::Debug: return "Debug";
     case ExecEnv::Signal: return "Signal";
+    case ExecEnv::ResetState: return "ResetState";
+    case ExecEnv::SandboxNone: return "SandboxNone";
     case ExecEnv::SandboxSetuid: return "SandboxSetuid";
     case ExecEnv::SandboxNamespace: return "SandboxNamespace";
     case ExecEnv::SandboxAndroid: return "SandboxAndroid";

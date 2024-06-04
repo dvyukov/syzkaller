@@ -29,7 +29,6 @@ type Derived struct {
 	TargetVMArch string
 
 	// Full paths to binaries we are going to use:
-	FuzzerBin   string
 	ExecprogBin string
 	ExecutorBin string
 
@@ -39,7 +38,7 @@ type Derived struct {
 
 	// Special debugging/development mode specified by VM type "none".
 	// In this mode syz-manager does not start any VMs, but instead a user is supposed
-	// to start syz-fuzzer process in a VM manually.
+	// to start syz-executor process in a VM manually.
 	VMLess bool
 }
 
@@ -70,7 +69,8 @@ func LoadPartialData(data []byte) (*Config, error) {
 	if err := config.LoadData(data, cfg); err != nil {
 		return nil, err
 	}
-	return loadPartial(cfg)
+	err := cfg.CompletePartial()
+	return cfg, err
 }
 
 func LoadPartialFile(filename string) (*Config, error) {
@@ -78,7 +78,8 @@ func LoadPartialFile(filename string) (*Config, error) {
 	if err := config.LoadFile(filename, cfg); err != nil {
 		return nil, err
 	}
-	return loadPartial(cfg)
+	err := cfg.CompletePartial()
+	return cfg, err
 }
 
 func defaultValues() *Config {
@@ -94,21 +95,23 @@ func defaultValues() *Config {
 	}
 }
 
-func loadPartial(cfg *Config) (*Config, error) {
+func (cfg *Config) CompletePartial() error {
 	var err error
 	cfg.TargetOS, cfg.TargetVMArch, cfg.TargetArch, err = splitTarget(cfg.RawTarget)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	cfg.Target, err = prog.GetTarget(cfg.TargetOS, cfg.TargetArch)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	cfg.SysTarget = targets.Get(cfg.TargetOS, cfg.TargetVMArch)
 	if cfg.SysTarget == nil {
-		return nil, fmt.Errorf("unsupported OS/arch: %v/%v", cfg.TargetOS, cfg.TargetVMArch)
+		return fmt.Errorf("unsupported OS/arch: %v/%v", cfg.TargetOS, cfg.TargetVMArch)
 	}
-	return cfg, nil
+	cfg.VMLess = cfg.Type == "none"
+	cfg.initTimeouts()
+	return nil
 }
 
 func Complete(cfg *Config) error {
@@ -195,8 +198,6 @@ func Complete(cfg *Config) error {
 			return err
 		}
 	}
-	cfg.initTimeouts()
-	cfg.VMLess = cfg.Type == "none"
 	return nil
 }
 
@@ -212,6 +213,10 @@ func (cfg *Config) initTimeouts() {
 		// but a smaller value should be enough to finish at least some syscalls.
 		// Note: the name check is a hack.
 		slowdown = 10
+	case cfg.VMLess:
+		if cfg.Timeouts.Slowdown != 0 {
+			slowdown = cfg.Timeouts.Slowdown
+		}
 	}
 	// Note: we could also consider heavy debug tools (KASAN/KMSAN/KCSAN/KMEMLEAK) if necessary.
 	cfg.Timeouts = cfg.SysTarget.Timeouts(slowdown)
@@ -263,15 +268,11 @@ func (cfg *Config) completeBinaries() error {
 	targetBin := func(name, arch string) string {
 		return filepath.Join(cfg.Syzkaller, "bin", cfg.TargetOS+"_"+arch, name+exe)
 	}
-	cfg.FuzzerBin = targetBin("syz-fuzzer", cfg.TargetVMArch)
 	cfg.ExecprogBin = targetBin("syz-execprog", cfg.TargetVMArch)
 	cfg.ExecutorBin = targetBin("syz-executor", cfg.TargetArch)
 	// If the target already provides an executor binary, we don't need to copy it.
 	if cfg.SysTarget.ExecutorBin != "" {
 		cfg.ExecutorBin = ""
-	}
-	if !osutil.IsExist(cfg.FuzzerBin) {
-		return fmt.Errorf("bad config syzkaller param: can't find %v", cfg.FuzzerBin)
 	}
 	if !osutil.IsExist(cfg.ExecprogBin) {
 		return fmt.Errorf("bad config syzkaller param: can't find %v", cfg.ExecprogBin)
