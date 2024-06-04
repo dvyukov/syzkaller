@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys/targets"
@@ -50,7 +49,7 @@ type syscallResult struct {
 
 func newCheckContext(ctx context.Context, cfg *mgrconfig.Config, impl checker,
 	executor queue.Executor) *checkContext {
-	sandbox, err := ipc.SandboxToFlags(cfg.Sandbox)
+	sandbox, err := flatrpc.SandboxToFlags(cfg.Sandbox)
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
 	}

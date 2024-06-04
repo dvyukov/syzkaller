@@ -272,8 +272,7 @@ func (f *testFuzzer) wait() {
 	}
 }
 
-// TODO: it's already implemented in syz-fuzzer/proc.go,
-// pkg/runtest and tools/syz-execprog.
+// TODO: it's already implemented in pkg/runtest and tools/syz-execprog.
 // Looks like it's time to factor out this functionality.
 type executorProc struct {
 	env      *ipc.Env

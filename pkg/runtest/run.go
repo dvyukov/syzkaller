@@ -27,7 +27,6 @@ import (
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys/targets"
 	"golang.org/x/sync/errgroup"
@@ -438,7 +437,7 @@ func match(props, requires map[string]bool) bool {
 
 func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bool, times int) (*runRequest, error) {
 	var opts flatrpc.ExecOpts
-	sandboxFlags, err := ipc.SandboxToFlags(sandbox)
+	sandboxFlags, err := flatrpc.SandboxToFlags(sandbox)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +450,7 @@ func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bo
 		opts.ExecFlags |= flatrpc.ExecFlagCollectSignal
 		opts.ExecFlags |= flatrpc.ExecFlagCollectCover
 	}
-	opts.EnvFlags |= ipc.FeaturesToFlags(ctx.Features, nil)
+	opts.EnvFlags |= csource.FeaturesToFlags(ctx.Features, nil)
 	if ctx.Debug {
 		opts.EnvFlags |= flatrpc.ExecEnvDebug
 	}

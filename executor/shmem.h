@@ -65,7 +65,9 @@ private:
 	void Mmap(int fd, void* preferred, size_t size, bool write)
 	{
 		size_ = size;
-		mem_ = mmap(preferred, size, PROT_READ | (write ? PROT_WRITE : 0), MAP_SHARED, fd, 0);
+		uint32 prot = PROT_READ | (write ? PROT_WRITE : 0);
+		uint32 flags = MAP_SHARED /*| MAP_HUGETLB | (21 << MAP_HUGE_SHIFT)*/;
+		mem_ = mmap(preferred, size, prot, flags, fd, 0);
 		if (mem_ == MAP_FAILED)
 			failmsg("shmem mmap failed", "size=%zu", size);
 	}

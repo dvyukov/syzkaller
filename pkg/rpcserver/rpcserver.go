@@ -1,7 +1,7 @@
-// Copyright 2018 syzkaller project authors. All rights reserved.
+// Copyright 2024 syzkaller project authors. All rights reserved.
 // Use of this source code is governed by Apache 2 LICENSE that can be found in the LICENSE file.
 
-package main
+package rpcserver
 
 import (
 	"bytes"
@@ -16,10 +16,9 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/cover"
-	"github.com/google/syzkaller/pkg/cover/backend"
+	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/osutil"
@@ -29,12 +28,25 @@ import (
 	"github.com/google/syzkaller/prog"
 )
 
-type RPCServer struct {
-	mgr     RPCManagerView
-	cfg     *mgrconfig.Config
-	target  *prog.Target
-	checker *vminfo.Checker
-	port    int
+type Manager interface {
+	MaxSignal() signal.Signal
+	BugFrames() (leaks []string, races []string)
+	MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source
+	CoverageFilter(modules []cover.KernelModule) []uint64
+}
+
+type Server struct {
+	Port           int
+	StatExecs      *stats.Val
+	StatNumFuzzing *stats.Val
+
+	mgr      Manager
+	cfg      *mgrconfig.Config
+	threaded bool
+	debug    bool
+	serv     *flatrpc.Serv
+	target   *prog.Target
+	checker  *vminfo.Checker
 
 	infoOnce         sync.Once
 	checkDone        atomic.Bool
@@ -42,25 +54,23 @@ type RPCServer struct {
 	baseSource       *queue.DynamicSourceCtl
 	enabledFeatures  flatrpc.Feature
 	setupFeatures    flatrpc.Feature
+	execOpts         flatrpc.ExecOpts
 	modules          []cover.KernelModule
 	canonicalModules *cover.Canonicalizer
-	execCoverFilter  []uint64            // includes both coverage and comparison PCs
-	coverFilter      map[uint64]struct{} // includes only coverage PCs
+	coverFilter      []uint64
+	manualFeatures   csource.Features
 
-	mu         sync.Mutex
-	runners    map[string]*Runner
-	execSource queue.Source
-	checkLeaks bool
+	mu            sync.Mutex
+	runners       map[string]*Runner
+	execSource    queue.Source
+	triagedCorpus atomic.Bool
 
-	statNumFuzzing         *stats.Val
-	statExecs              *stats.Val
 	statExecRetries        *stats.Val
 	statExecutorRestarts   *stats.Val
 	statExecBufferTooSmall *stats.Val
 	statVMRestarts         *stats.Val
 	statNoExecRequests     *stats.Val
 	statNoExecDuration     *stats.Val
-	statCoverFiltered      *stats.Val
 }
 
 type Runner struct {
@@ -77,32 +87,24 @@ type Runner struct {
 	rnd           *rand.Rand
 }
 
-type BugFrames struct {
-	memoryLeaks []string
-	dataRaces   []string
-}
-
-// RPCManagerView restricts interface between RPCServer and Manager.
-type RPCManagerView interface {
-	currentBugFrames() BugFrames
-	maxSignal() signal.Signal
-	machineChecked(features flatrpc.Feature, enabledSyscalls map[*prog.Syscall]bool,
-		opts flatrpc.ExecOpts) queue.Source
-}
-
-func startRPCServer(mgr *Manager) (*RPCServer, error) {
-	checker := vminfo.New(mgr.cfg)
+func New(mgr Manager, cfg *mgrconfig.Config, features csource.Features, threaded, debug bool) (*Server, error) {
+	checker := vminfo.New(cfg)
 	baseSource := queue.DynamicSource(checker)
-	serv := &RPCServer{
-		mgr:        mgr,
-		cfg:        mgr.cfg,
-		target:     mgr.target,
-		runners:    make(map[string]*Runner),
-		checker:    checker,
-		baseSource: baseSource,
-		execSource: queue.Retry(baseSource),
-		statExecs:  mgr.statExecs,
-		statNumFuzzing: stats.Create("fuzzing VMs", "Number of VMs that are currently fuzzing",
+	serv := &Server{
+		mgr:            mgr,
+		cfg:            cfg,
+		threaded:       threaded,
+		debug:          debug,
+		target:         cfg.Target,
+		runners:        make(map[string]*Runner),
+		checker:        checker,
+		baseSource:     baseSource,
+		execSource:     queue.Retry(baseSource),
+		manualFeatures: features,
+
+		StatExecs: stats.Create("exec total", "Total test program executions",
+			stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total")),
+		StatNumFuzzing: stats.Create("fuzzing VMs", "Number of VMs that are currently fuzzing",
 			stats.Console),
 		statExecRetries: stats.Create("exec retries",
 			"Number of times a test program was restarted because the first run failed",
@@ -117,20 +119,17 @@ func startRPCServer(mgr *Manager) (*RPCServer, error) {
 			"Number of times fuzzer was stalled with no exec requests", stats.Rate{}),
 		statNoExecDuration: stats.Create("no exec duration",
 			"Total duration fuzzer was stalled with no exec requests (ns/sec)", stats.Rate{}),
-		statCoverFiltered: stats.Create("filtered coverage", "", stats.NoGraph),
 	}
-	s, err := flatrpc.ListenAndServe(mgr.cfg.RPC, serv.handleConn)
+	s, err := flatrpc.ListenAndServe(cfg.RPC, serv.handleConn)
 	if err != nil {
 		return nil, err
 	}
-	baseSource.Store(serv.checker)
-
-	log.Logf(0, "serving rpc on tcp://%v", s.Addr)
-	serv.port = s.Addr.Port
+	serv.serv = s
+	serv.Port = s.Addr.Port
 	return serv, nil
 }
 
-func (serv *RPCServer) handleConn(conn *flatrpc.Conn) {
+func (serv *Server) handleConn(conn *flatrpc.Conn) {
 	name, machineInfo, canonicalizer, err := serv.handshake(conn)
 	if err != nil {
 		log.Logf(1, "%v", err)
@@ -139,10 +138,10 @@ func (serv *RPCServer) handleConn(conn *flatrpc.Conn) {
 
 	if serv.cfg.VMLess {
 		// There is no VM loop, so minic what it would do.
-		serv.createInstance(name, nil)
+		serv.CreateInstance(name, nil)
 		defer func() {
-			serv.stopFuzzing(name)
-			serv.shutdownInstance(name, false)
+			serv.StopFuzzing(name)
+			serv.ShutdownInstance(name, false)
 		}()
 	}
 
@@ -156,11 +155,10 @@ func (serv *RPCServer) handleConn(conn *flatrpc.Conn) {
 	runner.conn = conn
 	runner.machineInfo = machineInfo
 	runner.canonicalizer = canonicalizer
-	checkLeaks := serv.checkLeaks
 	serv.mu.Unlock()
 	defer close(runner.finished)
 
-	if checkLeaks {
+	if serv.triagedCorpus.Load() {
 		if err := runner.sendStartLeakChecks(); err != nil {
 			log.Logf(2, "%v", err)
 			return
@@ -171,25 +169,25 @@ func (serv *RPCServer) handleConn(conn *flatrpc.Conn) {
 	log.Logf(2, "runner %v: %v", name, err)
 }
 
-func (serv *RPCServer) handshake(conn *flatrpc.Conn) (string, []byte, *cover.CanonicalizerInstance, error) {
+func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.CanonicalizerInstance, error) {
 	connectReqRaw, err := flatrpc.Recv[flatrpc.ConnectRequestRaw](conn)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	connectReq := connectReqRaw.UnPack()
-	log.Logf(1, "fuzzer %v connected", connectReq.Name)
+	log.Logf(1, "runner %v connected", connectReq.Name)
 	if !serv.cfg.VMLess {
 		checkRevisions(connectReq, serv.cfg.Target)
 	}
 	serv.statVMRestarts.Add(1)
 
-	bugFrames := serv.mgr.currentBugFrames()
+	leaks, races := serv.mgr.BugFrames()
 	connectReply := &flatrpc.ConnectReply{
-		Debug:      *flagDebug,
+		Debug:      serv.debug,
 		Procs:      int32(serv.cfg.Procs),
 		Slowdown:   int32(serv.cfg.Timeouts.Slowdown),
-		LeakFrames: bugFrames.memoryLeaks,
-		RaceFrames: bugFrames.dataRaces,
+		LeakFrames: leaks,
+		RaceFrames: races,
 	}
 	connectReply.Files = serv.checker.RequiredFiles()
 	if serv.checkDone.Load() {
@@ -198,6 +196,14 @@ func (serv *RPCServer) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Can
 		connectReply.Files = append(connectReply.Files, serv.checker.CheckFiles()...)
 		connectReply.Globs = serv.target.RequiredGlobs()
 		connectReply.Features = flatrpc.AllFeatures
+		if serv.manualFeatures != nil {
+			for feat := range flatrpc.EnumNamesFeature {
+				opt := csource.FlatRPCFeaturesToCSource[feat]
+				if opt != "" && !serv.manualFeatures[opt].Enabled {
+					connectReply.Features &= ^feat
+				}
+			}
+		}
 	}
 	if err := flatrpc.Send(conn, connectReply); err != nil {
 		return "", nil, nil, err
@@ -227,11 +233,7 @@ func (serv *RPCServer) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Can
 	serv.infoOnce.Do(func() {
 		serv.modules = modules
 		serv.canonicalModules = cover.NewCanonicalizer(modules, serv.cfg.Cover)
-		var err error
-		serv.execCoverFilter, serv.coverFilter, err = createCoverageFilter(serv.cfg, modules)
-		if err != nil {
-			log.Fatalf("failed to init coverage filter: %v", err)
-		}
+		serv.coverFilter = serv.mgr.CoverageFilter(modules)
 		globs := make(map[string][]string)
 		for _, glob := range infoReq.Globs {
 			globs[glob.Name] = glob.Files
@@ -252,7 +254,7 @@ func (serv *RPCServer) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Can
 
 	canonicalizer := serv.canonicalModules.NewInstance(modules)
 	infoReply := &flatrpc.InfoReply{
-		CoverFilter: canonicalizer.Decanonicalize(serv.execCoverFilter),
+		CoverFilter: canonicalizer.Decanonicalize(serv.coverFilter),
 	}
 	if err := flatrpc.Send(conn, infoReply); err != nil {
 		return "", nil, nil, err
@@ -260,9 +262,9 @@ func (serv *RPCServer) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Can
 	return connectReq.Name, machineInfo, canonicalizer, nil
 }
 
-func (serv *RPCServer) connectionLoop(runner *Runner) error {
+func (serv *Server) connectionLoop(runner *Runner) error {
 	if serv.cfg.Cover {
-		maxSignal := serv.mgr.maxSignal().ToRaw()
+		maxSignal := serv.mgr.MaxSignal().ToRaw()
 		for len(maxSignal) != 0 {
 			// Split coverage into batches to not grow the connection serialization
 			// buffer too much (we don't want to grow it larger than what will be needed
@@ -275,8 +277,8 @@ func (serv *RPCServer) connectionLoop(runner *Runner) error {
 		}
 	}
 
-	serv.statNumFuzzing.Add(1)
-	defer serv.statNumFuzzing.Add(-1)
+	serv.StatNumFuzzing.Add(1)
+	defer serv.StatNumFuzzing.Add(-1)
 	for {
 		for len(runner.requests)-len(runner.executing) < 2*serv.cfg.Procs {
 			req := serv.execSource.Next()
@@ -289,7 +291,6 @@ func (serv *RPCServer) connectionLoop(runner *Runner) error {
 		}
 		if len(runner.requests) == 0 {
 			// The runner has not requests at all, so don't wait to receive anything from it.
-			// This is only possible during the initial checking.
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
@@ -315,7 +316,12 @@ func (serv *RPCServer) connectionLoop(runner *Runner) error {
 	}
 }
 
-func (serv *RPCServer) sendRequest(runner *Runner, req *queue.Request) error {
+func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
+	if serv.checkDone.Load() {
+		req.ExecOpts.ExecFlags |= serv.execOpts.ExecFlags
+		req.ExecOpts.EnvFlags |= serv.execOpts.EnvFlags
+		req.ExecOpts.SandboxArg = serv.execOpts.SandboxArg
+	}
 	if err := validateRequest(req); err != nil {
 		panic(err)
 	}
@@ -366,7 +372,7 @@ func (serv *RPCServer) sendRequest(runner *Runner, req *queue.Request) error {
 	return flatrpc.Send(runner.conn, msg)
 }
 
-func (serv *RPCServer) handleExecutingMessage(runner *Runner, msg *flatrpc.ExecutingMessage) error {
+func (serv *Server) handleExecutingMessage(runner *Runner, msg *flatrpc.ExecutingMessage) error {
 	req := runner.requests[msg.Id]
 	if req == nil {
 		return fmt.Errorf("can't find executing request %v", msg.Id)
@@ -375,7 +381,7 @@ func (serv *RPCServer) handleExecutingMessage(runner *Runner, msg *flatrpc.Execu
 	if proc < 0 || proc >= serv.cfg.Procs {
 		return fmt.Errorf("got bad proc id %v", proc)
 	}
-	serv.statExecs.Add(1)
+	serv.StatExecs.Add(1)
 	if msg.Try == 0 {
 		if msg.WaitDuration != 0 {
 			serv.statNoExecRequests.Add(1)
@@ -395,7 +401,7 @@ func (serv *RPCServer) handleExecutingMessage(runner *Runner, msg *flatrpc.Execu
 	return nil
 }
 
-func (serv *RPCServer) handleExecResult(runner *Runner, msg *flatrpc.ExecResult) error {
+func (serv *Server) handleExecResult(runner *Runner, msg *flatrpc.ExecResult) error {
 	req := runner.requests[msg.Id]
 	if req == nil {
 		return fmt.Errorf("can't find executed request %v", msg.Id)
@@ -403,6 +409,12 @@ func (serv *RPCServer) handleExecResult(runner *Runner, msg *flatrpc.ExecResult)
 	delete(runner.requests, msg.Id)
 	delete(runner.executing, msg.Id)
 	if msg.Info != nil {
+		for len(msg.Info.Calls) < len(req.Prog.Calls) {
+			msg.Info.Calls = append(msg.Info.Calls, &flatrpc.CallInfo{
+				Error: 999,
+			})
+		}
+		msg.Info.Calls = msg.Info.Calls[:len(req.Prog.Calls)]
 		if msg.Info.Freshness == 0 {
 			serv.statExecutorRestarts.Add(1)
 		}
@@ -449,7 +461,7 @@ func checkRevisions(a *flatrpc.ConnectRequest, target *prog.Target) {
 	}
 }
 
-func (serv *RPCServer) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInfo []*flatrpc.FeatureInfo) error {
+func (serv *Server) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInfo []*flatrpc.FeatureInfo) error {
 	enabledCalls, disabledCalls, features, checkErr := serv.checker.Run(checkFilesInfo, checkFeatureInfo)
 	enabledCalls, transitivelyDisabled := serv.target.TransitivelyEnabledCalls(enabledCalls)
 	// Note: need to print disbled syscalls before failing due to an error.
@@ -503,12 +515,10 @@ func (serv *RPCServer) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeature
 	if checkErr != nil {
 		return checkErr
 	}
-	if len(enabledCalls) == 0 {
-		return fmt.Errorf("all system calls are disabled")
-	}
 	serv.enabledFeatures = features.Enabled()
 	serv.setupFeatures = features.NeedSetup()
-	newSource := serv.mgr.machineChecked(serv.enabledFeatures, enabledCalls, serv.execOpts())
+	serv.execOpts = serv.defaultExecOpts()
+	newSource := serv.mgr.MachineChecked(serv.enabledFeatures, enabledCalls)
 	serv.baseSource.Store(newSource)
 	serv.checkDone.Store(true)
 	return nil
@@ -526,7 +536,7 @@ func validateRequest(req *queue.Request) error {
 	return nil
 }
 
-func (serv *RPCServer) createInstance(name string, injectExec chan<- bool) {
+func (serv *Server) CreateInstance(name string, injectExec chan<- bool) {
 	runner := &Runner{
 		injectExec: injectExec,
 		finished:   make(chan bool),
@@ -545,7 +555,7 @@ func (serv *RPCServer) createInstance(name string, injectExec chan<- bool) {
 
 // stopInstance prevents further request exchange requests.
 // To make RPCServer fully forget an instance, shutdownInstance() must be called.
-func (serv *RPCServer) stopFuzzing(name string) {
+func (serv *Server) StopFuzzing(name string) {
 	serv.mu.Lock()
 	runner := serv.runners[name]
 	runner.stopped = true
@@ -556,7 +566,7 @@ func (serv *RPCServer) stopFuzzing(name string) {
 	}
 }
 
-func (serv *RPCServer) shutdownInstance(name string, crashed bool) ([]ExecRecord, []byte) {
+func (serv *Server) ShutdownInstance(name string, crashed bool) ([]ExecRecord, []byte) {
 	serv.mu.Lock()
 	runner := serv.runners[name]
 	delete(serv.runners, name)
@@ -576,7 +586,7 @@ func (serv *RPCServer) shutdownInstance(name string, crashed bool) ([]ExecRecord
 	return runner.lastExec.Collect(), runner.machineInfo
 }
 
-func (serv *RPCServer) distributeSignalDelta(plus, minus signal.Signal) {
+func (serv *Server) DistributeSignalDelta(plus, minus signal.Signal) {
 	plusRaw := plus.ToRaw()
 	minusRaw := minus.ToRaw()
 	serv.foreachRunnerAsync(func(runner *Runner) {
@@ -597,7 +607,8 @@ func (runner *Runner) sendSignalUpdate(plus, minus []uint64) error {
 	return flatrpc.Send(runner.conn, msg)
 }
 
-func (serv *RPCServer) startLeakChecking() {
+func (serv *Server) TriagedCorpus() {
+	serv.triagedCorpus.Store(true)
 	serv.foreachRunnerAsync(func(runner *Runner) {
 		runner.sendStartLeakChecks()
 	})
@@ -616,7 +627,7 @@ func (runner *Runner) sendStartLeakChecks() error {
 // foreachRunnerAsync runs callback fn for each connected runner asynchronously.
 // If a VM has hanged w/o reading out the socket, we want to avoid blocking
 // important goroutines on the send operations.
-func (serv *RPCServer) foreachRunnerAsync(fn func(runner *Runner)) {
+func (serv *Server) foreachRunnerAsync(fn func(runner *Runner)) {
 	serv.mu.Lock()
 	defer serv.mu.Unlock()
 	for _, runner := range serv.runners {
@@ -626,35 +637,24 @@ func (serv *RPCServer) foreachRunnerAsync(fn func(runner *Runner)) {
 	}
 }
 
-func (serv *RPCServer) updateCoverFilter(newCover []uint64) {
-	if len(newCover) == 0 || serv.coverFilter == nil {
-		return
-	}
-	filtered := 0
-	for _, pc := range newCover {
-		pc = backend.PreviousInstructionPC(serv.cfg.SysTarget, serv.cfg.Type, pc)
-		if _, ok := serv.coverFilter[pc]; ok {
-			filtered++
-		}
-	}
-	serv.statCoverFiltered.Add(filtered)
-}
-
-func (serv *RPCServer) execOpts() flatrpc.ExecOpts {
-	env := ipc.FeaturesToFlags(serv.enabledFeatures, nil)
-	if *flagDebug {
+func (serv *Server) defaultExecOpts() flatrpc.ExecOpts {
+	env := csource.FeaturesToFlags(serv.enabledFeatures, serv.manualFeatures)
+	if serv.debug {
 		env |= flatrpc.ExecEnvDebug
 	}
 	if serv.cfg.Cover {
 		env |= flatrpc.ExecEnvSignal
 	}
-	sandbox, err := ipc.SandboxToFlags(serv.cfg.Sandbox)
+	sandbox, err := flatrpc.SandboxToFlags(serv.cfg.Sandbox)
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
 	}
 	env |= sandbox
 
-	exec := flatrpc.ExecFlagThreaded
+	var exec flatrpc.ExecFlag
+	if serv.threaded {
+		exec |= flatrpc.ExecFlagThreaded
+	}
 	if !serv.cfg.RawCover {
 		exec |= flatrpc.ExecFlagDedupCover
 	}
