@@ -4,6 +4,7 @@
 package flatrpc
 
 import (
+	"fmt"
 	"slices"
 	"syscall"
 )
@@ -71,9 +72,28 @@ func EmptyProgInfo(calls int) *ProgInfo {
 	return info
 }
 
-func (eo ExecOpts) MergeFlags(diff ExecOpts) ExecOpts {
-	ret := eo
-	ret.ExecFlags |= diff.ExecFlags
-	ret.EnvFlags |= diff.EnvFlags
-	return ret
+func SandboxToFlags(sandbox string) (ExecEnv, error) {
+	switch sandbox {
+	case "none":
+		return 0, nil
+	case "setuid":
+		return ExecEnvSandboxSetuid, nil
+	case "namespace":
+		return ExecEnvSandboxNamespace, nil
+	case "android":
+		return ExecEnvSandboxAndroid, nil
+	default:
+		return 0, fmt.Errorf("sandbox must contain one of none/setuid/namespace/android")
+	}
+}
+
+func FlagsToSandbox(flags ExecEnv) string {
+	if flags&ExecEnvSandboxSetuid != 0 {
+		return "setuid"
+	} else if flags&ExecEnvSandboxNamespace != 0 {
+		return "namespace"
+	} else if flags&ExecEnvSandboxAndroid != 0 {
+		return "android"
+	}
+	return "none"
 }

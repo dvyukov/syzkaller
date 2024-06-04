@@ -171,6 +171,9 @@ func (ctx *checkContext) featureToFlags(feat flatrpc.Feature) (flatrpc.ExecEnv, 
 // for coverage features we also check that we got actual coverage.
 func (ctx *checkContext) featureSucceeded(feat flatrpc.Feature, testProg *prog.Prog,
 	res *queue.Result) string {
+
+	//fmt.Printf("CHECKING feature %v\n", feat)
+
 	if res.Status != queue.Success {
 		if len(res.Output) != 0 {
 			return string(res.Output)
@@ -185,6 +188,7 @@ func (ctx *checkContext) featureSucceeded(feat flatrpc.Feature, testProg *prog.P
 			len(res.Info.Calls), len(testProg.Calls))
 	}
 	for i, call := range res.Info.Calls {
+		//fmt.Printf("   call %v: %+v\n", i, *call)
 		if call.Error != 0 {
 			return fmt.Sprintf("call %v failed with errno %v", i, call.Error)
 		}

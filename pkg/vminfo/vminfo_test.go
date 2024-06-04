@@ -4,6 +4,8 @@
 package vminfo
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -11,7 +13,6 @@ import (
 
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/host"
 	"github.com/google/syzkaller/pkg/ipc"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/prog"
@@ -121,7 +122,7 @@ func createSuccessfulResults(source queue.Source, stop chan struct{}) {
 func hostChecker(t *testing.T) (*Checker, []*flatrpc.FileInfo) {
 	cfg := testConfig(t, runtime.GOOS, runtime.GOARCH)
 	checker := New(cfg)
-	files := host.ReadFiles(checker.RequiredFiles())
+	files := readFiles(checker.RequiredFiles())
 	return checker, files
 }
 
@@ -146,4 +147,41 @@ func testConfig(t *testing.T, OS, arch string) *mgrconfig.Config {
 		}
 	}
 	return cfg
+}
+
+func readFiles(files []string) []*flatrpc.FileInfo {
+	var res []*flatrpc.FileInfo
+	for _, glob := range files {
+		glob = filepath.FromSlash(glob)
+		if !strings.Contains(glob, "*") {
+			res = append(res, readFile(glob))
+			continue
+		}
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			res = append(res, &flatrpc.FileInfo{
+				Name:  glob,
+				Error: err.Error(),
+			})
+			continue
+		}
+		for _, file := range matches {
+			res = append(res, readFile(file))
+		}
+	}
+	return res
+}
+
+func readFile(file string) *flatrpc.FileInfo {
+	data, err := os.ReadFile(file)
+	exists, errStr := true, ""
+	if err != nil {
+		exists, errStr = !os.IsNotExist(err), err.Error()
+	}
+	return &flatrpc.FileInfo{
+		Name:   file,
+		Exists: exists,
+		Error:  errStr,
+		Data:   data,
+	}
 }

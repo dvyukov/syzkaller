@@ -253,12 +253,12 @@ func (mgr *Manager) httpCoverCover(w http.ResponseWriter, r *http.Request, funcF
 
 	// Don't hold the mutex while creating report generator and generating the report,
 	// these operations take lots of time.
-	if !mgr.serv.checkDone.Load() {
+	if !mgr.checkDone.Load() {
 		http.Error(w, "coverage is not ready, please try again later after fuzzer started", http.StatusInternalServerError)
 		return
 	}
 
-	rg, err := getReportGenerator(mgr.cfg, mgr.serv.modules)
+	rg, err := getReportGenerator(mgr.cfg, mgr.modules)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to generate coverage profile: %v", err), http.StatusInternalServerError)
 		return
@@ -314,11 +314,11 @@ func (mgr *Manager) httpCoverCover(w http.ResponseWriter, r *http.Request, funcF
 
 	var coverFilter map[uint64]struct{}
 	if r.FormValue("filter") != "" || funcFlag == DoFilterPCs {
-		if mgr.serv.coverFilter == nil {
+		if mgr.coverFilter == nil {
 			http.Error(w, "cover is not filtered in config", http.StatusInternalServerError)
 			return
 		}
-		coverFilter = mgr.serv.coverFilter
+		coverFilter = mgr.coverFilter
 	}
 
 	params := cover.HandlerParams{
@@ -488,12 +488,7 @@ func (mgr *Manager) httpDebugInput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (mgr *Manager) modulesInfo(w http.ResponseWriter, r *http.Request) {
-	if mgr.serv.canonicalModules == nil {
-		fmt.Fprintf(w, "module information not retrieved yet, please retry after fuzzing starts\n")
-		return
-	}
-	// NewCanonicalizer() is initialized with serv.modules.
-	modules, err := json.MarshalIndent(mgr.serv.modules, "", "\t")
+	modules, err := json.MarshalIndent(mgr.modules, "", "\t")
 	if err != nil {
 		fmt.Fprintf(w, "unable to create JSON modules info: %v", err)
 		return
