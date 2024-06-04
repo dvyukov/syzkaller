@@ -67,7 +67,7 @@ func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
 }
 
 type execQueues struct {
-	smashQueue           *queue.PlainQueue
+	smashQueue           *queue.DynamicOrderer
 	triageQueue          *queue.DynamicOrderer
 	candidateQueue       *queue.PlainQueue
 	triageCandidateQueue *queue.DynamicOrderer
@@ -79,7 +79,7 @@ func newExecQueues(fuzzer *Fuzzer) execQueues {
 		triageCandidateQueue: queue.DynamicOrder(),
 		candidateQueue:       queue.Plain(),
 		triageQueue:          queue.DynamicOrder(),
-		smashQueue:           queue.Plain(),
+		smashQueue:           queue.DynamicOrder(),
 	}
 	// Sources are listed in the order, in which they will be polled.
 	ret.source = queue.Order(
@@ -166,7 +166,6 @@ func (fuzzer *Fuzzer) processResult(req *queue.Request, res *queue.Result, flags
 type Config struct {
 	Debug          bool
 	Corpus         *corpus.Corpus
-	BaseOpts       flatrpc.ExecOpts // Fuzzer will use BaseOpts as a base for all requests.
 	Logf           func(level int, msg string, args ...interface{})
 	Coverage       bool
 	FaultInjection bool
@@ -251,7 +250,6 @@ func (fuzzer *Fuzzer) Next() *queue.Request {
 		// The fuzzer is not supposed to issue nil requests.
 		panic("nil request from the fuzzer")
 	}
-	req.ExecOpts = fuzzer.Config.BaseOpts.MergeFlags(req.ExecOpts)
 	return req
 }
 
