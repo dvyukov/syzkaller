@@ -15,22 +15,23 @@ const (
 	FeatureComparisons      Feature = 2
 	FeatureExtraCoverage    Feature = 4
 	FeatureDelayKcovMmap    Feature = 8
-	FeatureSandboxSetuid    Feature = 16
-	FeatureSandboxNamespace Feature = 32
-	FeatureSandboxAndroid   Feature = 64
-	FeatureFault            Feature = 128
-	FeatureLeak             Feature = 256
-	FeatureNetInjection     Feature = 512
-	FeatureNetDevices       Feature = 1024
-	FeatureKCSAN            Feature = 2048
-	FeatureDevlinkPCI       Feature = 4096
-	FeatureNicVF            Feature = 8192
-	FeatureUSBEmulation     Feature = 16384
-	FeatureVhciInjection    Feature = 32768
-	FeatureWifiEmulation    Feature = 65536
-	FeatureLRWPANEmulation  Feature = 131072
-	FeatureBinFmtMisc       Feature = 262144
-	FeatureSwap             Feature = 524288
+	FeatureSandboxNone      Feature = 16
+	FeatureSandboxSetuid    Feature = 32
+	FeatureSandboxNamespace Feature = 64
+	FeatureSandboxAndroid   Feature = 128
+	FeatureFault            Feature = 256
+	FeatureLeak             Feature = 512
+	FeatureNetInjection     Feature = 1024
+	FeatureNetDevices       Feature = 2048
+	FeatureKCSAN            Feature = 4096
+	FeatureDevlinkPCI       Feature = 8192
+	FeatureNicVF            Feature = 16384
+	FeatureUSBEmulation     Feature = 32768
+	FeatureVhciInjection    Feature = 65536
+	FeatureWifiEmulation    Feature = 131072
+	FeatureLRWPANEmulation  Feature = 262144
+	FeatureBinFmtMisc       Feature = 524288
+	FeatureSwap             Feature = 1048576
 )
 
 var EnumNamesFeature = map[Feature]string{
@@ -38,6 +39,7 @@ var EnumNamesFeature = map[Feature]string{
 	FeatureComparisons:      "Comparisons",
 	FeatureExtraCoverage:    "ExtraCoverage",
 	FeatureDelayKcovMmap:    "DelayKcovMmap",
+	FeatureSandboxNone:      "SandboxNone",
 	FeatureSandboxSetuid:    "SandboxSetuid",
 	FeatureSandboxNamespace: "SandboxNamespace",
 	FeatureSandboxAndroid:   "SandboxAndroid",
@@ -61,6 +63,7 @@ var EnumValuesFeature = map[string]Feature{
 	"Comparisons":      FeatureComparisons,
 	"ExtraCoverage":    FeatureExtraCoverage,
 	"DelayKcovMmap":    FeatureDelayKcovMmap,
+	"SandboxNone":      FeatureSandboxNone,
 	"SandboxSetuid":    FeatureSandboxSetuid,
 	"SandboxNamespace": FeatureSandboxNamespace,
 	"SandboxAndroid":   FeatureSandboxAndroid,
@@ -212,21 +215,18 @@ type RequestFlag uint64
 
 const (
 	RequestFlagIsBinary     RequestFlag = 1
-	RequestFlagResetState   RequestFlag = 2
-	RequestFlagReturnOutput RequestFlag = 4
-	RequestFlagReturnError  RequestFlag = 8
+	RequestFlagReturnOutput RequestFlag = 2
+	RequestFlagReturnError  RequestFlag = 4
 )
 
 var EnumNamesRequestFlag = map[RequestFlag]string{
 	RequestFlagIsBinary:     "IsBinary",
-	RequestFlagResetState:   "ResetState",
 	RequestFlagReturnOutput: "ReturnOutput",
 	RequestFlagReturnError:  "ReturnError",
 }
 
 var EnumValuesRequestFlag = map[string]RequestFlag{
 	"IsBinary":     RequestFlagIsBinary,
-	"ResetState":   RequestFlagResetState,
 	"ReturnOutput": RequestFlagReturnOutput,
 	"ReturnError":  RequestFlagReturnError,
 }
@@ -243,25 +243,29 @@ type ExecEnv uint64
 const (
 	ExecEnvDebug               ExecEnv = 1
 	ExecEnvSignal              ExecEnv = 2
-	ExecEnvSandboxSetuid       ExecEnv = 4
-	ExecEnvSandboxNamespace    ExecEnv = 8
-	ExecEnvSandboxAndroid      ExecEnv = 16
-	ExecEnvExtraCover          ExecEnv = 32
-	ExecEnvEnableTun           ExecEnv = 64
-	ExecEnvEnableNetDev        ExecEnv = 128
-	ExecEnvEnableNetReset      ExecEnv = 256
-	ExecEnvEnableCgroups       ExecEnv = 512
-	ExecEnvEnableCloseFds      ExecEnv = 1024
-	ExecEnvEnableDevlinkPCI    ExecEnv = 2048
-	ExecEnvEnableVhciInjection ExecEnv = 4096
-	ExecEnvEnableWifi          ExecEnv = 8192
-	ExecEnvDelayKcovMmap       ExecEnv = 16384
-	ExecEnvEnableNicVF         ExecEnv = 32768
+	ExecEnvResetState          ExecEnv = 4
+	ExecEnvSandboxNone         ExecEnv = 8
+	ExecEnvSandboxSetuid       ExecEnv = 16
+	ExecEnvSandboxNamespace    ExecEnv = 32
+	ExecEnvSandboxAndroid      ExecEnv = 64
+	ExecEnvExtraCover          ExecEnv = 128
+	ExecEnvEnableTun           ExecEnv = 256
+	ExecEnvEnableNetDev        ExecEnv = 512
+	ExecEnvEnableNetReset      ExecEnv = 1024
+	ExecEnvEnableCgroups       ExecEnv = 2048
+	ExecEnvEnableCloseFds      ExecEnv = 4096
+	ExecEnvEnableDevlinkPCI    ExecEnv = 8192
+	ExecEnvEnableVhciInjection ExecEnv = 16384
+	ExecEnvEnableWifi          ExecEnv = 32768
+	ExecEnvDelayKcovMmap       ExecEnv = 65536
+	ExecEnvEnableNicVF         ExecEnv = 131072
 )
 
 var EnumNamesExecEnv = map[ExecEnv]string{
 	ExecEnvDebug:               "Debug",
 	ExecEnvSignal:              "Signal",
+	ExecEnvResetState:          "ResetState",
+	ExecEnvSandboxNone:         "SandboxNone",
 	ExecEnvSandboxSetuid:       "SandboxSetuid",
 	ExecEnvSandboxNamespace:    "SandboxNamespace",
 	ExecEnvSandboxAndroid:      "SandboxAndroid",
@@ -281,6 +285,8 @@ var EnumNamesExecEnv = map[ExecEnv]string{
 var EnumValuesExecEnv = map[string]ExecEnv{
 	"Debug":               ExecEnvDebug,
 	"Signal":              ExecEnvSignal,
+	"ResetState":          ExecEnvResetState,
+	"SandboxNone":         ExecEnvSandboxNone,
 	"SandboxSetuid":       ExecEnvSandboxSetuid,
 	"SandboxNamespace":    ExecEnvSandboxNamespace,
 	"SandboxAndroid":      ExecEnvSandboxAndroid,

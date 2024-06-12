@@ -9,6 +9,7 @@
 #include <sys/resource.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -21,6 +22,22 @@
 
 //!!! restore signal filter
 //!!! track request wait time
+
+/*
+	// Timeout for a single syscall, after this time the syscall is considered "blocked".
+	Syscall time.Duration
+	// Timeout for a single program execution.
+	Program time.Duration
+
+	if timeouts.Syscall == 0 {
+		timeouts.Syscall = 50 * time.Millisecond
+	}
+	if timeouts.Program == 0 {
+		timeouts.Program = 5 * time.Second
+	}
+	timeouts.Syscall *= time.Duration(slowdown)
+	timeouts.Program *= timeouts.Scale
+*/
 
 static int connect_to_host(const char* addr, const char* ports);
 
@@ -212,8 +229,9 @@ public:
 		}
 	
 		if (select.Ready(stdout_pipe_) && !ReadOutput()) {
-			Restart();
-			return;
+			//!!! not needed in fork mode
+			//Restart();
+			//return;
 		}
 		if (select.Ready(resp_pipe_) && !ReadResponse(empty)) {
 			Restart();
@@ -381,12 +399,10 @@ private:
 		sandbox_arg_ = msg_->exec_opts->sandbox_arg();
 		handshake_req req = {
 		    .magic = kInMagic,
-		    .flags = static_cast<uint64>(exec_env_),
+		    .flags = exec_env_,
 		    .pid = static_cast<uint64>(id_),
 		    .sandbox_arg = static_cast<uint64>(sandbox_arg_),
 		};
-		if (flag_debug)
-			req.flags |= static_cast<uint64>(rpc::ExecEnv::Debug);
 		if (write(req_pipe_, &req, sizeof(req)) != sizeof(req)) {
 			debug("request pipe write failed (errno=%d)\n", errno);
 			Restart();
@@ -419,15 +435,13 @@ private:
 		memcpy(req_mem_, msg_->prog_data.data(), msg_->prog_data.size());
 		execute_req req{
 		    .magic = kInMagic,
-		    .env_flags = static_cast<uint64>(exec_env_),
+		    .env_flags = exec_env_,
 		    .exec_flags = static_cast<uint64>(msg_->exec_opts->exec_flags()),
 		    .pid = static_cast<uint64>(id_),
 		    .syscall_timeout_ms = 100, //!!!
 		    .program_timeout_ms = 5000, //!!!
 		    .slowdown_scale = 1, //!!!
 		};
-		if (flag_debug)
-			req.env_flags |= static_cast<uint64>(rpc::ExecEnv::Debug);
 		exec_start_ = current_time_ms();
 		state_ = State::Executing;
 		if (write(req_pipe_, &req, sizeof(req)) != sizeof(req)) {
@@ -462,7 +476,8 @@ private:
 		}
 		// FixedAllocator alloc(resp_mem_ + 1, builder_size);
 		// flatbuffers::FlatBufferBuilder fbb(builder_size, &alloc);
-		// debug("XXX: completed=%u calls_size=%u output_size=%u\n", completed, calls_size, resp_mem_->output_size);
+		debug("handle completion: completed=%u calls_size=%u output_size=%u\n",
+			completed, calls_size, output_size);
 		ShmemBuilder fbb(resp_mem_ + 1, output_size - sizeof(*resp_mem_), calls_size);
 
 		auto empty_call = rpc::CreateCallInfoRawDirect(fbb, rpc::CallFlag::NONE, 998);
@@ -544,12 +559,12 @@ private:
 	{
 		const size_t kChunk = 1024;
 		// size_t size = output_.size();
-		output_.resize(output_.size() + kChunk);
+		output_.resize(output_.size() + kChunk + 1);
 
 		// uint8_t*
 
 		// char buf[1024];
-		ssize_t n = read(stdout_pipe_, output_.data() + output_.size() - kChunk, kChunk);
+		ssize_t n = read(stdout_pipe_, output_.data() + output_.size() - kChunk - 1, kChunk);
 		if (n < 0) {
 			if (errno == EINTR || errno == EAGAIN)
 				return true;
@@ -559,11 +574,8 @@ private:
 			debug("proc %d: output pipe EOF\n", id_);
 			return false;
 		}
-		output_.resize(output_.size() - kChunk + n);
-		// if (n != 0 && buf[n - 1] == '\n')
-		//	n--;
-		// buf[n] = 0;
-		// debug("proc %d: got output: %s\n", id_, buf);
+		debug("proc %d: got output: %s\n", id_, output_.data());
+		output_.resize(output_.size() - kChunk - 1 + n);
 		return true;
 	}
 };
@@ -648,7 +660,7 @@ private:
 
 		// This does any one-time setup for the requested features on the machine.
 		// Note: this can be called multiple times and must be idempotent.
-		is_kernel_64_bit = detect_kernel_bitness();
+		//is_kernel_64_bit = detect_kernel_bitness();
 #if SYZ_HAVE_FEATURES
 		setup_sysctl();
 		setup_cgroups();

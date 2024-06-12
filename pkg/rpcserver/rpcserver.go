@@ -16,17 +16,23 @@ import (
 	"time"
 
 	"github.com/google/syzkaller/pkg/cover"
-	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
 	"github.com/google/syzkaller/pkg/log"
-	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/prog"
 )
+
+type Config struct {
+	vminfo.Config
+	RPC string
+	VMLess bool
+	Procs int
+	Slowdown int	
+}
 
 type Manager interface {
 	MaxSignal() signal.Signal
@@ -40,10 +46,10 @@ type Server struct {
 	StatExecs      *stats.Val
 	StatNumFuzzing *stats.Val
 
+	cfg      *Config
 	mgr      Manager
-	cfg      *mgrconfig.Config
-	threaded bool
-	debug    bool
+	//threaded bool
+	//debug    bool
 	serv     *flatrpc.Serv
 	target   *prog.Target
 	checker  *vminfo.Checker
@@ -54,11 +60,10 @@ type Server struct {
 	baseSource       *queue.DynamicSourceCtl
 	enabledFeatures  flatrpc.Feature
 	setupFeatures    flatrpc.Feature
-	execOpts         flatrpc.ExecOpts
 	modules          []cover.KernelModule
 	canonicalModules *cover.Canonicalizer
 	coverFilter      []uint64
-	manualFeatures   csource.Features
+	//manualFeatures   csource.Features
 
 	mu            sync.Mutex
 	runners       map[string]*Runner
@@ -87,20 +92,20 @@ type Runner struct {
 	rnd           *rand.Rand
 }
 
-func New(mgr Manager, cfg *mgrconfig.Config, features csource.Features, threaded, debug bool) (*Server, error) {
-	checker := vminfo.New(cfg)
+func New(cfg *Config, mgr Manager) (*Server, error) {
+	checker := vminfo.New(&cfg.Config)
 	baseSource := queue.DynamicSource(checker)
 	serv := &Server{
-		mgr:            mgr,
 		cfg:            cfg,
-		threaded:       threaded,
-		debug:          debug,
+		mgr:            mgr,
+		//threaded:       threaded,
+		//debug:          debug,
 		target:         cfg.Target,
 		runners:        make(map[string]*Runner),
 		checker:        checker,
 		baseSource:     baseSource,
 		execSource:     queue.Retry(baseSource),
-		manualFeatures: features,
+		//manualFeatures: features,
 
 		StatExecs: stats.Create("exec total", "Total test program executions",
 			stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total")),
@@ -129,6 +134,10 @@ func New(mgr Manager, cfg *mgrconfig.Config, features csource.Features, threaded
 	return serv, nil
 }
 
+func (serv *Server) Close() error {
+	return serv.serv.Close()
+}
+
 func (serv *Server) handleConn(conn *flatrpc.Conn) {
 	name, machineInfo, canonicalizer, err := serv.handshake(conn)
 	if err != nil {
@@ -141,7 +150,7 @@ func (serv *Server) handleConn(conn *flatrpc.Conn) {
 		serv.CreateInstance(name, nil)
 		defer func() {
 			serv.StopFuzzing(name)
-			serv.ShutdownInstance(name, false)
+			serv.ShutdownInstance(name, true)
 		}()
 	}
 
@@ -183,9 +192,9 @@ func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Canoni
 
 	leaks, races := serv.mgr.BugFrames()
 	connectReply := &flatrpc.ConnectReply{
-		Debug:      serv.debug,
-		Procs:      int32(serv.cfg.Procs),
-		Slowdown:   int32(serv.cfg.Timeouts.Slowdown),
+		Debug:      serv.cfg.Debug,
+		Procs:      int32(min(serv.cfg.Procs, prog.MaxPids)),
+		Slowdown:   int32(serv.cfg.Slowdown),
 		LeakFrames: leaks,
 		RaceFrames: races,
 	}
@@ -195,15 +204,7 @@ func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Canoni
 	} else {
 		connectReply.Files = append(connectReply.Files, serv.checker.CheckFiles()...)
 		connectReply.Globs = serv.target.RequiredGlobs()
-		connectReply.Features = flatrpc.AllFeatures
-		if serv.manualFeatures != nil {
-			for feat := range flatrpc.EnumNamesFeature {
-				opt := csource.FlatRPCFeaturesToCSource[feat]
-				if opt != "" && !serv.manualFeatures[opt].Enabled {
-					connectReply.Features &= ^feat
-				}
-			}
-		}
+		connectReply.Features = serv.cfg.Features
 	}
 	if err := flatrpc.Send(conn, connectReply); err != nil {
 		return "", nil, nil, err
@@ -285,6 +286,7 @@ func (serv *Server) connectionLoop(runner *Runner) error {
 			if req == nil {
 				break
 			}
+fmt.Printf("got req %p\n", req)
 			if err := serv.sendRequest(runner, req); err != nil {
 				return err
 			}
@@ -317,11 +319,6 @@ func (serv *Server) connectionLoop(runner *Runner) error {
 }
 
 func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
-	if serv.checkDone.Load() {
-		req.ExecOpts.ExecFlags |= serv.execOpts.ExecFlags
-		req.ExecOpts.EnvFlags |= serv.execOpts.EnvFlags
-		req.ExecOpts.SandboxArg = serv.execOpts.SandboxArg
-	}
 	if err := validateRequest(req); err != nil {
 		panic(err)
 	}
@@ -350,8 +347,12 @@ func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
 	// Do not let too much state accumulate.
 	const restartIn = 600
 	resetFlags := flatrpc.ExecFlagCollectSignal | flatrpc.ExecFlagCollectCover | flatrpc.ExecFlagCollectComps
-	if serv.cfg.Experimental.ResetAccState || req.ExecOpts.ExecFlags&resetFlags != 0 && runner.rnd.Intn(restartIn) == 0 {
-		flags |= flatrpc.RequestFlagResetState
+	opts := req.ExecOpts
+	if req.ExecOpts.ExecFlags&resetFlags != 0 && runner.rnd.Intn(restartIn) == 0 {
+		opts.EnvFlags |= flatrpc.ExecEnvResetState
+	}
+	if serv.cfg.Debug {
+		opts.EnvFlags |= flatrpc.ExecEnvDebug
 	}
 	signalFilter := runner.canonicalizer.Decanonicalize(req.SignalFilter.ToRaw())
 	msg := &flatrpc.HostMessage{
@@ -361,7 +362,7 @@ func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
 				Id:               id,
 				ProgData:         progData,
 				Flags:            flags,
-				ExecOpts:         &req.ExecOpts,
+				ExecOpts:         &opts,
 				SignalFilter:     signalFilter,
 				SignalFilterCall: int32(req.SignalFilterCall),
 				AllSignal:        allSignal,
@@ -406,6 +407,7 @@ func (serv *Server) handleExecResult(runner *Runner, msg *flatrpc.ExecResult) er
 	if req == nil {
 		return fmt.Errorf("can't find executed request %v", msg.Id)
 	}
+fmt.Printf("got req result %p\n", req)
 	delete(runner.requests, msg.Id)
 	delete(runner.executing, msg.Id)
 	if msg.Info != nil {
@@ -467,7 +469,7 @@ func (serv *Server) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInf
 	// Note: need to print disbled syscalls before failing due to an error.
 	// This helps to debug "all system calls are disabled".
 	buf := new(bytes.Buffer)
-	if len(serv.cfg.EnabledSyscalls) != 0 || log.V(1) {
+	if len(serv.cfg.Syscalls) != 0 || log.V(1) {
 		if len(disabledCalls) != 0 {
 			var lines []string
 			for call, reason := range disabledCalls {
@@ -517,7 +519,6 @@ func (serv *Server) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInf
 	}
 	serv.enabledFeatures = features.Enabled()
 	serv.setupFeatures = features.NeedSetup()
-	serv.execOpts = serv.defaultExecOpts()
 	newSource := serv.mgr.MachineChecked(serv.enabledFeatures, enabledCalls)
 	serv.baseSource.Store(newSource)
 	serv.checkDone.Store(true)
@@ -581,6 +582,7 @@ func (serv *Server) ShutdownInstance(name string, crashed bool) ([]ExecRecord, [
 		if crashed && runner.executing[id] {
 			status = queue.Crashed
 		}
+fmt.Printf("shutdownInstance reply to req %p\n", req)
 		req.Done(&queue.Result{Status: status})
 	}
 	return runner.lastExec.Collect(), runner.machineInfo
@@ -634,34 +636,6 @@ func (serv *Server) foreachRunnerAsync(fn func(runner *Runner)) {
 		if runner.conn != nil {
 			go fn(runner)
 		}
-	}
-}
-
-func (serv *Server) defaultExecOpts() flatrpc.ExecOpts {
-	env := csource.FeaturesToFlags(serv.enabledFeatures, serv.manualFeatures)
-	if serv.debug {
-		env |= flatrpc.ExecEnvDebug
-	}
-	if serv.cfg.Cover {
-		env |= flatrpc.ExecEnvSignal
-	}
-	sandbox, err := flatrpc.SandboxToFlags(serv.cfg.Sandbox)
-	if err != nil {
-		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
-	}
-	env |= sandbox
-
-	var exec flatrpc.ExecFlag
-	if serv.threaded {
-		exec |= flatrpc.ExecFlagThreaded
-	}
-	if !serv.cfg.RawCover {
-		exec |= flatrpc.ExecFlagDedupCover
-	}
-	return flatrpc.ExecOpts{
-		EnvFlags:   env,
-		ExecFlags:  exec,
-		SandboxArg: serv.cfg.SandboxArg,
 	}
 }
 

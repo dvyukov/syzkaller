@@ -114,7 +114,7 @@ static NORETURN void doexit_thread(int status);
 static PRINTF(1, 2) void debug(const char* msg, ...);
 void debug_dump_data(const char* data, int length);
 
-#if 0
+#if 1
 #define debug_verbose(...) debug(__VA_ARGS__)
 #else
 #define debug_verbose(...) (void)0
@@ -122,10 +122,7 @@ void debug_dump_data(const char* data, int length);
 
 static void receive_execute();
 static void reply_execute(uint32 status);
-
-#if SYZ_EXECUTOR_USES_FORK_SERVER
 static void receive_handshake();
-#endif
 
 #if SYZ_EXECUTOR_USES_FORK_SERVER
 // Allocating (and forking) virtual memory for each executed process is expensive, so we only mmap
@@ -357,14 +354,14 @@ const uint64 kInMagic = 0xbadc0ffeebadface;
 
 struct handshake_req {
 	uint64 magic;
-	uint64 flags; // env flags
+	rpc::ExecEnv flags;
 	uint64 pid;
 	uint64 sandbox_arg;
 };
 
 struct execute_req {
 	uint64 magic;
-	uint64 env_flags;
+	rpc::ExecEnv env_flags;
 	uint64 exec_flags;
 	uint64 pid;
 	uint64 syscall_timeout_ms;
@@ -515,9 +512,11 @@ int main(int argc, char** argv)
 	use_temporary_dir();
 	install_segv_handler();
 	setup_control_pipes();
-#if SYZ_EXECUTOR_USES_FORK_SERVER
 	receive_handshake();
-#else
+#if !SYZ_EXECUTOR_USES_FORK_SERVER
+	// We receive/reply handshake when fork server is disabled just to simplify runner logic.
+	// It's a bit suboptimal, but no fork server is much slower anyway.
+	reply_execute(0);
 	receive_execute();
 #endif
 	if (flag_coverage) {
@@ -594,7 +593,8 @@ static void mmap_output(uint32 size)
 	if (output_data == NULL) {
 		if (kAddressSanitizer) {
 			// Don't use fixed address under ASAN b/c it may overlap with shadow.
-			fixed_flag = 0;
+			//fixed_flag = 0;
+			mmap_at = (uint32*)0x7f0000000000ull;
 		} else {
 			// It's the first time we map output region - generate its location.
 			// The output region is the only thing in executor process for which consistency matters.
@@ -635,33 +635,28 @@ void setup_control_pipes()
 		fail("dup2(2, 0) failed");
 }
 
-void parse_env_flags(uint64 flags)
+void parse_env_flags(rpc::ExecEnv flags)
 {
 	// Note: Values correspond to ordering in pkg/ipc/ipc.go, e.g. FlagSandboxNamespace
-	flag_debug = flags & (1 << 0);
-	flag_coverage = flags & (1 << 1);
-	if (flags & (1 << 2))
-		flag_sandbox_setuid = true;
-	else if (flags & (1 << 3))
-		flag_sandbox_namespace = true;
-	else if (flags & (1 << 4))
-		flag_sandbox_android = true;
-	else
-		flag_sandbox_none = true;
-	flag_extra_coverage = flags & (1 << 5);
-	flag_net_injection = flags & (1 << 6);
-	flag_net_devices = flags & (1 << 7);
-	flag_net_reset = flags & (1 << 8);
-	flag_cgroups = flags & (1 << 9);
-	flag_close_fds = flags & (1 << 10);
-	flag_devlink_pci = flags & (1 << 11);
-	flag_vhci_injection = flags & (1 << 12);
-	flag_wifi = flags & (1 << 13);
-	flag_delay_kcov_mmap = flags & (1 << 14);
-	flag_nic_vf = flags & (1 << 15);
+	flag_debug = (bool)(flags & rpc::ExecEnv::Debug);
+	flag_coverage = (bool)(flags & rpc::ExecEnv::Signal);
+	flag_sandbox_none = (bool)(flags & rpc::ExecEnv::SandboxNone);
+	flag_sandbox_setuid = (bool)(flags & rpc::ExecEnv::SandboxSetuid);
+	flag_sandbox_namespace = (bool)(flags & rpc::ExecEnv::SandboxNamespace);
+	flag_sandbox_android = (bool)(flags & rpc::ExecEnv::SandboxAndroid);
+	flag_extra_coverage = (bool)(flags & rpc::ExecEnv::ExtraCover);
+	flag_net_injection = (bool)(flags & rpc::ExecEnv::EnableTun);
+	flag_net_devices = (bool)(flags & rpc::ExecEnv::EnableNetDev);
+	flag_net_reset = (bool)(flags & rpc::ExecEnv::EnableNetReset);
+	flag_cgroups = (bool)(flags & rpc::ExecEnv::EnableCgroups);
+	flag_close_fds = (bool)(flags & rpc::ExecEnv::EnableCloseFds);
+	flag_devlink_pci = (bool)(flags & rpc::ExecEnv::EnableDevlinkPCI);
+	flag_vhci_injection = (bool)(flags & rpc::ExecEnv::EnableVhciInjection);
+	flag_wifi = (bool)(flags & rpc::ExecEnv::EnableWifi);
+	flag_delay_kcov_mmap = (bool)(flags & rpc::ExecEnv::DelayKcovMmap);
+	flag_nic_vf = (bool)(flags & rpc::ExecEnv::EnableNicVF);
 }
 
-#if SYZ_EXECUTOR_USES_FORK_SERVER
 void receive_handshake()
 {
 	handshake_req req = {};
@@ -676,15 +671,15 @@ void receive_handshake()
 	parse_env_flags(req.flags);
 	procid = req.pid;
 }
-#endif
 
 static execute_req last_execute_req;
 
 void receive_execute()
 {
 	execute_req& req = last_execute_req;
-	if (read(kInPipeFd, &req, sizeof(req)) != (ssize_t)sizeof(req))
-		fail("control pipe read failed");
+	ssize_t n = read(kInPipeFd, &req, sizeof(req));
+	if (n != (ssize_t)sizeof(req))
+		failmsg("control pipe read failed", "read=%zd want=%zd", n, sizeof(req));
 	if (req.magic != kInMagic)
 		failmsg("bad execute request magic", "magic=0x%llx", req.magic);
 	parse_env_flags(req.env_flags);
@@ -699,10 +694,10 @@ void receive_execute()
 	flag_threaded = req.exec_flags & (1 << 4);
 
 	debug("[%llums] exec opts: procid=%llu threaded=%d cover=%d comps=%d dedup=%d signal=%d "
-	      " timeouts=%llu/%llu/%llu\n",
+	      " sandbox=%d/%d/%d/%d timeouts=%llu/%llu/%llu\n",
 	      current_time_ms() - start_time_ms, procid, flag_threaded, flag_collect_cover,
-	      flag_comparisons, flag_dedup_cover, flag_collect_signal, syscall_timeout_ms,
-	      program_timeout_ms, slowdown_scale);
+	      flag_comparisons, flag_dedup_cover, flag_collect_signal, flag_sandbox_none, flag_sandbox_setuid,
+	      flag_sandbox_namespace, flag_sandbox_android, syscall_timeout_ms, program_timeout_ms, slowdown_scale);
 	if (syscall_timeout_ms == 0 || program_timeout_ms <= syscall_timeout_ms || slowdown_scale == 0)
 		failmsg("bad timeouts", "syscall=%llu, program=%llu, scale=%llu",
 			syscall_timeout_ms, program_timeout_ms, slowdown_scale);
@@ -736,20 +731,30 @@ void realloc_output_data()
 // execute_one executes program stored in input_data.
 void execute_one()
 {
+fprintf(stderr, "EXECUTE ONE\n");
+
 	in_execute_one = true;
+fprintf(stderr, "HERE %d\n", __LINE__);
 	realloc_output_data();
+fprintf(stderr, "HERE %d\n", __LINE__);
 	size_t builder_size = output_size - sizeof(*output_data);
+fprintf(stderr, "HERE %d\n", __LINE__);
 	output_builder.emplace(output_data + 1, builder_size);
+fprintf(stderr, "HERE %d\n", __LINE__);
 	output_data->output_size = output_size;
+fprintf(stderr, "HERE %d\n", __LINE__);
 	uint64 start = current_time_ms();
+fprintf(stderr, "HERE %d\n", __LINE__);
 	uint8* input_pos = input_data;
 
 	if (cover_collection_required()) {
+debug_verbose("HERE %d\n", __LINE__);
 		if (!flag_threaded)
 			cover_enable(&threads[0].cov, flag_comparisons, false);
 		if (flag_extra_coverage)
 			cover_reset(&extra_cov);
 	}
+debug_verbose("HERE %d\n", __LINE__);
 
 	int call_index = 0;
 	uint64 prog_extra_timeout = 0;
@@ -757,9 +762,12 @@ void execute_one()
 	call_props_t call_props;
 	memset(&call_props, 0, sizeof(call_props));
 
+debug_verbose("HERE %d\n", __LINE__);
+
 	read_input(&input_pos); // total number of calls
 	for (;;) {
 		uint64 call_num = read_input(&input_pos);
+debug_verbose("read call num = %llu\n", call_num);
 		if (call_num == instr_eof)
 			break;
 		if (call_num == instr_copyin) {
@@ -1150,6 +1158,7 @@ void copyout_call_results(thread_t* th)
 void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
 {
 	auto& fbb = *output_builder;
+	const uint32 start_size = output_builder->GetSize();
 	uint32 signal_off = 0;
 	uint32 cover_off = 0;
 	uint32 comps_off = 0;
@@ -1187,8 +1196,8 @@ void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
 	call.data_size = output_builder->GetSize();
 	call.offset = off;
 	output_data->completed.store(slot + 1, std::memory_order_release);
-	debug_verbose("out #%u: index=%u errno=%d flags=0x%x\n",
-		      slot + 1, index, error, static_cast<unsigned>(flags));
+	debug_verbose("out #%u: index=%u errno=%d flags=0x%x total_size=%u\n",
+		      slot + 1, index, error, static_cast<unsigned>(flags), call.data_size - start_size);
 }
 
 void write_call_output(thread_t* th, bool finished)

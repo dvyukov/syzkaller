@@ -1471,7 +1471,35 @@ func (mgr *Manager) MachineChecked(features flatrpc.Feature, enabledSyscalls map
 			go mgr.dashboardReproTasks()
 		}
 	}
-	return fuzzerObj
+	return queue.DefaultOpts(fuzzerObj, mgr.defaultExecOpts())
+}
+
+func (mgr *Manager) defaultExecOpts() flatrpc.ExecOpts {
+	env := csource.FeaturesToFlags(serv.enabledFeatures, nil)
+	if mgr.debug {
+		env |= flatrpc.ExecEnvDebug
+	}
+	if mgr.cfg.Experimental.ResetAccState {
+		env |= flatrpc.ExecEnvResetState
+	}
+	if serv.cfg.Cover {
+		env |= flatrpc.ExecEnvSignal
+	}
+	sandbox, err := flatrpc.SandboxToFlags(serv.cfg.Sandbox)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
+	}
+	env |= sandbox
+
+	exec := flatrpc.ExecFlagThreaded
+	if !serv.cfg.RawCover {
+		exec |= flatrpc.ExecFlagDedupCover
+	}
+	return flatrpc.ExecOpts{
+		EnvFlags:   env,
+		ExecFlags:  exec,
+		SandboxArg: serv.cfg.SandboxArg,
+	}
 }
 
 func (mgr *Manager) corpusMinimization() {

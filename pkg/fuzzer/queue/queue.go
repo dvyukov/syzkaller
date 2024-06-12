@@ -415,3 +415,24 @@ func (d *Deduplicator) onDone(req *Request, res *Result) bool {
 	}
 	return true
 }
+
+// DefaultOpts applies opts to all requests in source.
+func DefaultOpts(source Source, opts flatrpc.ExecOpts) Source {
+	return &defaultOpts{source, opts}
+}
+
+type defaultOpts struct {
+	source Source
+	opts flatrpc.ExecOpts
+}
+
+func (do *defaultOpts) Next() *Request {
+	req := do.Next()
+	if req == nil {
+		return nil
+	}
+	req.ExecOpts.ExecFlags |= do.opts.ExecFlags
+	req.ExecOpts.EnvFlags |= do.opts.EnvFlags
+	req.ExecOpts.SandboxArg = do.opts.SandboxArg
+	return req
+}

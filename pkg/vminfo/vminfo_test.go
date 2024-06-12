@@ -13,8 +13,6 @@ import (
 
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
-	"github.com/google/syzkaller/pkg/ipc"
-	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/prog"
 	"github.com/google/syzkaller/sys/targets"
 )
@@ -126,27 +124,22 @@ func hostChecker(t *testing.T) (*Checker, []*flatrpc.FileInfo) {
 	return checker, files
 }
 
-func testConfig(t *testing.T, OS, arch string) *mgrconfig.Config {
+func testConfig(t *testing.T, OS, arch string) *Config {
 	target, err := prog.GetTarget(OS, arch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &mgrconfig.Config{
-		Sandbox: ipc.FlagsToSandbox(0),
-		Derived: mgrconfig.Derived{
-			TargetOS:     OS,
-			TargetArch:   arch,
-			TargetVMArch: arch,
-			Target:       target,
-			SysTarget:    targets.Get(OS, arch),
-		},
-	}
+	var syscalls []int
 	for id := range target.Syscalls {
 		if !target.Syscalls[id].Attrs.Disabled {
-			cfg.Syscalls = append(cfg.Syscalls, id)
+			syscalls = append(syscalls, id)
 		}
 	}
-	return cfg
+	return &Config{
+		Target: target,
+		Features: flatrpc.AllFeatures,
+		Syscalls: syscalls,
+	}
 }
 
 func readFiles(files []string) []*flatrpc.FileInfo {

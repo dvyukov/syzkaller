@@ -75,7 +75,7 @@ func EmptyProgInfo(calls int) *ProgInfo {
 func SandboxToFlags(sandbox string) (ExecEnv, error) {
 	switch sandbox {
 	case "none":
-		return 0, nil
+		return ExecEnvSandboxNone, nil
 	case "setuid":
 		return ExecEnvSandboxSetuid, nil
 	case "namespace":
@@ -88,12 +88,14 @@ func SandboxToFlags(sandbox string) (ExecEnv, error) {
 }
 
 func FlagsToSandbox(flags ExecEnv) string {
-	if flags&ExecEnvSandboxSetuid != 0 {
+	if flags&ExecEnvSandboxNone != 0 {
+		return "none"
+	} else if flags&ExecEnvSandboxSetuid != 0 {
 		return "setuid"
 	} else if flags&ExecEnvSandboxNamespace != 0 {
 		return "namespace"
 	} else if flags&ExecEnvSandboxAndroid != 0 {
 		return "android"
 	}
-	return "none"
+	panic("no sandbox flags present")
 }

@@ -943,7 +943,7 @@ func (target *Target) lazyInit() {
 		cmd := exec.Command(comp, args...)
 		cmd.Stdin = strings.NewReader(prog)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			target.BrokenCompiler = string(out)
+			target.BrokenCompiler = fmt.Sprintf("%s %s\n%s", comp, args, out)
 			return
 		}
 	}

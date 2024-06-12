@@ -11,26 +11,25 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/google/syzkaller/pkg/cover"
 	"github.com/google/syzkaller/pkg/cover/backend"
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/db"
+	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/rpcserver"
-	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/tool"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/targets"
 	_ "github.com/google/syzkaller/sys"
 )
 
@@ -45,7 +44,6 @@ func main() {
 		flagHints     = flag.Bool("hints", false, "do a hints-generation run")
 		flagEnable    = flag.String("enable", "none", "enable only listed additional features")
 		flagDisable   = flag.String("disable", "none", "enable all additional features except listed")
-
 		flagExecutor   = flag.String("executor", "./syz-executor", "path to executor binary")
 		flagThreaded   = flag.Bool("threaded", true, "use threaded mode in executor")
 		flagSignal     = flag.Bool("cover", false, "collect feedback signals (coverage)")
@@ -85,40 +83,63 @@ func main() {
 		csource.PrintAvailableFeaturesFlags()
 	}
 	defer tool.Init()()
-	shutdown := make(chan struct{})
-	osutil.HandleInterrupts(shutdown)
-
-	cfg := &mgrconfig.Config{
-		RawTarget:  *flagOS + "/" + *flagArch,
-		Type:       "none",
-		RPC:        ":0",
-		Procs:      min(*flagProcs, prog.MaxPids),
-		Sandbox:    *flagSandbox,
-		SandboxArg: int64(*flagSandboxArg),
-		Cover:      *flagSignal || *flagHints || *flagCoverFile != "",
-		RawCover:   *flagCoverFile != "",
-	}
-	cfg.Timeouts.Slowdown = *flagSlowdown
-	if *flagSyscalls != "" {
-		cfg.EnabledSyscalls = strings.Split(*flagSyscalls, ",")
-	}
-	if err := cfg.CompletePartial(); err != nil {
+	target, err := prog.GetTarget(*flagOS, *flagArch)
+	if err != nil {
 		tool.Fail(err)
 	}
 
-	features, err := csource.ParseFeaturesFlags(*flagEnable, *flagDisable, true)
+	featureFlags, err := csource.ParseFeaturesFlags(*flagEnable, *flagDisable, true)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+	features := flatrpc.AllFeatures
+	for feat := range flatrpc.EnumNamesFeature {
+		opt := csource.FlatRPCFeaturesToCSource[feat]
+		if opt != "" && !featureFlags[opt].Enabled {
+			features &= ^feat
+		}
+	}
 
-	progs := loadPrograms(cfg.Target, flag.Args())
+       var requestedSyscalls []int
+       if *flagStress {
+               syscallList := strings.Split(*flagSyscalls, ",")
+               if *flagSyscalls == "" {
+                       syscallList = nil
+               }
+               requestedSyscalls, err = mgrconfig.ParseEnabledSyscalls(target, syscallList, nil)
+               if err != nil {
+                       tool.Failf("failed to parse enabled syscalls: %v", err)
+               }
+	}
+
+	sandbox, err := flatrpc.SandboxToFlags(*flagSandbox)
+	if err != nil {
+		tool.Failf("failed to parse sandbox: %v", err)
+	}
+	env := sandbox
+	if *flagDebug {
+		env |= flatrpc.ExecEnvDebug
+	}
+	cover := *flagSignal || *flagHints || *flagCoverFile != ""
+	if cover {
+		env |= flatrpc.ExecEnvSignal
+	}
+	var exec flatrpc.ExecFlag
+	if *flagThreaded {
+		exec |= flatrpc.ExecFlagThreaded
+	}
+	if *flagCoverFile == "" {
+		exec |= flatrpc.ExecFlagDedupCover
+	}
+
+	progs := loadPrograms(target, flag.Args())
 	if !*flagStress && len(progs) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
 	ctx := &Context{
-		cfg:       cfg,
-		done:      make(chan error, 1),
+		target:target,
+		done:      make(chan bool),
 		progs:     progs,
 		rs:        rand.NewSource(time.Now().UnixNano()),
 		coverFile: *flagCoverFile,
@@ -127,53 +148,42 @@ func main() {
 		hints:     *flagHints,
 		stress:    *flagStress,
 		repeat:    *flagRepeat,
+		defaultOpts: flatrpc.ExecOpts{
+			EnvFlags:   env,
+			ExecFlags:  exec,
+			SandboxArg: int64(*flagSandboxArg),
+		},
 	}
 
-	serv, err := rpcserver.New(ctx, cfg, features, *flagThreaded, *flagDebug)
-	if err != nil {
+	cfg := &rpcserver.LocalConfig{
+		Config: rpcserver.Config{
+			Config: vminfo.Config{
+				Target: target,
+				Features: features,
+				Syscalls: requestedSyscalls,
+				Debug: *flagDebug,
+				Cover: cover,
+				Sandbox: sandbox,
+				SandboxArg: int64(*flagSandboxArg),
+			},
+			Procs: *flagProcs,
+			Slowdown: *flagSlowdown,
+		},
+		Executor: *flagExecutor,
+		GDB: *flagGDB,
+		Done: ctx.done,
+		MachineChecked: ctx.machineChecked,
+	}
+	if err := rpcserver.RunLocal(cfg); err != nil {
 		tool.Fail(err)
 	}
-	ctx.serv = serv
-
-	bin := *flagExecutor
-	args := []string{"runner", "execprog", "localhost", fmt.Sprint(serv.Port)}
-	if *flagGDB {
-		bin = "gdb"
-		args = append([]string{
-			"--return-child-result",
-			"--ex=handle SIGPIPE nostop",
-			"--args",
-			*flagExecutor,
-		}, args...)
-	}
-	cmd := exec.Command(bin, args...)
-	if *flagDebug || *flagGDB {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-	if *flagGDB {
-		cmd.Stdin = os.Stdin
-	}
-	if err := cmd.Start(); err != nil {
-		tool.Failf("failed to start executor: %v", err)
-	}
-	go func() { ctx.done <- cmd.Wait() }()
-
-	select {
-	case <-shutdown:
-	case err := <-ctx.done:
-		if err != nil {
-			tool.Failf("executor process exited: %v", err)
-		}
-	}
-	cmd.Process.Kill()
 }
 
 type Context struct {
-	cfg         *mgrconfig.Config
-	serv        *rpcserver.Server
-	done        chan error
+	target *prog.Target
+	done        chan bool
 	progs       []*prog.Prog
+	defaultOpts flatrpc.ExecOpts
 	choiceTable *prog.ChoiceTable
 	logMu       sync.Mutex
 	posMu       sync.Mutex
@@ -190,24 +200,12 @@ type Context struct {
 	lastPrint   time.Time
 }
 
-func (ctx *Context) BugFrames() ([]string, []string) {
-	return nil, nil
-}
-
-func (ctx *Context) MaxSignal() signal.Signal {
-	return nil
-}
-
-func (ctx *Context) MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source {
+func (ctx *Context) machineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source {
 	if ctx.stress {
-		ctx.choiceTable = ctx.cfg.Target.BuildChoiceTable(ctx.progs, syscalls)
+		ctx.choiceTable = ctx.target.BuildChoiceTable(ctx.progs, syscalls)
 	}
-	ctx.serv.TriagedCorpus()
-	return ctx
-}
-
-func (ctx *Context) CoverageFilter(modules []cover.KernelModule) []uint64 {
-	return nil
+	ctx.defaultOpts.EnvFlags |= csource.FeaturesToFlags(features, nil)
+	return queue.DefaultOpts(ctx, ctx.defaultOpts)
 }
 
 func (ctx *Context) Next() *queue.Request {
@@ -227,6 +225,7 @@ func (ctx *Context) Next() *queue.Request {
 		log.Logf(0, "executing program:\n%s", data)
 		ctx.logMu.Unlock()
 	}
+	
 	req := &queue.Request{
 		Prog: p,
 	}
@@ -251,7 +250,7 @@ func (ctx *Context) Done(req *queue.Request, res *queue.Result) bool {
 	}
 	completed := int(ctx.completed.Add(1))
 	if ctx.repeat > 0 && completed >= len(ctx.progs)*ctx.repeat {
-		ctx.done <- nil
+		close(ctx.done)
 	}
 	return true
 }
@@ -305,9 +304,10 @@ func (ctx *Context) dumpCallCoverage(coverFile string, info *flatrpc.CallInfo) {
 	if info == nil || len(info.Cover) == 0 {
 		return
 	}
+	sysTarget := targets.Get(ctx.target.OS, ctx.target.Arch)
 	buf := new(bytes.Buffer)
 	for _, pc := range info.Cover {
-		prev := backend.PreviousInstructionPC(ctx.cfg.SysTarget, "", pc)
+		prev := backend.PreviousInstructionPC(sysTarget, "", pc)
 		fmt.Fprintf(buf, "0x%x\n", prev)
 	}
 	err := osutil.WriteFile(coverFile, buf.Bytes())
@@ -348,7 +348,7 @@ func (ctx *Context) createStressProg() *prog.Prog {
 	rnd := rand.New(ctx.rs)
 	ctx.posMu.Unlock()
 	if len(ctx.progs) == 0 || rnd.Intn(2) == 0 {
-		return ctx.cfg.Target.Generate(rnd, prog.RecommendedCalls, ctx.choiceTable)
+		return ctx.target.Generate(rnd, prog.RecommendedCalls, ctx.choiceTable)
 	}
 	p := ctx.progs[rnd.Intn(len(ctx.progs))].Clone()
 	p.Mutate(rnd, prog.RecommendedCalls, ctx.choiceTable, nil, ctx.progs)
