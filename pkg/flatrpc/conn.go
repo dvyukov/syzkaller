@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"reflect"
 	"slices"
 	"sync"
 
@@ -108,14 +109,31 @@ func Send[T sendMsg](c *Conn, msg T) error {
 	return nil
 }
 
-// Recv received an RPC message.
-// The type T is supposed to be a normal flatbuffers type (not ending with T, e.g. ConnectRequest).
+// Recv receives an RPC message.
+// The type T is supposed to be a pointer to a normal flatbuffers type (not ending with T, e.g. *ConnectRequestRaw).
 // Receiving should be done from a single goroutine, the received message is valid
 // only until the next Recv call (messages share the same underlying receive buffer).
-func Recv[T any, PT interface {
-	*T
+func Recv[Raw interface {
+	UnPack() *T
 	flatbuffers.FlatBuffer
-}](c *Conn) (*T, error) {
+}, T any](c *Conn) (res *T, err0 error) {
+	defer func() {
+		if err1 := recover(); err1 != nil {
+			if err2, ok := err1.(error); ok {
+				err0 = err2
+			} else {
+				err0 = fmt.Errorf("%v", err1)
+			}
+		}
+	}()
+	raw, err := RecvRaw[Raw](c)
+	if err != nil {
+		return nil, err
+	}
+	return raw.UnPack(), nil
+}
+
+func RecvRaw[T flatbuffers.FlatBuffer](c *Conn) (T, error) {
 	// First, discard the previous message.
 	// For simplicity we copy any data from the next message to the beginning of the buffer.
 	// Theoretically we could something more efficient, e.g. don't copy if we already
@@ -129,21 +147,24 @@ func Recv[T any, PT interface {
 		sizePrefixSize = flatbuffers.SizeUint32
 		maxMessageSize = 64 << 20
 	)
-	msg := PT(new(T))
+	var msg T
 	// Then, receive at least the size prefix (4 bytes).
 	// And then the full message, if we have not got it yet.
 	if err := c.recv(sizePrefixSize); err != nil {
-		return nil, fmt.Errorf("failed to recv %T: %w", msg, err)
+		return msg, fmt.Errorf("failed to recv %T: %w", msg, err)
 	}
 	size := int(flatbuffers.GetSizePrefix(c.data, 0))
 	if size > maxMessageSize {
-		return nil, fmt.Errorf("message %T has too large size %v", msg, size)
+		return msg, fmt.Errorf("message %T has too large size %v", msg, size)
 	}
 	c.lastMsg = sizePrefixSize + size
 	if err := c.recv(c.lastMsg); err != nil {
-		return nil, fmt.Errorf("failed to recv %T: %w", msg, err)
+		return msg, fmt.Errorf("failed to recv %T: %w", msg, err)
 	}
 	statRecv.Add(c.lastMsg)
+	// This probably can't be expressed w/o reflect as "new U" where U is *T,
+	// but I failed to express that as generic constraints.
+	msg = reflect.New(reflect.TypeOf(msg).Elem()).Interface().(T)
 	data := c.data[sizePrefixSize:c.lastMsg]
 	msg.Init(data, flatbuffers.GetUOffsetT(data))
 	return msg, nil

@@ -38,6 +38,8 @@ table ConnectReplyRaw {
 	debug			:bool;
 	procs			:int32;
 	slowdown		:int32;
+	syscall_timeout_ms	:int32;
+	program_timeout_ms	:int32;
 	leak_frames		:[string];
 	race_frames		:[string];
 	// Fuzzer sets up these features and returns results in InfoRequest.features.
@@ -151,12 +153,8 @@ table ExecRequestRaw {
 	prog_data		:[uint8];
 	exec_opts		:ExecOptsRaw;
 	flags			:RequestFlag;
-	signal_filter		:[uint64];
-	signal_filter_call	:int32;
 	// Return all signal for these calls.
 	all_signal		:[int32];
-	// Repeat the program that many times (0 means 1).
-	repeat			:int32;
 }
 
 table SignalUpdateRaw {

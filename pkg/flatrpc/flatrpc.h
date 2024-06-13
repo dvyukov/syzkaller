@@ -762,6 +762,8 @@ struct ConnectReplyRawT : public flatbuffers::NativeTable {
   bool debug = false;
   int32_t procs = 0;
   int32_t slowdown = 0;
+  int32_t syscall_timeout_ms = 0;
+  int32_t program_timeout_ms = 0;
   std::vector<std::string> leak_frames{};
   std::vector<std::string> race_frames{};
   rpc::Feature features = static_cast<rpc::Feature>(0);
@@ -776,11 +778,13 @@ struct ConnectReplyRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_DEBUG = 4,
     VT_PROCS = 6,
     VT_SLOWDOWN = 8,
-    VT_LEAK_FRAMES = 10,
-    VT_RACE_FRAMES = 12,
-    VT_FEATURES = 14,
-    VT_FILES = 16,
-    VT_GLOBS = 18
+    VT_SYSCALL_TIMEOUT_MS = 10,
+    VT_PROGRAM_TIMEOUT_MS = 12,
+    VT_LEAK_FRAMES = 14,
+    VT_RACE_FRAMES = 16,
+    VT_FEATURES = 18,
+    VT_FILES = 20,
+    VT_GLOBS = 22
   };
   bool debug() const {
     return GetField<uint8_t>(VT_DEBUG, 0) != 0;
@@ -790,6 +794,12 @@ struct ConnectReplyRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   }
   int32_t slowdown() const {
     return GetField<int32_t>(VT_SLOWDOWN, 0);
+  }
+  int32_t syscall_timeout_ms() const {
+    return GetField<int32_t>(VT_SYSCALL_TIMEOUT_MS, 0);
+  }
+  int32_t program_timeout_ms() const {
+    return GetField<int32_t>(VT_PROGRAM_TIMEOUT_MS, 0);
   }
   const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *leak_frames() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *>(VT_LEAK_FRAMES);
@@ -811,6 +821,8 @@ struct ConnectReplyRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_DEBUG, 1) &&
            VerifyField<int32_t>(verifier, VT_PROCS, 4) &&
            VerifyField<int32_t>(verifier, VT_SLOWDOWN, 4) &&
+           VerifyField<int32_t>(verifier, VT_SYSCALL_TIMEOUT_MS, 4) &&
+           VerifyField<int32_t>(verifier, VT_PROGRAM_TIMEOUT_MS, 4) &&
            VerifyOffset(verifier, VT_LEAK_FRAMES) &&
            verifier.VerifyVector(leak_frames()) &&
            verifier.VerifyVectorOfStrings(leak_frames()) &&
@@ -844,6 +856,12 @@ struct ConnectReplyRawBuilder {
   void add_slowdown(int32_t slowdown) {
     fbb_.AddElement<int32_t>(ConnectReplyRaw::VT_SLOWDOWN, slowdown, 0);
   }
+  void add_syscall_timeout_ms(int32_t syscall_timeout_ms) {
+    fbb_.AddElement<int32_t>(ConnectReplyRaw::VT_SYSCALL_TIMEOUT_MS, syscall_timeout_ms, 0);
+  }
+  void add_program_timeout_ms(int32_t program_timeout_ms) {
+    fbb_.AddElement<int32_t>(ConnectReplyRaw::VT_PROGRAM_TIMEOUT_MS, program_timeout_ms, 0);
+  }
   void add_leak_frames(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> leak_frames) {
     fbb_.AddOffset(ConnectReplyRaw::VT_LEAK_FRAMES, leak_frames);
   }
@@ -875,6 +893,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRaw(
     bool debug = false,
     int32_t procs = 0,
     int32_t slowdown = 0,
+    int32_t syscall_timeout_ms = 0,
+    int32_t program_timeout_ms = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> leak_frames = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> race_frames = 0,
     rpc::Feature features = static_cast<rpc::Feature>(0),
@@ -886,6 +906,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRaw(
   builder_.add_files(files);
   builder_.add_race_frames(race_frames);
   builder_.add_leak_frames(leak_frames);
+  builder_.add_program_timeout_ms(program_timeout_ms);
+  builder_.add_syscall_timeout_ms(syscall_timeout_ms);
   builder_.add_slowdown(slowdown);
   builder_.add_procs(procs);
   builder_.add_debug(debug);
@@ -897,6 +919,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRawDirect(
     bool debug = false,
     int32_t procs = 0,
     int32_t slowdown = 0,
+    int32_t syscall_timeout_ms = 0,
+    int32_t program_timeout_ms = 0,
     const std::vector<flatbuffers::Offset<flatbuffers::String>> *leak_frames = nullptr,
     const std::vector<flatbuffers::Offset<flatbuffers::String>> *race_frames = nullptr,
     rpc::Feature features = static_cast<rpc::Feature>(0),
@@ -911,6 +935,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRawDirect(
       debug,
       procs,
       slowdown,
+      syscall_timeout_ms,
+      program_timeout_ms,
       leak_frames__,
       race_frames__,
       features,
@@ -1536,10 +1562,7 @@ struct ExecRequestRawT : public flatbuffers::NativeTable {
   std::vector<uint8_t> prog_data{};
   std::unique_ptr<rpc::ExecOptsRaw> exec_opts{};
   rpc::RequestFlag flags = static_cast<rpc::RequestFlag>(0);
-  std::vector<uint64_t> signal_filter{};
-  int32_t signal_filter_call = 0;
   std::vector<int32_t> all_signal{};
-  int32_t repeat = 0;
   ExecRequestRawT() = default;
   ExecRequestRawT(const ExecRequestRawT &o);
   ExecRequestRawT(ExecRequestRawT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1554,10 +1577,7 @@ struct ExecRequestRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_PROG_DATA = 6,
     VT_EXEC_OPTS = 8,
     VT_FLAGS = 10,
-    VT_SIGNAL_FILTER = 12,
-    VT_SIGNAL_FILTER_CALL = 14,
-    VT_ALL_SIGNAL = 16,
-    VT_REPEAT = 18
+    VT_ALL_SIGNAL = 12
   };
   int64_t id() const {
     return GetField<int64_t>(VT_ID, 0);
@@ -1571,17 +1591,8 @@ struct ExecRequestRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   rpc::RequestFlag flags() const {
     return static_cast<rpc::RequestFlag>(GetField<uint64_t>(VT_FLAGS, 0));
   }
-  const flatbuffers::Vector<uint64_t> *signal_filter() const {
-    return GetPointer<const flatbuffers::Vector<uint64_t> *>(VT_SIGNAL_FILTER);
-  }
-  int32_t signal_filter_call() const {
-    return GetField<int32_t>(VT_SIGNAL_FILTER_CALL, 0);
-  }
   const flatbuffers::Vector<int32_t> *all_signal() const {
     return GetPointer<const flatbuffers::Vector<int32_t> *>(VT_ALL_SIGNAL);
-  }
-  int32_t repeat() const {
-    return GetField<int32_t>(VT_REPEAT, 0);
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1590,12 +1601,8 @@ struct ExecRequestRaw FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
            verifier.VerifyVector(prog_data()) &&
            VerifyField<rpc::ExecOptsRaw>(verifier, VT_EXEC_OPTS, 8) &&
            VerifyField<uint64_t>(verifier, VT_FLAGS, 8) &&
-           VerifyOffset(verifier, VT_SIGNAL_FILTER) &&
-           verifier.VerifyVector(signal_filter()) &&
-           VerifyField<int32_t>(verifier, VT_SIGNAL_FILTER_CALL, 4) &&
            VerifyOffset(verifier, VT_ALL_SIGNAL) &&
            verifier.VerifyVector(all_signal()) &&
-           VerifyField<int32_t>(verifier, VT_REPEAT, 4) &&
            verifier.EndTable();
   }
   ExecRequestRawT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1619,17 +1626,8 @@ struct ExecRequestRawBuilder {
   void add_flags(rpc::RequestFlag flags) {
     fbb_.AddElement<uint64_t>(ExecRequestRaw::VT_FLAGS, static_cast<uint64_t>(flags), 0);
   }
-  void add_signal_filter(flatbuffers::Offset<flatbuffers::Vector<uint64_t>> signal_filter) {
-    fbb_.AddOffset(ExecRequestRaw::VT_SIGNAL_FILTER, signal_filter);
-  }
-  void add_signal_filter_call(int32_t signal_filter_call) {
-    fbb_.AddElement<int32_t>(ExecRequestRaw::VT_SIGNAL_FILTER_CALL, signal_filter_call, 0);
-  }
   void add_all_signal(flatbuffers::Offset<flatbuffers::Vector<int32_t>> all_signal) {
     fbb_.AddOffset(ExecRequestRaw::VT_ALL_SIGNAL, all_signal);
-  }
-  void add_repeat(int32_t repeat) {
-    fbb_.AddElement<int32_t>(ExecRequestRaw::VT_REPEAT, repeat, 0);
   }
   explicit ExecRequestRawBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -1648,17 +1646,11 @@ inline flatbuffers::Offset<ExecRequestRaw> CreateExecRequestRaw(
     flatbuffers::Offset<flatbuffers::Vector<uint8_t>> prog_data = 0,
     const rpc::ExecOptsRaw *exec_opts = nullptr,
     rpc::RequestFlag flags = static_cast<rpc::RequestFlag>(0),
-    flatbuffers::Offset<flatbuffers::Vector<uint64_t>> signal_filter = 0,
-    int32_t signal_filter_call = 0,
-    flatbuffers::Offset<flatbuffers::Vector<int32_t>> all_signal = 0,
-    int32_t repeat = 0) {
+    flatbuffers::Offset<flatbuffers::Vector<int32_t>> all_signal = 0) {
   ExecRequestRawBuilder builder_(_fbb);
   builder_.add_flags(flags);
   builder_.add_id(id);
-  builder_.add_repeat(repeat);
   builder_.add_all_signal(all_signal);
-  builder_.add_signal_filter_call(signal_filter_call);
-  builder_.add_signal_filter(signal_filter);
   builder_.add_exec_opts(exec_opts);
   builder_.add_prog_data(prog_data);
   return builder_.Finish();
@@ -1670,12 +1662,8 @@ inline flatbuffers::Offset<ExecRequestRaw> CreateExecRequestRawDirect(
     const std::vector<uint8_t> *prog_data = nullptr,
     const rpc::ExecOptsRaw *exec_opts = nullptr,
     rpc::RequestFlag flags = static_cast<rpc::RequestFlag>(0),
-    const std::vector<uint64_t> *signal_filter = nullptr,
-    int32_t signal_filter_call = 0,
-    const std::vector<int32_t> *all_signal = nullptr,
-    int32_t repeat = 0) {
+    const std::vector<int32_t> *all_signal = nullptr) {
   auto prog_data__ = prog_data ? _fbb.CreateVector<uint8_t>(*prog_data) : 0;
-  auto signal_filter__ = signal_filter ? _fbb.CreateVector<uint64_t>(*signal_filter) : 0;
   auto all_signal__ = all_signal ? _fbb.CreateVector<int32_t>(*all_signal) : 0;
   return rpc::CreateExecRequestRaw(
       _fbb,
@@ -1683,10 +1671,7 @@ inline flatbuffers::Offset<ExecRequestRaw> CreateExecRequestRawDirect(
       prog_data__,
       exec_opts,
       flags,
-      signal_filter__,
-      signal_filter_call,
-      all_signal__,
-      repeat);
+      all_signal__);
 }
 
 flatbuffers::Offset<ExecRequestRaw> CreateExecRequestRaw(flatbuffers::FlatBufferBuilder &_fbb, const ExecRequestRawT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -2272,6 +2257,8 @@ inline void ConnectReplyRaw::UnPackTo(ConnectReplyRawT *_o, const flatbuffers::r
   { auto _e = debug(); _o->debug = _e; }
   { auto _e = procs(); _o->procs = _e; }
   { auto _e = slowdown(); _o->slowdown = _e; }
+  { auto _e = syscall_timeout_ms(); _o->syscall_timeout_ms = _e; }
+  { auto _e = program_timeout_ms(); _o->program_timeout_ms = _e; }
   { auto _e = leak_frames(); if (_e) { _o->leak_frames.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->leak_frames[_i] = _e->Get(_i)->str(); } } }
   { auto _e = race_frames(); if (_e) { _o->race_frames.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->race_frames[_i] = _e->Get(_i)->str(); } } }
   { auto _e = features(); _o->features = _e; }
@@ -2290,6 +2277,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRaw(flatbuffers::F
   auto _debug = _o->debug;
   auto _procs = _o->procs;
   auto _slowdown = _o->slowdown;
+  auto _syscall_timeout_ms = _o->syscall_timeout_ms;
+  auto _program_timeout_ms = _o->program_timeout_ms;
   auto _leak_frames = _o->leak_frames.size() ? _fbb.CreateVectorOfStrings(_o->leak_frames) : 0;
   auto _race_frames = _o->race_frames.size() ? _fbb.CreateVectorOfStrings(_o->race_frames) : 0;
   auto _features = _o->features;
@@ -2300,6 +2289,8 @@ inline flatbuffers::Offset<ConnectReplyRaw> CreateConnectReplyRaw(flatbuffers::F
       _debug,
       _procs,
       _slowdown,
+      _syscall_timeout_ms,
+      _program_timeout_ms,
       _leak_frames,
       _race_frames,
       _features,
@@ -2545,10 +2536,7 @@ inline ExecRequestRawT::ExecRequestRawT(const ExecRequestRawT &o)
         prog_data(o.prog_data),
         exec_opts((o.exec_opts) ? new rpc::ExecOptsRaw(*o.exec_opts) : nullptr),
         flags(o.flags),
-        signal_filter(o.signal_filter),
-        signal_filter_call(o.signal_filter_call),
-        all_signal(o.all_signal),
-        repeat(o.repeat) {
+        all_signal(o.all_signal) {
 }
 
 inline ExecRequestRawT &ExecRequestRawT::operator=(ExecRequestRawT o) FLATBUFFERS_NOEXCEPT {
@@ -2556,10 +2544,7 @@ inline ExecRequestRawT &ExecRequestRawT::operator=(ExecRequestRawT o) FLATBUFFER
   std::swap(prog_data, o.prog_data);
   std::swap(exec_opts, o.exec_opts);
   std::swap(flags, o.flags);
-  std::swap(signal_filter, o.signal_filter);
-  std::swap(signal_filter_call, o.signal_filter_call);
   std::swap(all_signal, o.all_signal);
-  std::swap(repeat, o.repeat);
   return *this;
 }
 
@@ -2576,10 +2561,7 @@ inline void ExecRequestRaw::UnPackTo(ExecRequestRawT *_o, const flatbuffers::res
   { auto _e = prog_data(); if (_e) { _o->prog_data.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->prog_data.begin()); } }
   { auto _e = exec_opts(); if (_e) _o->exec_opts = std::unique_ptr<rpc::ExecOptsRaw>(new rpc::ExecOptsRaw(*_e)); }
   { auto _e = flags(); _o->flags = _e; }
-  { auto _e = signal_filter(); if (_e) { _o->signal_filter.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->signal_filter[_i] = _e->Get(_i); } } }
-  { auto _e = signal_filter_call(); _o->signal_filter_call = _e; }
   { auto _e = all_signal(); if (_e) { _o->all_signal.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->all_signal[_i] = _e->Get(_i); } } }
-  { auto _e = repeat(); _o->repeat = _e; }
 }
 
 inline flatbuffers::Offset<ExecRequestRaw> ExecRequestRaw::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ExecRequestRawT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -2594,20 +2576,14 @@ inline flatbuffers::Offset<ExecRequestRaw> CreateExecRequestRaw(flatbuffers::Fla
   auto _prog_data = _o->prog_data.size() ? _fbb.CreateVector(_o->prog_data) : 0;
   auto _exec_opts = _o->exec_opts ? _o->exec_opts.get() : nullptr;
   auto _flags = _o->flags;
-  auto _signal_filter = _o->signal_filter.size() ? _fbb.CreateVector(_o->signal_filter) : 0;
-  auto _signal_filter_call = _o->signal_filter_call;
   auto _all_signal = _o->all_signal.size() ? _fbb.CreateVector(_o->all_signal) : 0;
-  auto _repeat = _o->repeat;
   return rpc::CreateExecRequestRaw(
       _fbb,
       _id,
       _prog_data,
       _exec_opts,
       _flags,
-      _signal_filter,
-      _signal_filter_call,
-      _all_signal,
-      _repeat);
+      _all_signal);
 }
 
 inline SignalUpdateRawT *SignalUpdateRaw::UnPack(const flatbuffers::resolver_function_t *_resolver) const {

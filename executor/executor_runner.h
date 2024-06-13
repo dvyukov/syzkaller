@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include <algorithm>
 #include <deque>
@@ -20,24 +21,7 @@
 #include <utility>
 #include <vector>
 
-//!!! restore signal filter
-//!!! track request wait time
-
-/*
-	// Timeout for a single syscall, after this time the syscall is considered "blocked".
-	Syscall time.Duration
-	// Timeout for a single program execution.
-	Program time.Duration
-
-	if timeouts.Syscall == 0 {
-		timeouts.Syscall = 50 * time.Millisecond
-	}
-	if timeouts.Program == 0 {
-		timeouts.Program = 5 * time.Second
-	}
-	timeouts.Syscall *= time.Duration(slowdown)
-	timeouts.Program *= timeouts.Scale
-*/
+//!!! support multiple extra results
 
 static int connect_to_host(const char* addr, const char* ports);
 
@@ -165,8 +149,10 @@ private:
 class Proc
 {
 public:
-	Proc(Connection& conn, const char* bin, int id, int max_signal_fd, int cover_fitler_fd)
+	Proc(Connection& conn, const char* bin, int id, int max_signal_fd, int cover_fitler_fd,
+		uint32 slowdown, uint32 syscall_timeout_ms, uint32 program_timeout_ms)
 	    : conn_(conn), bin_(bin), id_(id), max_signal_fd_(max_signal_fd), cover_fitler_fd_(cover_fitler_fd)
+	    , slowdown_(slowdown), syscall_timeout_ms_(syscall_timeout_ms), program_timeout_ms_(program_timeout_ms)
 	{
 		//!!! create binaries with unique names
 		char tmp[128];
@@ -207,6 +193,13 @@ public:
 			Restart();
 		attempts_ = 0;
 		msg_ = std::move(msg);
+		
+		uint8* prog_data = msg_->prog_data.data();
+		input_data = prog_data;
+		uint32 num_calls = read_input(&prog_data);
+		fprintf(stderr, "proc %d: start executing prog %llu prog_data=%p calls=%d\n",
+			id_, (uint64)msg_->id, prog_data, num_calls);
+
 		if (state_ == State::Started)
 			Handshake();
 		else
@@ -223,15 +216,15 @@ public:
 	void Ready(Select& select, uint64 now, bool empty)
 	{
 		if ((state_ == State::Handshaking || state_ == State::Executing) &&
-			now > exec_start_ + 10*1000) {
+		    now > exec_start_ + 10 * 1000) {
 			Restart();
 			return;
 		}
-	
+
 		if (select.Ready(stdout_pipe_) && !ReadOutput()) {
 			//!!! not needed in fork mode
-			//Restart();
-			//return;
+			// Restart();
+			// return;
 		}
 		if (select.Ready(resp_pipe_) && !ReadResponse(empty)) {
 			Restart();
@@ -253,6 +246,9 @@ private:
 	const int id_;
 	const int max_signal_fd_;
 	const int cover_fitler_fd_;
+	const uint32 slowdown_;
+	const uint32 syscall_timeout_ms_;
+	const uint32 program_timeout_ms_;
 	State state_ = State::Started;
 	pid_t pid_ = 0;
 	void* req_mem_ = nullptr;
@@ -287,11 +283,15 @@ private:
 		if (WIFSTOPPED(wstatus))
 			failmsg("child stopped", "status=%d", wstatus);
 		pid_ = 0;
+		int status = WEXITSTATUS(wstatus);
+		debug("proc %d: subprocess exit status %d\n", id_, status);
 		// Ignore all other errors.
 		// Without fork server executor can legitimately exit (program contains exit_group),
 		// with fork server the top process can exit with kFailStatus if it wants special handling.
-		int status = WEXITSTATUS(wstatus) == kFailStatus ? kFailStatus : 0;
-		if (msg_ && IsSet(msg_->flags, rpc::RequestFlag::ReturnError)) {
+		if (status != kFailStatus)
+			status = 0;
+		if ((state_ == State::Executing && status != kFailStatus) ||
+			(msg_ && IsSet(msg_->flags, rpc::RequestFlag::ReturnError))) {
 			// Read out all pening output until EOF.
 			if (IsSet(msg_->flags, rpc::RequestFlag::ReturnOutput)) {
 				while (ReadOutput()) {
@@ -340,6 +340,9 @@ private:
 			if (pair.first != -1) {
 				if (posix_spawn_file_actions_adddup2(&actions, pair.first, pair.second))
 					fail("posix_spawn_file_actions_adddup2 failed");
+			} else {
+				if (posix_spawn_file_actions_addclose(&actions, pair.second))
+					fail("posix_spawn_file_actions_addclose failed");
 			}
 		}
 		for (int i = kCoverFilterFd + 1; i < kFdLimit; i++) {
@@ -430,17 +433,30 @@ private:
 		raw.msg.Set(std::move(exec));
 		conn_.Send(raw);
 
-		memset(static_cast<void*>(resp_mem_), 0, sizeof(*resp_mem_));
+		uint64 all_call_signal = 0;
+		bool all_extra_signal = false;
+		for (int32_t call : msg_->all_signal) {
+			if (call < -1 || call >= 64)
+				failmsg("bad all_signal call", "call=%d", call);
+			if (call < 0)
+				all_extra_signal = true;
+			else
+				all_call_signal |= 1ull << call;
+		}
+
 		//!!! check size
 		memcpy(req_mem_, msg_->prog_data.data(), msg_->prog_data.size());
 		execute_req req{
 		    .magic = kInMagic,
+		    .id = static_cast<uint64>(msg_->id),
 		    .env_flags = exec_env_,
 		    .exec_flags = static_cast<uint64>(msg_->exec_opts->exec_flags()),
 		    .pid = static_cast<uint64>(id_),
-		    .syscall_timeout_ms = 100, //!!!
-		    .program_timeout_ms = 5000, //!!!
-		    .slowdown_scale = 1, //!!!
+		    .syscall_timeout_ms = syscall_timeout_ms_,
+		    .program_timeout_ms = program_timeout_ms_,
+		    .slowdown_scale = slowdown_,
+		    .all_call_signal = all_call_signal,
+		    .all_extra_signal = all_extra_signal,
 		};
 		exec_start_ = current_time_ms();
 		state_ = State::Executing;
@@ -455,10 +471,15 @@ private:
 		if (!msg_)
 			fail("don't have executed msg");
 
+		// Note: if the child process crashed during handshake and the request has ReturnError flag,
+		// we have not started executing the request yet.
 		uint64 elapsed = (current_time_ms() - exec_start_) * 1000 * 1000;
 		uint8* prog_data = msg_->prog_data.data();
 		input_data = prog_data;
-		size_t num_calls = read_input(&prog_data);
+		uint32 num_calls = read_input(&prog_data);
+
+		fprintf(stderr, "proc %d: finish executing prog %llu prog_data=%p calls=%d\n",
+			id_, (uint64)msg_->id, prog_data, num_calls);
 
 		uint32 calls_size = 0;
 		int output_size = resp_mem_->output_size ?: kMaxOutput;
@@ -467,17 +488,9 @@ private:
 		if (completed) {
 			calls_size = resp_mem_->calls[completed - 1].data_size;
 			//!!! move this check into ShmemBuilder
-			/*
-			if (builder_size <= 0)
-				failmsg("negative output builder size",
-					"size=%d output_size=%d header_size=%zu",
-					builder_size, resp_mem_->output_size, sizeof(*resp_mem_));
-			*/
 		}
-		// FixedAllocator alloc(resp_mem_ + 1, builder_size);
-		// flatbuffers::FlatBufferBuilder fbb(builder_size, &alloc);
 		debug("handle completion: completed=%u calls_size=%u output_size=%u\n",
-			completed, calls_size, output_size);
+		      completed, calls_size, output_size);
 		ShmemBuilder fbb(resp_mem_ + 1, output_size - sizeof(*resp_mem_), calls_size);
 
 		auto empty_call = rpc::CreateCallInfoRawDirect(fbb, rpc::CallFlag::NONE, 998);
@@ -491,8 +504,15 @@ private:
 				extra = call.offset;
 				continue;
 			}
-			if (call.index < 0 || call.index >= static_cast<int>(num_calls))
-				fail("bad call index"); //!!!
+			if (call.index < 0 || call.index >= static_cast<int>(num_calls)) {
+				for (uint32_t j = 0; j < completed; j++) {
+					const auto& call = resp_mem_->calls[j];
+					fprintf(stderr, "call=%d index=%d data_size=%d offset=%d\n",
+						j, call.index, call.data_size, call.offset.o);
+				}
+				failmsg("bad call index", "proc=%d call=%d/%d completed=%d",
+					id_, call.index, num_calls, completed); //!!!
+			}
 			calls[call.index] = call.offset /* - calls_size*/;
 			// debug("XXX:   call %d/%d off=%u\n", i, call.index, call.offset.o);
 		}
@@ -524,6 +544,7 @@ private:
 
 		conn_.Send(data.data(), data.size());
 
+		memset(static_cast<void*>(resp_mem_), 0, sizeof(*resp_mem_));
 		msg_.reset();
 		output_.clear();
 		state_ = State::Idle;
@@ -591,7 +612,8 @@ public:
 		int max_signal_fd = max_signal_ ? max_signal_->FD() : -1;
 		int cover_filter_fd = cover_filter_ ? cover_filter_->FD() : -1;
 		for (size_t i = 0; i < num_procs; i++)
-			procs_.emplace_back(new Proc(conn, bin, i, max_signal_fd, cover_filter_fd));
+			procs_.emplace_back(new Proc(conn, bin, i, max_signal_fd, cover_filter_fd,
+				slowdown_, syscall_timeout_ms_, program_timeout_ms_));
 
 		for (;;)
 			loop();
@@ -604,7 +626,10 @@ private:
 	std::optional<CoverFilter> cover_filter_;
 	std::vector<std::unique_ptr<Proc>> procs_;
 	std::deque<rpc::ExecRequestRawT> requests_;
-
+	uint32 slowdown_ = 0;
+	uint32 syscall_timeout_ms_ = 0;
+	uint32 program_timeout_ms_ = 0;
+		
 	//!!! change all to Pascal
 	void loop()
 	{
@@ -614,9 +639,6 @@ private:
 			proc->Arm(select);
 		select.Wait(1000);
 		uint64 now = current_time_ms();
-
-		//!!! check if any process is in executing state for too long
-		//!!! or in handshake and kill.
 
 		if (select.Ready(conn_.FD())) {
 			rpc::HostMessageRawT raw;
@@ -653,14 +675,19 @@ private:
 		conn_.Recv(conn_reply);
 		if (conn_reply.debug)
 			flag_debug = true;
-		debug("connected to manager: procs=%d slowdown=%d features=0x%llx\n",
-		      conn_reply.procs, conn_reply.slowdown, static_cast<uint64>(conn_reply.features));
+		debug("connected to manager: procs=%d slowdown=%d syscall_timeout=%u"
+			" program_timeout=%u features=0x%llx\n",
+		      conn_reply.procs, conn_reply.slowdown, conn_reply.syscall_timeout_ms,
+		      conn_reply.program_timeout_ms, static_cast<uint64>(conn_reply.features));
+		slowdown_ = conn_reply.slowdown;
+		syscall_timeout_ms_ = conn_reply.syscall_timeout_ms;
+		program_timeout_ms_ = conn_reply.program_timeout_ms;
 
 		rpc::InfoRequestRawT info_req;
 
 		// This does any one-time setup for the requested features on the machine.
 		// Note: this can be called multiple times and must be idempotent.
-		//is_kernel_64_bit = detect_kernel_bitness();
+		// is_kernel_64_bit = detect_kernel_bitness();
 #if SYZ_HAVE_FEATURES
 		setup_sysctl();
 		setup_cgroups();
@@ -750,10 +777,22 @@ private:
 		      static_cast<uint64>(msg.exec_opts->env_flags()),
 		      static_cast<uint64>(msg.exec_opts->exec_flags()),
 		      msg.prog_data.size());
-		for (auto& proc : procs_) {
-			if (proc->Execute(msg))
-				return;
+		if (IsSet(msg.flags, rpc::RequestFlag::IsBinary)) {
+			ExecuteBinary(msg);
+			return;
 		}
+		
+		uint8* prog_data = msg.prog_data.data();
+		input_data = prog_data;
+		uint32 num_calls = read_input(&prog_data);
+
+		for (auto& proc : procs_) {
+			if (proc->Execute(msg)) {
+		fprintf(stderr, "recevied prog %llu prog_data=%p calls=%d -> prog\n", (uint64)msg.id, prog_data, num_calls);
+				return;
+			}
+		}
+		fprintf(stderr, "recevied prog %llu prog_data=%p calls=%d -> queue\n", (uint64)msg.id, prog_data, num_calls);
 		requests_.push_back(std::move(msg));
 	}
 
@@ -772,13 +811,146 @@ private:
 	{
 		debug("recv start leak checks\n");
 	}
+
+	void ExecuteBinary(rpc::ExecRequestRawT& msg)
+	{
+		rpc::ExecutingMessageRawT exec;
+		exec.id = msg.id;
+		rpc::ExecutorMessageRawT raw;
+		raw.msg.Set(std::move(exec));
+		conn_.Send(raw);
+
+		char dir_template[] = "syz-bin-dirXXXXXX";
+		char* dir = mkdtemp(dir_template);
+		if (dir == nullptr)
+			fail("mkdtemp failed");
+		if (chmod(dir, 0777))
+			fail("chmod failed");
+		auto [err, output] = ExecuteBinaryImpl(msg, dir);
+		if (!err.empty()) {
+			char tmp[64];
+			snprintf(tmp, sizeof(tmp), " (errno %d: %s)", errno, strerror(errno));
+			err += tmp;
+		}
+		remove_dir(dir);
+		rpc::ExecResultRawT res;
+		res.id = msg.id;
+		res.error = std::move(err);
+		res.output = std::move(output);
+		// rpc::ExecutorMessageRawT raw;
+		raw.msg.Set(std::move(res));
+		conn_.Send(raw);
+	}
+
+	std::tuple<std::string, std::vector<uint8_t>> ExecuteBinaryImpl(rpc::ExecRequestRawT& msg, const char* dir)
+	{
+		std::string file = std::string(dir) + "/syz-executor";
+		int fd = open(file.c_str(), O_WRONLY | O_CLOEXEC | O_CREAT, 0755);
+		if (fd == -1)
+			return {"binary file creation failed", {}};
+		ssize_t wrote = write(fd, msg.prog_data.data(), msg.prog_data.size());
+		close(fd);
+		if (wrote != static_cast<ssize_t>(msg.prog_data.size()))
+			return {"binary file write failed", {}};
+
+		int stdin_pipe[2];
+		if (pipe(stdin_pipe))
+			fail("pipe failed");
+		int stdout_pipe[2];
+		if (pipe(stdout_pipe))
+			fail("pipe failed");
+
+		posix_spawn_file_actions_t actions;
+		if (posix_spawn_file_actions_init(&actions))
+			fail("posix_spawn_file_actions_init failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdin_pipe[0], STDIN_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDERR_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		for (int i = STDERR_FILENO + 1; i < kFdLimit; i++) {
+			if (posix_spawn_file_actions_addclose(&actions, i))
+				fail("posix_spawn_file_actions_addclose failed");
+		}
+
+		posix_spawnattr_t attr;
+		if (posix_spawnattr_init(&attr))
+			fail("posix_spawnattr_init failed");
+		// Create new process group so that we can kill all processes in the group.
+		if (posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP))
+			fail("posix_spawnattr_setflags failed");
+
+		const char* child_argv[] = {file.c_str(), nullptr};
+		const char* child_envp[] = {
+		    // Tell ASAN to not mess with our NONFAILING.
+		    "ASAN_OPTIONS=handle_segv=0 allow_user_segv_handler=1",
+		    // Disable rseq since we don't use it and we want to [ab]use it ourselves for kernel testing.
+		    "GLIBC_TUNABLES=glibc.pthread.rseq=0",
+		    nullptr};
+		int pid = 0;
+		if (posix_spawn(&pid, file.c_str(), &actions, &attr,
+				const_cast<char**>(child_argv), const_cast<char**>(child_envp)))
+			fail("posix_spawn failed");
+		if (posix_spawn_file_actions_destroy(&actions))
+			fail("posix_spawn_file_actions_destroy failed");
+		if (posix_spawnattr_destroy(&attr))
+			fail("posix_spawnattr_destroy failed");
+
+		close(stdin_pipe[0]);
+		close(stdout_pipe[1]);
+
+		int wstatus = 0;
+		uint64 start = current_time_ms();
+		for (;;) {
+			sleep_ms(10);
+			if (waitpid(pid, &wstatus, WNOHANG | WAIT_FLAGS) == pid)
+				break;
+			if (current_time_ms() - start > 20 * 1000) {
+				kill(-pid, SIGKILL);
+				kill(pid, SIGKILL);
+			}
+		}
+
+		std::vector<uint8_t> output;
+		for (;;) {
+			const size_t kChunk = 1024;
+			output.resize(output.size() + kChunk);
+			ssize_t n = read(stdout_pipe[0], output.data() + output.size() - kChunk, kChunk);
+			if (n <= 0)
+				break;
+			output.resize(output.size() - kChunk + n);
+		}
+		close(stdin_pipe[1]);
+		close(stdout_pipe[0]);
+
+		return {WEXITSTATUS(wstatus) == kFailStatus ? "process failed" : "", std::move(output)};
+	}
 };
 
-static void SignalHandler(int sig)
+static void SigintHandler(int sig)
 {
 	// GCE VM preemption is signalled as SIGINT, notify syz-manager.
-	if (sig == SIGINT)
-		exitf("SYZ-EXECUTOR: PREEMPTED");
+	exitf("SYZ-EXECUTOR: PREEMPTED");
+}
+
+static void SigchldHandler(int sig)
+{
+	// We need just blocking syscall preemption.
+}
+
+static void SigsegvHandler(int sig, siginfo_t* info, void* ucontext)
+{
+	auto& mctx = static_cast<ucontext_t*>(ucontext)->uc_mcontext;
+#if GOARCH_amd64
+	uintptr_t pc = mctx.gregs[REG_RIP];
+#elif GOARCH_arm64
+	uintptr_t pc = mctx.pc;
+#else
+	(void)mctx;
+	uintptr_t pc = 0xdeadbeef;
+#endif
+	failmsg("SIGSEGV", "sig:%d pc:%p addr:%p", sig, info->si_addr, reinterpret_cast<void*>(pc));
 }
 
 void runner(char** argv, int argc)
@@ -796,10 +968,17 @@ void runner(char** argv, int argc)
 
 	if (signal(SIGPIPE, SIG_IGN))
 		fail("signal(SIGPIPE) failed");
-	if (signal(SIGINT, SignalHandler))
+	if (signal(SIGINT, SigintHandler))
 		fail("signal(SIGINT) failed");
-	if (signal(SIGCHLD, SignalHandler))
+	if (signal(SIGCHLD, SigchldHandler))
 		fail("signal(SIGCHLD) failed");
+	struct sigaction act = {};
+	act.sa_flags = SA_SIGINFO;
+	act.sa_sigaction = SigsegvHandler;
+	if (sigaction(SIGSEGV, &act, nullptr))
+		fail("signal(SIGSEGV) failed");
+	if (sigaction(SIGBUS, &act, nullptr))
+		fail("signal(SIGBUS) failed");
 
 	int fd = connect_to_host(manager_addr, manager_port);
 	if (fd == -1)

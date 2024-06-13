@@ -240,11 +240,10 @@ func (job *triageJob) minimize(call int, info *triageCall) (*prog.Prog, int) {
 			}
 			for i := 0; i < minimizeAttempts; i++ {
 				result := job.execute(&queue.Request{
-					Prog:             p1,
-					ExecOpts:         setFlags(flatrpc.ExecFlagCollectSignal),
-					SignalFilter:     info.newStableSignal,
-					SignalFilterCall: call1,
-					Stat:             job.fuzzer.statExecMinimize,
+					Prog:            p1,
+					ExecOpts:        setFlags(flatrpc.ExecFlagCollectSignal),
+					ReturnAllSignal: []int{call1},
+					Stat:            job.fuzzer.statExecMinimize,
 				}, 0)
 				if result.Stop() {
 					stop = true

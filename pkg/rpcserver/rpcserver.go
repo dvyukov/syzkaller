@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -19,19 +20,21 @@ import (
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
 	"github.com/google/syzkaller/pkg/log"
+	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/stats"
 	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/prog"
+	"github.com/google/syzkaller/sys/targets"
 )
 
 type Config struct {
 	vminfo.Config
-	RPC string
-	VMLess bool
-	Procs int
-	Slowdown int	
+	RPC      string
+	VMLess   bool
+	Procs    int
+	Slowdown int
 }
 
 type Manager interface {
@@ -48,10 +51,9 @@ type Server struct {
 
 	cfg      *Config
 	mgr      Manager
-	//threaded bool
-	//debug    bool
 	serv     *flatrpc.Serv
 	target   *prog.Target
+	timeouts targets.Timeouts
 	checker  *vminfo.Checker
 
 	infoOnce         sync.Once
@@ -92,20 +94,40 @@ type Runner struct {
 	rnd           *rand.Rand
 }
 
-func New(cfg *Config, mgr Manager) (*Server, error) {
+func New(cfg *mgrconfig.Config, mgr Manager, debug bool) (*Server, error) {
+	sandbox, err := flatrpc.SandboxToFlags(cfg.Sandbox)
+	if err != nil {
+		return nil, err
+	}
+	return newImpl(&Config{
+		Config: vminfo.Config{
+			Target:     cfg.Target,
+			Features:   flatrpc.AllFeatures,
+			Syscalls:   cfg.Syscalls,
+			Debug:      debug,
+			Cover:      cfg.Cover,
+			Sandbox:    sandbox,
+			SandboxArg: cfg.SandboxArg,
+		},
+		RPC:      cfg.RPC,
+		VMLess:   cfg.VMLess,
+		Procs:    cfg.Procs,
+		Slowdown: cfg.Timeouts.Slowdown,
+	}, mgr)
+}
+
+func newImpl(cfg *Config, mgr Manager) (*Server, error) {
 	checker := vminfo.New(&cfg.Config)
 	baseSource := queue.DynamicSource(checker)
 	serv := &Server{
-		cfg:            cfg,
-		mgr:            mgr,
-		//threaded:       threaded,
-		//debug:          debug,
-		target:         cfg.Target,
-		runners:        make(map[string]*Runner),
-		checker:        checker,
-		baseSource:     baseSource,
-		execSource:     queue.Retry(baseSource),
-		//manualFeatures: features,
+		cfg:        cfg,
+		mgr:        mgr,
+		target:     cfg.Target,
+		timeouts:   targets.Get(cfg.Target.OS, cfg.Target.Arch).Timeouts(cfg.Slowdown),
+		runners:    make(map[string]*Runner),
+		checker:    checker,
+		baseSource: baseSource,
+		execSource: queue.Retry(baseSource),
 
 		StatExecs: stats.Create("exec total", "Total test program executions",
 			stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total")),
@@ -179,11 +201,10 @@ func (serv *Server) handleConn(conn *flatrpc.Conn) {
 }
 
 func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.CanonicalizerInstance, error) {
-	connectReqRaw, err := flatrpc.Recv[flatrpc.ConnectRequestRaw](conn)
+	connectReq, err := flatrpc.Recv[*flatrpc.ConnectRequestRaw](conn)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	connectReq := connectReqRaw.UnPack()
 	log.Logf(1, "runner %v connected", connectReq.Name)
 	if !serv.cfg.VMLess {
 		checkRevisions(connectReq, serv.cfg.Target)
@@ -192,11 +213,13 @@ func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Canoni
 
 	leaks, races := serv.mgr.BugFrames()
 	connectReply := &flatrpc.ConnectReply{
-		Debug:      serv.cfg.Debug,
-		Procs:      int32(min(serv.cfg.Procs, prog.MaxPids)),
-		Slowdown:   int32(serv.cfg.Slowdown),
-		LeakFrames: leaks,
-		RaceFrames: races,
+		Debug:            serv.cfg.Debug,
+		Procs:            int32(min(serv.cfg.Procs, prog.MaxPids)),
+		Slowdown:         int32(serv.timeouts.Slowdown),
+		SyscallTimeoutMs: int32(serv.timeouts.Syscall / time.Millisecond),
+		ProgramTimeoutMs: int32(serv.timeouts.Program / time.Millisecond),
+		LeakFrames:       leaks,
+		RaceFrames:       races,
 	}
 	connectReply.Files = serv.checker.RequiredFiles()
 	if serv.checkDone.Load() {
@@ -210,11 +233,10 @@ func (serv *Server) handshake(conn *flatrpc.Conn) (string, []byte, *cover.Canoni
 		return "", nil, nil, err
 	}
 
-	infoReqRaw, err := flatrpc.Recv[flatrpc.InfoRequestRaw](conn)
+	infoReq, err := flatrpc.Recv[*flatrpc.InfoRequestRaw](conn)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	infoReq := infoReqRaw.UnPack()
 	modules, machineInfo, err := serv.checker.MachineInfo(infoReq.Files)
 	if err != nil {
 		log.Logf(0, "parsing of machine info failed: %v", err)
@@ -286,7 +308,6 @@ func (serv *Server) connectionLoop(runner *Runner) error {
 			if req == nil {
 				break
 			}
-fmt.Printf("got req %p\n", req)
 			if err := serv.sendRequest(runner, req); err != nil {
 				return err
 			}
@@ -296,15 +317,14 @@ fmt.Printf("got req %p\n", req)
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		raw, err := flatrpc.Recv[flatrpc.ExecutorMessageRaw](runner.conn)
+		raw, err := flatrpc.Recv[*flatrpc.ExecutorMessageRaw](runner.conn)
 		if err != nil {
 			return err
 		}
-		unpacked := raw.UnPack()
-		if unpacked.Msg == nil || unpacked.Msg.Value == nil {
+		if raw.Msg == nil || raw.Msg.Value == nil {
 			return errors.New("received no message")
 		}
-		switch msg := raw.UnPack().Msg.Value.(type) {
+		switch msg := raw.Msg.Value.(type) {
 		case *flatrpc.ExecutingMessage:
 			err = serv.handleExecutingMessage(runner, msg)
 		case *flatrpc.ExecResult:
@@ -319,17 +339,8 @@ fmt.Printf("got req %p\n", req)
 }
 
 func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
-	if err := validateRequest(req); err != nil {
+	if err := req.Validate(); err != nil {
 		panic(err)
-	}
-	progData, err := req.Prog.SerializeForExec()
-	if err != nil {
-		// It's bad if we systematically fail to serialize programs,
-		// but so far we don't have a better handling than counting this.
-		// This error is observed a lot on the seeded syz_mount_image calls.
-		serv.statExecBufferTooSmall.Add(1)
-		req.Done(&queue.Result{Status: queue.ExecFailure})
-		return nil
 	}
 	runner.nextRequestID++
 	id := runner.nextRequestID
@@ -354,18 +365,39 @@ func (serv *Server) sendRequest(runner *Runner, req *queue.Request) error {
 	if serv.cfg.Debug {
 		opts.EnvFlags |= flatrpc.ExecEnvDebug
 	}
-	signalFilter := runner.canonicalizer.Decanonicalize(req.SignalFilter.ToRaw())
+	var data []byte
+	if req.BinaryFile == "" {
+		progData, err := req.Prog.SerializeForExec()
+		if err != nil {
+			// It's bad if we systematically fail to serialize programs,
+			// but so far we don't have a better handling than counting this.
+			// This error is observed a lot on the seeded syz_mount_image calls.
+			serv.statExecBufferTooSmall.Add(1)
+			req.Done(&queue.Result{Status: queue.ExecFailure})
+			return nil
+		}
+		data = progData
+	} else {
+		flags |= flatrpc.RequestFlagIsBinary
+		fileData, err := os.ReadFile(req.BinaryFile)
+		if err != nil {
+			req.Done(&queue.Result{
+				Status: queue.ExecFailure,
+				Err:    err,
+			})
+			return nil
+		}
+		data = fileData
+	}
 	msg := &flatrpc.HostMessage{
 		Msg: &flatrpc.HostMessages{
 			Type: flatrpc.HostMessagesRawExecRequest,
 			Value: &flatrpc.ExecRequest{
-				Id:               id,
-				ProgData:         progData,
-				Flags:            flags,
-				ExecOpts:         &opts,
-				SignalFilter:     signalFilter,
-				SignalFilterCall: int32(req.SignalFilterCall),
-				AllSignal:        allSignal,
+				Id:        id,
+				ProgData:  data,
+				Flags:     flags,
+				ExecOpts:  &opts,
+				AllSignal: allSignal,
 			},
 		},
 	}
@@ -393,7 +425,7 @@ func (serv *Server) handleExecutingMessage(runner *Runner, msg *flatrpc.Executin
 	} else {
 		serv.statExecRetries.Add(1)
 	}
-	runner.lastExec.Note(proc, req.Prog.Serialize(), osutil.MonotonicNano())
+	runner.lastExec.Note(int(msg.Id), proc, req.Prog.Serialize(), osutil.MonotonicNano())
 	select {
 	case runner.injectExec <- true:
 	default:
@@ -407,7 +439,6 @@ func (serv *Server) handleExecResult(runner *Runner, msg *flatrpc.ExecResult) er
 	if req == nil {
 		return fmt.Errorf("can't find executed request %v", msg.Id)
 	}
-fmt.Printf("got req result %p\n", req)
 	delete(runner.requests, msg.Id)
 	delete(runner.executing, msg.Id)
 	if msg.Info != nil {
@@ -451,14 +482,14 @@ fmt.Printf("got req result %p\n", req)
 
 func checkRevisions(a *flatrpc.ConnectRequest, target *prog.Target) {
 	if target.Arch != a.Arch {
-		log.Fatalf("mismatching target/executor arches: %v vs %v", target.Arch, a.Arch)
+		log.Fatalf("mismatching manager/executor arches: %v vs %v", target.Arch, a.Arch)
 	}
 	if prog.GitRevision != a.GitRevision {
-		log.Fatalf("mismatching manager/fuzzer git revisions: %v vs %v",
+		log.Fatalf("mismatching manager/executor git revisions: %v vs %v",
 			prog.GitRevision, a.GitRevision)
 	}
 	if target.Revision != a.SyzRevision {
-		log.Fatalf("mismatching manager/fuzzer system call descriptions: %v vs %v",
+		log.Fatalf("mismatching manager/executor system call descriptions: %v vs %v",
 			target.Revision, a.SyzRevision)
 	}
 }
@@ -525,18 +556,6 @@ func (serv *Server) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInf
 	return nil
 }
 
-func validateRequest(req *queue.Request) error {
-	err := req.Validate()
-	if err != nil {
-		return err
-	}
-	if req.BinaryFile != "" {
-		// Currnetly it should only be done in tools/syz-runtest.
-		return fmt.Errorf("binary file execution is not supported")
-	}
-	return nil
-}
-
 func (serv *Server) CreateInstance(name string, injectExec chan<- bool) {
 	runner := &Runner{
 		injectExec: injectExec,
@@ -582,7 +601,6 @@ func (serv *Server) ShutdownInstance(name string, crashed bool) ([]ExecRecord, [
 		if crashed && runner.executing[id] {
 			status = queue.Crashed
 		}
-fmt.Printf("shutdownInstance reply to req %p\n", req)
 		req.Done(&queue.Result{Status: status})
 	}
 	return runner.lastExec.Collect(), runner.machineInfo

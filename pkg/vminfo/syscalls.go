@@ -231,7 +231,7 @@ func (ctx *checkContext) val(name string) uint64 {
 func (ctx *checkContext) execRaw(calls []string, mode prog.DeserializeMode, root bool) *flatrpc.ProgInfo {
 	sandbox := ctx.cfg.Sandbox
 	if root {
-		sandbox = 0
+		sandbox = flatrpc.ExecEnvSandboxNone
 	}
 	info := &flatrpc.ProgInfo{}
 	for remain := calls; len(remain) != 0; {
@@ -257,13 +257,9 @@ func (ctx *checkContext) execRaw(calls []string, mode prog.DeserializeMode, root
 		res := req.Wait(ctx.ctx)
 		if res.Status == queue.Success {
 			info.Calls = append(info.Calls, res.Info.Calls...)
-		} else if res.Status == queue.Crashed {
+		} else {
 			// Pretend these calls were not executed.
 			info.Calls = append(info.Calls, flatrpc.EmptyProgInfo(ncalls).Calls...)
-		} else {
-			// The program must have been either executed or not due to a crash.
-			panic(fmt.Sprintf("got unexpected execution status (%d) for the prog %s",
-				res.Status, progStr))
 		}
 	}
 	if len(info.Calls) != len(calls) {

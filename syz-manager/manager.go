@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,7 +76,7 @@ type Manager struct {
 	corpus          *corpus.Corpus
 	corpusDB        *db.DB
 	corpusDBMu      sync.Mutex // for concurrent operations on corpusDB
-	corpusPreloaded chan bool
+	corpusPreload   chan []fuzzer.Candidate
 	firstConnect    atomic.Int64 // unix time, or 0 if not connected
 	crashTypes      map[string]bool
 	vmStop          chan bool
@@ -95,7 +96,6 @@ type Manager struct {
 	targetEnabledSyscalls map[*prog.Syscall]bool
 
 	disabledHashes   map[string]struct{}
-	seeds            [][]byte
 	newRepros        [][]byte
 	lastMinCorpus    int
 	memoryLeakFrames map[string]bool
@@ -211,7 +211,7 @@ func RunManager(cfg *mgrconfig.Config) {
 		mode:               mode,
 		vmPool:             vmPool,
 		corpus:             corpus.NewMonitoredCorpus(context.Background(), corpusUpdates),
-		corpusPreloaded:    make(chan bool),
+		corpusPreload:      make(chan []fuzzer.Candidate),
 		target:             cfg.Target,
 		sysTarget:          cfg.SysTarget,
 		reporter:           reporter,
@@ -236,7 +236,7 @@ func RunManager(cfg *mgrconfig.Config) {
 	go mgr.corpusInputHandler(corpusUpdates)
 
 	// Create RPC server for fuzzers.
-	mgr.serv, err = rpcserver.New(mgr, mgr.cfg, nil, true, *flagDebug)
+	mgr.serv, err = rpcserver.New(mgr.cfg, mgr, *flagDebug)
 	if err != nil {
 		log.Fatalf("failed to create rpc server: %v", err)
 	}
@@ -630,82 +630,142 @@ func (mgr *Manager) preloadCorpus() {
 		log.Errorf("read %v inputs from corpus and got error: %v", len(corpusDB.Records), err)
 	}
 	mgr.corpusDB = corpusDB
-
-	if seedDir := filepath.Join(mgr.cfg.Syzkaller, "sys", mgr.cfg.TargetOS, "test"); osutil.IsExist(seedDir) {
-		seeds, err := os.ReadDir(seedDir)
-		if err != nil {
-			log.Fatalf("failed to read seeds dir: %v", err)
-		}
-		for _, seed := range seeds {
-			data, err := os.ReadFile(filepath.Join(seedDir, seed.Name()))
-			if err != nil {
-				log.Fatalf("failed to read seed %v: %v", seed.Name(), err)
-			}
-			mgr.seeds = append(mgr.seeds, data)
-		}
-	}
-	close(mgr.corpusPreloaded)
-}
-
-func (mgr *Manager) loadCorpus() {
-	<-mgr.corpusPreloaded
+	mgr.fresh = len(mgr.corpusDB.Records) == 0
 	// By default we don't re-minimize/re-smash programs from corpus,
 	// it takes lots of time on start and is unnecessary.
 	// However, on version bumps we can selectively re-minimize/re-smash.
-	flags := fuzzer.ProgFromCorpus | fuzzer.ProgMinimized | fuzzer.ProgSmashed
+	corpusFlags := fuzzer.ProgFromCorpus | fuzzer.ProgMinimized | fuzzer.ProgSmashed
 	switch mgr.corpusDB.Version {
 	case 0:
 		// Version 0 had broken minimization, so we need to re-minimize.
-		flags &= ^fuzzer.ProgMinimized
+		corpusFlags &= ^fuzzer.ProgMinimized
 		fallthrough
 	case 1:
 		// Version 1->2: memory is preallocated so lots of mmaps become unnecessary.
-		flags &= ^fuzzer.ProgMinimized
+		corpusFlags &= ^fuzzer.ProgMinimized
 		fallthrough
 	case 2:
 		// Version 2->3: big-endian hints.
-		flags &= ^fuzzer.ProgSmashed
+		corpusFlags &= ^fuzzer.ProgSmashed
 		fallthrough
 	case 3:
 		// Version 3->4: to shake things up.
-		flags &= ^fuzzer.ProgMinimized
+		corpusFlags &= ^fuzzer.ProgMinimized
 		fallthrough
 	case 4:
 		// Version 4->5: fix for comparison argument sign extension.
-		flags &= ^fuzzer.ProgSmashed
+		corpusFlags &= ^fuzzer.ProgSmashed
 		fallthrough
 	case currentDBVersion:
 	}
+	type Input struct {
+		IsSeed bool
+		Key    string
+		Data   []byte
+		Prog   *prog.Prog
+	}
+	procs := runtime.GOMAXPROCS(0)
+	inputs := make(chan *Input, procs)
+	outputs := make(chan *Input, procs)
+	var wg sync.WaitGroup
+	wg.Add(procs)
+	for p := 0; p < procs; p++ {
+		go func() {
+			defer wg.Done()
+			for inp := range inputs {
+				inp.Prog, _ = loadProg(mgr.target, inp.Data)
+				outputs <- inp
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(outputs)
+	}()
+	go func() {
+		for key, rec := range mgr.corpusDB.Records {
+			inputs <- &Input{
+				Key:  key,
+				Data: rec.Val,
+			}
+		}
+		seedDir := filepath.Join(mgr.cfg.Syzkaller, "sys", mgr.cfg.TargetOS, "test")
+		if osutil.IsExist(seedDir) {
+			seeds, err := os.ReadDir(seedDir)
+			if err != nil {
+				log.Fatalf("failed to read seeds dir: %v", err)
+			}
+			for _, seed := range seeds {
+				data, err := os.ReadFile(filepath.Join(seedDir, seed.Name()))
+				if err != nil {
+					log.Fatalf("failed to read seed %v: %v", seed.Name(), err)
+				}
+				inputs <- &Input{
+					IsSeed: true,
+					Data:   data,
+				}
+			}
+		}
+		close(inputs)
+	}()
+	brokenCorpus, brokenSeeds := 0, 0
 	var candidates []fuzzer.Candidate
-	broken := 0
-	for key, rec := range mgr.corpusDB.Records {
-		drop, item := mgr.loadProg(rec.Val, flags)
-		if drop {
-			mgr.corpusDB.Delete(key)
-			broken++
-		}
-		if item != nil {
-			candidates = append(candidates, *item)
-		}
-	}
-	mgr.fresh = len(mgr.corpusDB.Records) == 0
-	seeds := 0
-	for _, seed := range mgr.seeds {
-		// Seeds are not considered "from corpus" (won't be rerun multiple times)
-		// b/c they are tried on every start anyway.
-		_, item := mgr.loadProg(seed, fuzzer.ProgMinimized)
-		if item == nil {
+	for inp := range outputs {
+		if inp.Prog == nil {
+			if inp.IsSeed {
+				brokenSeeds++
+			} else {
+				brokenCorpus++
+				mgr.corpusDB.Delete(inp.Key)
+			}
 			continue
 		}
-		if _, ok := mgr.corpusDB.Records[hash.String(item.Prog.Serialize())]; ok {
-			continue
+		flags := corpusFlags
+		if inp.IsSeed {
+			if _, ok := mgr.corpusDB.Records[hash.String(inp.Prog.Serialize())]; ok {
+				continue
+			}
+			// Seeds are not considered "from corpus" (won't be rerun multiple times)
+			// b/c they are tried on every start anyway.
+			flags = fuzzer.ProgMinimized
 		}
-		candidates = append(candidates, *item)
-		seeds++
+		candidates = append(candidates, fuzzer.Candidate{
+			Prog:  inp.Prog,
+			Flags: flags,
+		})
 	}
-	log.Logf(0, "%-24v: %v (%v broken, %v seeds)", "corpus", len(candidates), broken, seeds)
-	mgr.seeds = nil
+	if brokenCorpus+brokenSeeds != 0 {
+		log.Logf(0, "broken programs in the corpus: %v, broken seeds: %v", brokenCorpus, brokenSeeds)
+	}
+	mgr.corpusPreload <- candidates
+}
 
+func (mgr *Manager) loadCorpus() {
+	seeds := 0
+	var candidates []fuzzer.Candidate
+	for _, item := range <-mgr.corpusPreload {
+		if containsDisabled(item.Prog, mgr.targetEnabledSyscalls) {
+			if mgr.cfg.PreserveCorpus {
+				// This program contains a disabled syscall.
+				// We won't execute it, but remember its hash so
+				// it is not deleted during minimization.
+				mgr.disabledHashes[hash.String(item.Prog.Serialize())] = struct{}{}
+				continue
+			}
+			// We cut out the disabled syscalls and retriage/minimize what remains from the prog.
+			// The original prog will be deleted from the corpus.
+			item.Flags &= ^fuzzer.ProgMinimized
+			programLeftover(mgr.target, mgr.targetEnabledSyscalls, item.Prog)
+			if len(item.Prog.Calls) == 0 {
+				continue
+			}
+		}
+		if item.Flags&fuzzer.ProgFromCorpus == 0 {
+			seeds++
+		}
+		candidates = append(candidates, item)
+	}
+	log.Logf(0, "%-24v: %v (%v seeds)", "corpus", len(candidates), seeds)
 	if mgr.phase != phaseInit {
 		panic(fmt.Sprintf("loadCorpus: bad phase %v", mgr.phase))
 	}
@@ -713,42 +773,7 @@ func (mgr *Manager) loadCorpus() {
 	mgr.fuzzer.Load().AddCandidates(candidates)
 }
 
-// Returns (delete item from the corpus, a fuzzer.Candidate object).
-func (mgr *Manager) loadProg(data []byte, flags fuzzer.ProgFlags) (drop bool, candidate *fuzzer.Candidate) {
-	p, disabled, bad := parseProgram(mgr.target, mgr.targetEnabledSyscalls, data)
-	if bad != nil {
-		return true, nil
-	}
-	if disabled {
-		if mgr.cfg.PreserveCorpus {
-			// This program contains a disabled syscall.
-			// We won't execute it, but remember its hash so
-			// it is not deleted during minimization.
-			mgr.disabledHashes[hash.String(data)] = struct{}{}
-		} else {
-			// We cut out the disabled syscalls and retriage/minimize what remains from the prog.
-			// The original prog will be deleted from the corpus.
-			leftover := programLeftover(mgr.target, mgr.targetEnabledSyscalls, data)
-			if leftover != nil {
-				candidate = &fuzzer.Candidate{
-					Prog:  leftover,
-					Flags: flags & ^fuzzer.ProgMinimized,
-				}
-			}
-		}
-		return false, candidate
-	}
-	return false, &fuzzer.Candidate{
-		Prog:  p,
-		Flags: flags,
-	}
-}
-
-func programLeftover(target *prog.Target, enabled map[*prog.Syscall]bool, data []byte) *prog.Prog {
-	p, err := target.Deserialize(data, prog.NonStrict)
-	if err != nil {
-		panic(fmt.Sprintf("subsequent deserialization failed: %s", data))
-	}
+func programLeftover(target *prog.Target, enabled map[*prog.Syscall]bool, p *prog.Prog) {
 	for i := 0; i < len(p.Calls); {
 		c := p.Calls[i]
 		if !enabled[c.Meta] {
@@ -757,30 +782,32 @@ func programLeftover(target *prog.Target, enabled map[*prog.Syscall]bool, data [
 		}
 		i++
 	}
-	return p
 }
 
-func parseProgram(target *prog.Target, enabled map[*prog.Syscall]bool, data []byte) (
-	p *prog.Prog, disabled bool, err error) {
-	p, err = target.Deserialize(data, prog.NonStrict)
+func loadProg(target *prog.Target, data []byte) (*prog.Prog, error) {
+	p, err := target.Deserialize(data, prog.NonStrict)
 	if err != nil {
-		return
+		return nil, err
 	}
 	if len(p.Calls) > prog.MaxCalls {
-		return nil, false, fmt.Errorf("longer than %d calls", prog.MaxCalls)
+		return nil, fmt.Errorf("longer than %d calls", prog.MaxCalls)
 	}
 	// For some yet unknown reasons, programs with fail_nth > 0 may sneak in. Ignore them.
 	for _, call := range p.Calls {
 		if call.Props.FailNth > 0 {
-			return nil, false, fmt.Errorf("input has fail_nth > 0")
+			return nil, fmt.Errorf("input has fail_nth > 0")
 		}
 	}
+	return p, nil
+}
+
+func containsDisabled(p *prog.Prog, enabled map[*prog.Syscall]bool) bool {
 	for _, c := range p.Calls {
 		if !enabled[c.Meta] {
-			return p, true, nil
+			return true
 		}
 	}
-	return p, false, nil
+	return false
 }
 
 func (mgr *Manager) runInstance(index int) (*Crash, error) {
@@ -894,7 +921,7 @@ func prependExecuting(rep *report.Report, lastExec []rpcserver.ExecRecord) {
 	buf := new(bytes.Buffer)
 	fmt.Fprintf(buf, "last executing test programs:\n\n")
 	for _, exec := range lastExec {
-		fmt.Fprintf(buf, "%v ago: executing program %v:\n%s\n", exec.Time, exec.Proc, exec.Prog)
+		fmt.Fprintf(buf, "%v ago: executing program %v (id=%v):\n%s\n", exec.Time, exec.Proc, exec.ID, exec.Prog)
 	}
 	fmt.Fprintf(buf, "kernel console output (not intermixed with test programs):\n\n")
 	rep.Output = append(buf.Bytes(), rep.Output...)
@@ -1475,30 +1502,27 @@ func (mgr *Manager) MachineChecked(features flatrpc.Feature, enabledSyscalls map
 }
 
 func (mgr *Manager) defaultExecOpts() flatrpc.ExecOpts {
-	env := csource.FeaturesToFlags(serv.enabledFeatures, nil)
-	if mgr.debug {
-		env |= flatrpc.ExecEnvDebug
-	}
+	env := csource.FeaturesToFlags(mgr.enabledFeatures, nil)
 	if mgr.cfg.Experimental.ResetAccState {
 		env |= flatrpc.ExecEnvResetState
 	}
-	if serv.cfg.Cover {
+	if mgr.cfg.Cover {
 		env |= flatrpc.ExecEnvSignal
 	}
-	sandbox, err := flatrpc.SandboxToFlags(serv.cfg.Sandbox)
+	sandbox, err := flatrpc.SandboxToFlags(mgr.cfg.Sandbox)
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
 	}
 	env |= sandbox
 
 	exec := flatrpc.ExecFlagThreaded
-	if !serv.cfg.RawCover {
+	if !mgr.cfg.RawCover {
 		exec |= flatrpc.ExecFlagDedupCover
 	}
 	return flatrpc.ExecOpts{
 		EnvFlags:   env,
 		ExecFlags:  exec,
-		SandboxArg: serv.cfg.SandboxArg,
+		SandboxArg: mgr.cfg.SandboxArg,
 	}
 }
 

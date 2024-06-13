@@ -253,18 +253,6 @@ func (inst *Instance) Info() ([]byte, error) {
 	return nil, nil
 }
 
-func (inst *Instance) PprofPort() int {
-	if inst.pool.hostFuzzer {
-		// In the fuzzing on host mode, fuzzers are always on the same network.
-		// Don't set up pprof endpoints in this case.
-		return 0
-	}
-	if ii, ok := inst.impl.(vmimpl.PprofPortProvider); ok {
-		return ii.PprofPort()
-	}
-	return vmimpl.PprofPort
-}
-
 func (inst *Instance) diagnose(rep *report.Report) ([]byte, bool) {
 	if rep == nil {
 		panic("rep is nil")

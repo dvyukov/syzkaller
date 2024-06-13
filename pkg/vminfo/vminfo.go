@@ -40,10 +40,10 @@ type Config struct {
 	// Set of features to check, missing features won't be checked/enabled after Run.
 	Features flatrpc.Feature
 	// Set of syscalls to check.
-	Syscalls []int
-	Debug bool
-	Cover bool
-	Sandbox flatrpc.ExecEnv
+	Syscalls   []int
+	Debug      bool
+	Cover      bool
+	Sandbox    flatrpc.ExecEnv
 	SandboxArg int64
 }
 

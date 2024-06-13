@@ -114,7 +114,7 @@ static NORETURN void doexit_thread(int status);
 static PRINTF(1, 2) void debug(const char* msg, ...);
 void debug_dump_data(const char* data, int length);
 
-#if 1
+#if 0
 #define debug_verbose(...) debug(__VA_ARGS__)
 #else
 #define debug_verbose(...) (void)0
@@ -151,14 +151,12 @@ bool IsSet(T flags, T f)
 
 const uint32 kMaxCalls = 100;
 
-class ShmemBuilder : flatbuffers::Allocator, public flatbuffers::FlatBufferBuilder
+class ShmemAllocator : public flatbuffers::Allocator
 {
 public:
-	ShmemBuilder(void* buf, size_t size, size_t offset = 0)
-	    : FlatBufferBuilder(size, this), buf_(buf), size_(size)
+	ShmemAllocator(void* buf, size_t size)
+	    : buf_(buf), size_(size)
 	{
-		if (offset)
-			FlatBufferBuilder::buf_.make_space(offset);
 	}
 
 private:
@@ -187,6 +185,17 @@ private:
 				     size_t in_use_front) override
 	{
 		fail("can't reallocate");
+	}
+};
+
+class ShmemBuilder : ShmemAllocator, public flatbuffers::FlatBufferBuilder
+{
+public:
+	ShmemBuilder(void* buf, size_t size, size_t offset = 0)
+	    : ShmemAllocator(buf, size), FlatBufferBuilder(size, this)
+	{
+		if (offset)
+			FlatBufferBuilder::buf_.make_space(offset);
 	}
 };
 
@@ -237,6 +246,10 @@ static bool flag_threaded;
 
 // If true, then executor should write the comparisons data to fuzzer.
 static bool flag_comparisons;
+
+static uint64 request_id;
+static uint64 all_call_signal;
+static bool all_extra_signal;
 
 // Tunable timeouts, received with execute_req.
 static uint64 syscall_timeout_ms;
@@ -361,12 +374,15 @@ struct handshake_req {
 
 struct execute_req {
 	uint64 magic;
+	uint64 id;
 	rpc::ExecEnv env_flags;
 	uint64 exec_flags;
 	uint64 pid;
 	uint64 syscall_timeout_ms;
 	uint64 program_timeout_ms;
 	uint64 slowdown_scale;
+	uint64 all_call_signal;
+	bool all_extra_signal;
 };
 
 struct execute_reply {
@@ -593,7 +609,7 @@ static void mmap_output(uint32 size)
 	if (output_data == NULL) {
 		if (kAddressSanitizer) {
 			// Don't use fixed address under ASAN b/c it may overlap with shadow.
-			//fixed_flag = 0;
+			// fixed_flag = 0;
 			mmap_at = (uint32*)0x7f0000000000ull;
 		} else {
 			// It's the first time we map output region - generate its location.
@@ -682,8 +698,10 @@ void receive_execute()
 		failmsg("control pipe read failed", "read=%zd want=%zd", n, sizeof(req));
 	if (req.magic != kInMagic)
 		failmsg("bad execute request magic", "magic=0x%llx", req.magic);
+	request_id = req.id;
 	parse_env_flags(req.env_flags);
 	procid = req.pid;
+	request_id = req.id;
 	syscall_timeout_ms = req.syscall_timeout_ms;
 	program_timeout_ms = req.program_timeout_ms;
 	slowdown_scale = req.slowdown_scale;
@@ -692,6 +710,8 @@ void receive_execute()
 	flag_dedup_cover = req.exec_flags & (1 << 2);
 	flag_comparisons = req.exec_flags & (1 << 3);
 	flag_threaded = req.exec_flags & (1 << 4);
+	all_call_signal = req.all_call_signal;
+	all_extra_signal = req.all_extra_signal;
 
 	debug("[%llums] exec opts: procid=%llu threaded=%d cover=%d comps=%d dedup=%d signal=%d "
 	      " sandbox=%d/%d/%d/%d timeouts=%llu/%llu/%llu\n",
@@ -731,30 +751,25 @@ void realloc_output_data()
 // execute_one executes program stored in input_data.
 void execute_one()
 {
-fprintf(stderr, "EXECUTE ONE\n");
-
 	in_execute_one = true;
-fprintf(stderr, "HERE %d\n", __LINE__);
 	realloc_output_data();
-fprintf(stderr, "HERE %d\n", __LINE__);
 	size_t builder_size = output_size - sizeof(*output_data);
-fprintf(stderr, "HERE %d\n", __LINE__);
 	output_builder.emplace(output_data + 1, builder_size);
-fprintf(stderr, "HERE %d\n", __LINE__);
 	output_data->output_size = output_size;
-fprintf(stderr, "HERE %d\n", __LINE__);
 	uint64 start = current_time_ms();
-fprintf(stderr, "HERE %d\n", __LINE__);
 	uint8* input_pos = input_data;
 
+	char buf[64];
+	// Linux TASK_COMM_LEN is only 16, so the name needs to be compact.
+	snprintf(buf, sizeof(buf), "syz.%llu.%llu", procid, request_id);
+	prctl(PR_SET_NAME, buf);
+
 	if (cover_collection_required()) {
-debug_verbose("HERE %d\n", __LINE__);
 		if (!flag_threaded)
 			cover_enable(&threads[0].cov, flag_comparisons, false);
 		if (flag_extra_coverage)
 			cover_reset(&extra_cov);
 	}
-debug_verbose("HERE %d\n", __LINE__);
 
 	int call_index = 0;
 	uint64 prog_extra_timeout = 0;
@@ -762,12 +777,9 @@ debug_verbose("HERE %d\n", __LINE__);
 	call_props_t call_props;
 	memset(&call_props, 0, sizeof(call_props));
 
-debug_verbose("HERE %d\n", __LINE__);
-
 	read_input(&input_pos); // total number of calls
 	for (;;) {
 		uint64 call_num = read_input(&input_pos);
-debug_verbose("read call num = %llu\n", call_num);
 		if (call_num == instr_eof)
 			break;
 		if (call_num == instr_copyin) {
@@ -1002,7 +1014,7 @@ thread_t* schedule_call(int call_index, int call_num, uint64 copyout_index, uint
 }
 
 template <typename cover_data_t>
-uint32 write_signal(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
+uint32 write_signal(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov, bool all)
 {
 	// Write out feedback signals.
 	// Currently it is code edges computed as xor of two subsequent basic block PCs.
@@ -1029,7 +1041,8 @@ uint32 write_signal(flatbuffers::FlatBufferBuilder& fbb, cover_t* cov)
 		prev_filter = filter;
 		if (ignore || dedup(sig))
 			continue;
-		//!!! max_signal
+		if (!all && max_signal && max_signal->Contains(sig))
+			continue;
 		fbb.PushElement(uint64(sig));
 		nsig++;
 	}
@@ -1155,10 +1168,11 @@ void copyout_call_results(thread_t* th)
 	}
 }
 
-void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
+void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error, bool all_signal)
 {
 	auto& fbb = *output_builder;
 	const uint32 start_size = output_builder->GetSize();
+	(void)start_size;
 	uint32 signal_off = 0;
 	uint32 cover_off = 0;
 	uint32 comps_off = 0;
@@ -1167,9 +1181,9 @@ void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
 	} else {
 		if (flag_collect_signal) {
 			if (is_kernel_64_bit)
-				signal_off = write_signal<uint64>(fbb, cov);
+				signal_off = write_signal<uint64>(fbb, cov, all_signal);
 			else
-				signal_off = write_signal<uint32>(fbb, cov);
+				signal_off = write_signal<uint32>(fbb, cov, all_signal);
 		}
 		if (flag_collect_cover) {
 			if (is_kernel_64_bit)
@@ -1212,7 +1226,8 @@ void write_call_output(thread_t* th, bool finished)
 		if (th->fault_injected)
 			flags |= rpc::CallFlag::FaultInjected;
 	}
-	write_output(th->call_index, &th->cov, flags, reserrno);
+	bool all_signal = th->call_index < 64 ? (all_call_signal & (1ull << th->call_index)) : false;
+	write_output(th->call_index, &th->cov, flags, reserrno, all_signal);
 }
 
 void write_extra_output()
@@ -1222,7 +1237,7 @@ void write_extra_output()
 	cover_collect(&extra_cov);
 	if (!extra_cov.size)
 		return;
-	write_output(-1, &extra_cov, rpc::CallFlag::NONE, 997);
+	write_output(-1, &extra_cov, rpc::CallFlag::NONE, 997, all_extra_signal);
 }
 
 void thread_create(thread_t* th, int id, bool need_coverage)

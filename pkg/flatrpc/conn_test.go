@@ -5,6 +5,8 @@ package flatrpc
 
 import (
 	"net"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,22 +44,22 @@ func TestConn(t *testing.T) {
 	}()
 	serv, err := ListenAndServe(":0", func(c *Conn) {
 		defer close(done)
-		connectReqGot, err := Recv[ConnectRequestRaw](c)
+		connectReqGot, err := Recv[*ConnectRequestRaw](c)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assert.Equal(t, connectReq, connectReqGot.UnPack())
+		assert.Equal(t, connectReq, connectReqGot)
 
 		if err := Send(c, connectReply); err != nil {
 			t.Fatal(err)
 		}
 
 		for i := 0; i < 10; i++ {
-			got, err := Recv[ExecutorMessageRaw](c)
+			got, err := Recv[*ExecutorMessageRaw](c)
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.Equal(t, executorMsg, got.UnPack())
+			assert.Equal(t, executorMsg, got)
 		}
 	})
 	if err != nil {
@@ -72,11 +74,11 @@ func TestConn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	connectReplyGot, err := Recv[ConnectReplyRaw](c)
+	connectReplyGot, err := Recv[*ConnectReplyRaw](c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, connectReply, connectReplyGot.UnPack())
+	assert.Equal(t, connectReply, connectReplyGot)
 
 	for i := 0; i < 10; i++ {
 		if err := Send(c, executorMsg); err != nil {
@@ -107,7 +109,7 @@ func BenchmarkConn(b *testing.B) {
 	serv, err := ListenAndServe(":0", func(c *Conn) {
 		defer close(done)
 		for i := 0; i < b.N; i++ {
-			_, err := Recv[ConnectRequestRaw](c)
+			_, err := Recv[*ConnectRequestRaw](c)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -130,7 +132,7 @@ func BenchmarkConn(b *testing.B) {
 		if err := Send(c, connectReq); err != nil {
 			b.Fatal(err)
 		}
-		_, err := Recv[ConnectReplyRaw](c)
+		_, err := Recv[*ConnectReplyRaw](c)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -143,4 +145,33 @@ func dial(t testing.TB, addr string) *Conn {
 		t.Fatal(err)
 	}
 	return NewConn(conn)
+}
+
+func FuzzRecv(f *testing.F) {
+	f.Fuzz(func(t *testing.T, data []byte) {
+		data = data[:min(len(data), 1<<10)]
+		fds, err := syscall.Socketpair(syscall.AF_LOCAL, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := os.NewFile(uintptr(fds[0]), "")
+		r := os.NewFile(uintptr(fds[1]), "")
+		defer w.Close()
+		defer r.Close()
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
+		n, err := net.FileConn(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := NewConn(n)
+		for {
+			_, err := Recv[*ExecutorMessageRaw](c)
+			if err != nil {
+				break
+			}
+		}
+	})
 }

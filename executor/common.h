@@ -226,7 +226,7 @@ static void use_temporary_dir(void)
 #endif
 
 #if GOOS_netbsd || GOOS_freebsd || GOOS_darwin || GOOS_openbsd || GOOS_test
-#if (SYZ_EXECUTOR || SYZ_REPEAT) && SYZ_EXECUTOR_USES_FORK_SERVER && (SYZ_EXECUTOR || SYZ_USE_TMP_DIR)
+#if SYZ_EXECUTOR || SYZ_REPEAT && SYZ_USE_TMP_DIR
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
@@ -594,16 +594,17 @@ static void loop(void)
 
 #if SYZ_EXECUTOR || SYZ_REPEAT
 static void execute_one(void);
-#if SYZ_EXECUTOR_USES_FORK_SERVER
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 
 #if GOOS_linux
 #define WAIT_FLAGS __WALL
 #else
 #define WAIT_FLAGS 0
 #endif
+
+#if SYZ_EXECUTOR_USES_FORK_SERVER
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 static void loop(void)
 {
