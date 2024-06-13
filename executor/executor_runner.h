@@ -223,15 +223,15 @@ public:
 	void Ready(Select& select, uint64 now, bool empty)
 	{
 		if ((state_ == State::Handshaking || state_ == State::Executing) &&
-			now > exec_start_ + 10*1000) {
+		    now > exec_start_ + 10 * 1000) {
 			Restart();
 			return;
 		}
-	
+
 		if (select.Ready(stdout_pipe_) && !ReadOutput()) {
 			//!!! not needed in fork mode
-			//Restart();
-			//return;
+			// Restart();
+			// return;
 		}
 		if (select.Ready(resp_pipe_) && !ReadResponse(empty)) {
 			Restart();
@@ -287,11 +287,14 @@ private:
 		if (WIFSTOPPED(wstatus))
 			failmsg("child stopped", "status=%d", wstatus);
 		pid_ = 0;
+		int status = WEXITSTATUS(wstatus);
+		debug("proc %d: subprocess exit status %d\n", id_, status);
 		// Ignore all other errors.
 		// Without fork server executor can legitimately exit (program contains exit_group),
 		// with fork server the top process can exit with kFailStatus if it wants special handling.
-		int status = WEXITSTATUS(wstatus) == kFailStatus ? kFailStatus : 0;
-		if (msg_ && IsSet(msg_->flags, rpc::RequestFlag::ReturnError)) {
+		if (status != kFailStatus)
+			status = 0;
+		if (msg_ && (status != kFailStatus || IsSet(msg_->flags, rpc::RequestFlag::ReturnError))) {
 			// Read out all pening output until EOF.
 			if (IsSet(msg_->flags, rpc::RequestFlag::ReturnOutput)) {
 				while (ReadOutput()) {
@@ -340,6 +343,9 @@ private:
 			if (pair.first != -1) {
 				if (posix_spawn_file_actions_adddup2(&actions, pair.first, pair.second))
 					fail("posix_spawn_file_actions_adddup2 failed");
+			} else {
+				if (posix_spawn_file_actions_addclose(&actions, pair.second))
+					fail("posix_spawn_file_actions_addclose failed");
 			}
 		}
 		for (int i = kCoverFilterFd + 1; i < kFdLimit; i++) {
@@ -477,7 +483,7 @@ private:
 		// FixedAllocator alloc(resp_mem_ + 1, builder_size);
 		// flatbuffers::FlatBufferBuilder fbb(builder_size, &alloc);
 		debug("handle completion: completed=%u calls_size=%u output_size=%u\n",
-			completed, calls_size, output_size);
+		      completed, calls_size, output_size);
 		ShmemBuilder fbb(resp_mem_ + 1, output_size - sizeof(*resp_mem_), calls_size);
 
 		auto empty_call = rpc::CreateCallInfoRawDirect(fbb, rpc::CallFlag::NONE, 998);
@@ -660,7 +666,7 @@ private:
 
 		// This does any one-time setup for the requested features on the machine.
 		// Note: this can be called multiple times and must be idempotent.
-		//is_kernel_64_bit = detect_kernel_bitness();
+		// is_kernel_64_bit = detect_kernel_bitness();
 #if SYZ_HAVE_FEATURES
 		setup_sysctl();
 		setup_cgroups();
@@ -750,6 +756,10 @@ private:
 		      static_cast<uint64>(msg.exec_opts->env_flags()),
 		      static_cast<uint64>(msg.exec_opts->exec_flags()),
 		      msg.prog_data.size());
+		if (IsSet(msg.flags, rpc::RequestFlag::IsBinary)) {
+			ExecuteBinary(msg);
+			return;
+		}
 		for (auto& proc : procs_) {
 			if (proc->Execute(msg))
 				return;
@@ -771,6 +781,121 @@ private:
 	void handle(const rpc::StartLeakChecksRawT& msg)
 	{
 		debug("recv start leak checks\n");
+	}
+
+	void ExecuteBinary(rpc::ExecRequestRawT& msg)
+	{
+		rpc::ExecutingMessageRawT exec;
+		exec.id = msg.id;
+		rpc::ExecutorMessageRawT raw;
+		raw.msg.Set(std::move(exec));
+		conn_.Send(raw);
+
+		char dir_template[] = "syz-bin-dirXXXXXX";
+		char* dir = mkdtemp(dir_template);
+		if (dir == nullptr)
+			fail("mkdtemp failed");
+		if (chmod(dir, 0777))
+			fail("chmod failed");
+		auto [err, output] = ExecuteBinaryImpl(msg, dir);
+		if (!err.empty()) {
+			char tmp[64];
+			snprintf(tmp, sizeof(tmp), " (errno %d: %s)", errno, strerror(errno));
+			err += tmp;
+		}
+		remove_dir(dir);
+		rpc::ExecResultRawT res;
+		res.id = msg.id;
+		res.error = std::move(err);
+		res.output = std::move(output);
+		// rpc::ExecutorMessageRawT raw;
+		raw.msg.Set(std::move(res));
+		conn_.Send(raw);
+	}
+
+	std::tuple<std::string, std::vector<uint8_t>> ExecuteBinaryImpl(rpc::ExecRequestRawT& msg, const char* dir)
+	{
+		std::string file = std::string(dir) + "/syz-executor";
+		int fd = open(file.c_str(), O_WRONLY | O_CLOEXEC | O_CREAT, 0755);
+		if (fd == -1)
+			return {"binary file creation failed", {}};
+		ssize_t wrote = write(fd, msg.prog_data.data(), msg.prog_data.size());
+		close(fd);
+		if (wrote != static_cast<ssize_t>(msg.prog_data.size()))
+			return {"binary file write failed", {}};
+
+		int stdin_pipe[2];
+		if (pipe(stdin_pipe))
+			fail("pipe failed");
+		int stdout_pipe[2];
+		if (pipe(stdout_pipe))
+			fail("pipe failed");
+
+		posix_spawn_file_actions_t actions;
+		if (posix_spawn_file_actions_init(&actions))
+			fail("posix_spawn_file_actions_init failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdin_pipe[0], STDIN_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDOUT_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		if (posix_spawn_file_actions_adddup2(&actions, stdout_pipe[1], STDERR_FILENO))
+			fail("posix_spawn_file_actions_adddup2 failed");
+		for (int i = STDERR_FILENO + 1; i < kFdLimit; i++) {
+			if (posix_spawn_file_actions_addclose(&actions, i))
+				fail("posix_spawn_file_actions_addclose failed");
+		}
+
+		posix_spawnattr_t attr;
+		if (posix_spawnattr_init(&attr))
+			fail("posix_spawnattr_init failed");
+		// Create new process group so that we can kill all processes in the group.
+		if (posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP))
+			fail("posix_spawnattr_setflags failed");
+
+		const char* child_argv[] = {file.c_str(), nullptr};
+		const char* child_envp[] = {
+		    // Tell ASAN to not mess with our NONFAILING.
+		    "ASAN_OPTIONS=handle_segv=0 allow_user_segv_handler=1",
+		    // Disable rseq since we don't use it and we want to [ab]use it ourselves for kernel testing.
+		    "GLIBC_TUNABLES=glibc.pthread.rseq=0",
+		    nullptr};
+		int pid = 0;
+		if (posix_spawn(&pid, file.c_str(), &actions, &attr,
+				const_cast<char**>(child_argv), const_cast<char**>(child_envp)))
+			fail("posix_spawn failed");
+		if (posix_spawn_file_actions_destroy(&actions))
+			fail("posix_spawn_file_actions_destroy failed");
+		if (posix_spawnattr_destroy(&attr))
+			fail("posix_spawnattr_destroy failed");
+
+		close(stdin_pipe[0]);
+		close(stdout_pipe[1]);
+
+		int wstatus = 0;
+		uint64 start = current_time_ms();
+		for (;;) {
+			sleep_ms(10);
+			if (waitpid(pid, &wstatus, WNOHANG | WAIT_FLAGS) == pid)
+				break;
+			if (current_time_ms() - start > 20 * 1000) {
+				kill(-pid, SIGKILL);
+				kill(pid, SIGKILL);
+			}
+		}
+
+		std::vector<uint8_t> output;
+		for (;;) {
+			const size_t kChunk = 1024;
+			output.resize(output.size() + kChunk);
+			ssize_t n = read(stdout_pipe[0], output.data() + output.size() - kChunk, kChunk);
+			if (n <= 0)
+				break;
+			output.resize(output.size() - kChunk + n);
+		}
+		close(stdin_pipe[1]);
+		close(stdout_pipe[0]);
+
+		return {WEXITSTATUS(wstatus) == kFailStatus ? "process failed" : "", std::move(output)};
 	}
 };
 

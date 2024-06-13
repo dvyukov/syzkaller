@@ -236,7 +236,7 @@ func RunManager(cfg *mgrconfig.Config) {
 	go mgr.corpusInputHandler(corpusUpdates)
 
 	// Create RPC server for fuzzers.
-	mgr.serv, err = rpcserver.New(mgr, mgr.cfg, nil, true, *flagDebug)
+	mgr.serv, err = rpcserver.New(mgr.cfg, mgr, *flagDebug)
 	if err != nil {
 		log.Fatalf("failed to create rpc server: %v", err)
 	}
@@ -1475,30 +1475,27 @@ func (mgr *Manager) MachineChecked(features flatrpc.Feature, enabledSyscalls map
 }
 
 func (mgr *Manager) defaultExecOpts() flatrpc.ExecOpts {
-	env := csource.FeaturesToFlags(serv.enabledFeatures, nil)
-	if mgr.debug {
-		env |= flatrpc.ExecEnvDebug
-	}
+	env := csource.FeaturesToFlags(mgr.enabledFeatures, nil)
 	if mgr.cfg.Experimental.ResetAccState {
 		env |= flatrpc.ExecEnvResetState
 	}
-	if serv.cfg.Cover {
+	if mgr.cfg.Cover {
 		env |= flatrpc.ExecEnvSignal
 	}
-	sandbox, err := flatrpc.SandboxToFlags(serv.cfg.Sandbox)
+	sandbox, err := flatrpc.SandboxToFlags(mgr.cfg.Sandbox)
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse sandbox: %v", err))
 	}
 	env |= sandbox
 
 	exec := flatrpc.ExecFlagThreaded
-	if !serv.cfg.RawCover {
+	if !mgr.cfg.RawCover {
 		exec |= flatrpc.ExecFlagDedupCover
 	}
 	return flatrpc.ExecOpts{
 		EnvFlags:   env,
 		ExecFlags:  exec,
-		SandboxArg: serv.cfg.SandboxArg,
+		SandboxArg: mgr.cfg.SandboxArg,
 	}
 }
 

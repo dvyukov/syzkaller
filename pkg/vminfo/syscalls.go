@@ -231,7 +231,7 @@ func (ctx *checkContext) val(name string) uint64 {
 func (ctx *checkContext) execRaw(calls []string, mode prog.DeserializeMode, root bool) *flatrpc.ProgInfo {
 	sandbox := ctx.cfg.Sandbox
 	if root {
-		sandbox = 0
+		sandbox = flatrpc.ExecEnvSandboxNone
 	}
 	info := &flatrpc.ProgInfo{}
 	for remain := calls; len(remain) != 0; {

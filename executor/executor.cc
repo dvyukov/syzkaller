@@ -114,7 +114,7 @@ static NORETURN void doexit_thread(int status);
 static PRINTF(1, 2) void debug(const char* msg, ...);
 void debug_dump_data(const char* data, int length);
 
-#if 1
+#if 0
 #define debug_verbose(...) debug(__VA_ARGS__)
 #else
 #define debug_verbose(...) (void)0
@@ -151,14 +151,12 @@ bool IsSet(T flags, T f)
 
 const uint32 kMaxCalls = 100;
 
-class ShmemBuilder : flatbuffers::Allocator, public flatbuffers::FlatBufferBuilder
+class ShmemAllocator : public flatbuffers::Allocator
 {
 public:
-	ShmemBuilder(void* buf, size_t size, size_t offset = 0)
-	    : FlatBufferBuilder(size, this), buf_(buf), size_(size)
+	ShmemAllocator(void* buf, size_t size)
+	    : buf_(buf), size_(size)
 	{
-		if (offset)
-			FlatBufferBuilder::buf_.make_space(offset);
 	}
 
 private:
@@ -187,6 +185,17 @@ private:
 				     size_t in_use_front) override
 	{
 		fail("can't reallocate");
+	}
+};
+
+class ShmemBuilder : ShmemAllocator, public flatbuffers::FlatBufferBuilder
+{
+public:
+	ShmemBuilder(void* buf, size_t size, size_t offset = 0)
+	    : ShmemAllocator(buf, size), FlatBufferBuilder(size, this)
+	{
+		if (offset)
+			FlatBufferBuilder::buf_.make_space(offset);
 	}
 };
 
@@ -593,7 +602,7 @@ static void mmap_output(uint32 size)
 	if (output_data == NULL) {
 		if (kAddressSanitizer) {
 			// Don't use fixed address under ASAN b/c it may overlap with shadow.
-			//fixed_flag = 0;
+			// fixed_flag = 0;
 			mmap_at = (uint32*)0x7f0000000000ull;
 		} else {
 			// It's the first time we map output region - generate its location.
@@ -731,30 +740,20 @@ void realloc_output_data()
 // execute_one executes program stored in input_data.
 void execute_one()
 {
-fprintf(stderr, "EXECUTE ONE\n");
-
 	in_execute_one = true;
-fprintf(stderr, "HERE %d\n", __LINE__);
 	realloc_output_data();
-fprintf(stderr, "HERE %d\n", __LINE__);
 	size_t builder_size = output_size - sizeof(*output_data);
-fprintf(stderr, "HERE %d\n", __LINE__);
 	output_builder.emplace(output_data + 1, builder_size);
-fprintf(stderr, "HERE %d\n", __LINE__);
 	output_data->output_size = output_size;
-fprintf(stderr, "HERE %d\n", __LINE__);
 	uint64 start = current_time_ms();
-fprintf(stderr, "HERE %d\n", __LINE__);
 	uint8* input_pos = input_data;
 
 	if (cover_collection_required()) {
-debug_verbose("HERE %d\n", __LINE__);
 		if (!flag_threaded)
 			cover_enable(&threads[0].cov, flag_comparisons, false);
 		if (flag_extra_coverage)
 			cover_reset(&extra_cov);
 	}
-debug_verbose("HERE %d\n", __LINE__);
 
 	int call_index = 0;
 	uint64 prog_extra_timeout = 0;
@@ -762,12 +761,9 @@ debug_verbose("HERE %d\n", __LINE__);
 	call_props_t call_props;
 	memset(&call_props, 0, sizeof(call_props));
 
-debug_verbose("HERE %d\n", __LINE__);
-
 	read_input(&input_pos); // total number of calls
 	for (;;) {
 		uint64 call_num = read_input(&input_pos);
-debug_verbose("read call num = %llu\n", call_num);
 		if (call_num == instr_eof)
 			break;
 		if (call_num == instr_copyin) {
@@ -1159,6 +1155,7 @@ void write_output(int index, cover_t* cov, rpc::CallFlag flags, uint32 error)
 {
 	auto& fbb = *output_builder;
 	const uint32 start_size = output_builder->GetSize();
+	(void)start_size;
 	uint32 signal_off = 0;
 	uint32 cover_off = 0;
 	uint32 comps_off = 0;

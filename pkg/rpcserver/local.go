@@ -4,33 +4,34 @@
 package rpcserver
 
 import (
+	"errors"
 	"fmt"
-		"os/exec"
-		"os"
-		"time"
+	"os"
+	"os/exec"
+	"time"
 
-	"github.com/google/syzkaller/pkg/flatrpc"
-	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/cover"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
+	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
 )
 
 type LocalConfig struct {
 	Config
-	Executor string
-	GDB bool
-	Done chan bool
-	MachineChecked func (features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source
+	Executor       string
+	GDB            bool
+	Done           chan bool
+	MachineChecked func(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source
 }
-	
+
 func RunLocal(cfg *LocalConfig) error {
 	cfg.RPC = ":0"
 	cfg.VMLess = true
 	ctx := &local{
 		cfg: cfg,
 	}
-	serv, err := New(&cfg.Config, ctx)
+	serv, err := newImpl(&cfg.Config, ctx)
 	if err != nil {
 		return err
 	}
@@ -75,26 +76,26 @@ func RunLocal(cfg *LocalConfig) error {
 		<-res
 	}
 	//!!! this must not be done in execprog infinite mode
-	loop:
+loop:
 	for {
-			req := serv.execSource.Next()
-			if req == nil {
-				select {
-				case <-cfg.Done:
-					break loop
-				default:
-					time.Sleep(time.Millisecond)
-					continue loop
-				}
+		// If the executor has crashed early, reply to all remaining requests to unblock tests.
+		req := serv.execSource.Next()
+		if req == nil {
+			select {
+			case <-cfg.Done:
+				break loop
+			default:
+				time.Sleep(time.Millisecond)
+				continue loop
 			}
-fmt.Printf("fallback reply to req %p\n", req)
-			req.Done(&queue.Result{Status: queue.Crashed})
+		}
+		req.Done(&queue.Result{Status: queue.Crashed, Err: errors.New("executor crashed")})
 	}
 	return cmdErr
 }
 
 type local struct {
-	cfg *LocalConfig
+	cfg  *LocalConfig
 	serv *Server
 }
 

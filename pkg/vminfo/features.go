@@ -49,7 +49,7 @@ func (ctx *checkContext) startFeaturesCheck() {
 	testProg := ctx.target.DataMmapProg()
 	for feat := range flatrpc.EnumNamesFeature {
 		feat := feat
-		if ctx.cfg.Features & feat == 0 {
+		if ctx.cfg.Features&feat == 0 {
 			ctx.features <- featureResult{feat, "disabled by user"}
 			continue
 		}

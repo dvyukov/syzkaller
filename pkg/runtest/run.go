@@ -161,10 +161,9 @@ func (ctx *Context) processResults(requests chan *runRequest) error {
 				fail++
 				result = fmt.Sprintf("FAIL: %v",
 					strings.Replace(req.err.Error(), "\n", "\n\t", -1))
-				res := req.result
-				if len(res.Output) != 0 {
+				if req.result != nil && len(req.result.Output) != 0 {
 					result += fmt.Sprintf("\n\t%s",
-						strings.Replace(string(res.Output), "\n", "\n\t", -1))
+						strings.Replace(string(req.result.Output), "\n", "\n\t", -1))
 				}
 			} else {
 				ok++
@@ -266,6 +265,9 @@ nextSandbox:
 					if sandbox == "" {
 						break // executor does not support empty sandbox
 					}
+					if times != 1 {
+						break
+					}
 					name := name
 					if cov {
 						name += "/cover"
@@ -273,7 +275,7 @@ nextSandbox:
 					properties["cover"] = cov
 					properties["C"] = false
 					properties["executor"] = true
-					req, err := ctx.createSyzTest(p, sandbox, threaded, cov, times)
+					req, err := ctx.createSyzTest(p, sandbox, threaded, cov)
 					if err != nil {
 						return err
 					}
@@ -435,7 +437,7 @@ func match(props, requires map[string]bool) bool {
 	return true
 }
 
-func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bool, times int) (*runRequest, error) {
+func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bool) (*runRequest, error) {
 	var opts flatrpc.ExecOpts
 	sandboxFlags, err := flatrpc.SandboxToFlags(sandbox)
 	if err != nil {
@@ -458,7 +460,6 @@ func (ctx *Context) createSyzTest(p *prog.Prog, sandbox string, threaded, cov bo
 		Request: &queue.Request{
 			Prog:     p,
 			ExecOpts: opts,
-			Repeat:   times,
 		},
 	}
 	return req, nil
@@ -514,7 +515,6 @@ func (ctx *Context) createCTest(p *prog.Prog, sandbox string, threaded bool, tim
 			ExecOpts: flatrpc.ExecOpts{
 				ExecFlags: ipcFlags,
 			},
-			Repeat: times,
 		},
 	}
 	return req, nil
@@ -524,27 +524,13 @@ func checkResult(req *runRequest) error {
 	if req.result.Status != queue.Success {
 		return fmt.Errorf("non-successful result status (%v)", req.result.Status)
 	}
-	var infos []*flatrpc.ProgInfo
+	infos := []*flatrpc.ProgInfo{req.result.Info}
 	isC := req.BinaryFile != ""
 	if isC {
 		var err error
 		if infos, err = parseBinOutput(req); err != nil {
 			return err
 		}
-	} else {
-		raw := req.result.Info
-		for len(raw.Calls) != 0 {
-			ncalls := min(len(raw.Calls), len(req.Prog.Calls))
-			infos = append(infos, &flatrpc.ProgInfo{
-				Extra: raw.Extra,
-				Calls: raw.Calls[:ncalls],
-			})
-			raw.Calls = raw.Calls[ncalls:]
-		}
-	}
-	if req.Repeat != len(infos) {
-		return fmt.Errorf("should repeat %v times, but repeated %v, prog calls %v, info calls %v\n%s",
-			req.Repeat, len(infos), req.Prog.Calls, len(req.result.Info.Calls), req.result.Output)
 	}
 	calls := make(map[string]bool)
 	for run, info := range infos {

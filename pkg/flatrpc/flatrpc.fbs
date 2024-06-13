@@ -155,8 +155,6 @@ table ExecRequestRaw {
 	signal_filter_call	:int32;
 	// Return all signal for these calls.
 	all_signal		:[int32];
-	// Repeat the program that many times (0 means 1).
-	repeat			:int32;
 }
 
 table SignalUpdateRaw {

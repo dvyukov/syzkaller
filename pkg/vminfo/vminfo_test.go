@@ -136,7 +136,7 @@ func testConfig(t *testing.T, OS, arch string) *Config {
 		}
 	}
 	return &Config{
-		Target: target,
+		Target:   target,
 		Features: flatrpc.AllFeatures,
 		Syscalls: syscalls,
 	}

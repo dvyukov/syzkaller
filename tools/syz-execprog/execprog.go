@@ -20,7 +20,6 @@ import (
 	"github.com/google/syzkaller/pkg/cover/backend"
 	"github.com/google/syzkaller/pkg/csource"
 	"github.com/google/syzkaller/pkg/db"
-	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/fuzzer/queue"
 	"github.com/google/syzkaller/pkg/log"
@@ -28,22 +27,23 @@ import (
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/rpcserver"
 	"github.com/google/syzkaller/pkg/tool"
+	"github.com/google/syzkaller/pkg/vminfo"
 	"github.com/google/syzkaller/prog"
-	"github.com/google/syzkaller/sys/targets"
 	_ "github.com/google/syzkaller/sys"
+	"github.com/google/syzkaller/sys/targets"
 )
 
 func main() {
 	var (
-		flagOS        = flag.String("os", runtime.GOOS, "target os")
-		flagArch      = flag.String("arch", runtime.GOARCH, "target arch")
-		flagCoverFile = flag.String("coverfile", "", "write coverage to the file")
-		flagRepeat    = flag.Int("repeat", 1, "repeat execution that many times (0 for infinite loop)")
-		flagProcs     = flag.Int("procs", 2*runtime.NumCPU(), "number of parallel processes to execute programs")
-		flagOutput    = flag.Bool("output", false, "write programs and results to stdout")
-		flagHints     = flag.Bool("hints", false, "do a hints-generation run")
-		flagEnable    = flag.String("enable", "none", "enable only listed additional features")
-		flagDisable   = flag.String("disable", "none", "enable all additional features except listed")
+		flagOS         = flag.String("os", runtime.GOOS, "target os")
+		flagArch       = flag.String("arch", runtime.GOARCH, "target arch")
+		flagCoverFile  = flag.String("coverfile", "", "write coverage to the file")
+		flagRepeat     = flag.Int("repeat", 1, "repeat execution that many times (0 for infinite loop)")
+		flagProcs      = flag.Int("procs", 2*runtime.NumCPU(), "number of parallel processes to execute programs")
+		flagOutput     = flag.Bool("output", false, "write programs and results to stdout")
+		flagHints      = flag.Bool("hints", false, "do a hints-generation run")
+		flagEnable     = flag.String("enable", "none", "enable only listed additional features")
+		flagDisable    = flag.String("disable", "none", "enable all additional features except listed")
 		flagExecutor   = flag.String("executor", "./syz-executor", "path to executor binary")
 		flagThreaded   = flag.Bool("threaded", true, "use threaded mode in executor")
 		flagSignal     = flag.Bool("cover", false, "collect feedback signals (coverage)")
@@ -100,16 +100,16 @@ func main() {
 		}
 	}
 
-       var requestedSyscalls []int
-       if *flagStress {
-               syscallList := strings.Split(*flagSyscalls, ",")
-               if *flagSyscalls == "" {
-                       syscallList = nil
-               }
-               requestedSyscalls, err = mgrconfig.ParseEnabledSyscalls(target, syscallList, nil)
-               if err != nil {
-                       tool.Failf("failed to parse enabled syscalls: %v", err)
-               }
+	var requestedSyscalls []int
+	if *flagStress {
+		syscallList := strings.Split(*flagSyscalls, ",")
+		if *flagSyscalls == "" {
+			syscallList = nil
+		}
+		requestedSyscalls, err = mgrconfig.ParseEnabledSyscalls(target, syscallList, nil)
+		if err != nil {
+			tool.Failf("failed to parse enabled syscalls: %v", err)
+		}
 	}
 
 	sandbox, err := flatrpc.SandboxToFlags(*flagSandbox)
@@ -138,7 +138,7 @@ func main() {
 		os.Exit(1)
 	}
 	ctx := &Context{
-		target:target,
+		target:    target,
 		done:      make(chan bool),
 		progs:     progs,
 		rs:        rand.NewSource(time.Now().UnixNano()),
@@ -158,20 +158,20 @@ func main() {
 	cfg := &rpcserver.LocalConfig{
 		Config: rpcserver.Config{
 			Config: vminfo.Config{
-				Target: target,
-				Features: features,
-				Syscalls: requestedSyscalls,
-				Debug: *flagDebug,
-				Cover: cover,
-				Sandbox: sandbox,
+				Target:     target,
+				Features:   features,
+				Syscalls:   requestedSyscalls,
+				Debug:      *flagDebug,
+				Cover:      cover,
+				Sandbox:    sandbox,
 				SandboxArg: int64(*flagSandboxArg),
 			},
-			Procs: *flagProcs,
+			Procs:    *flagProcs,
 			Slowdown: *flagSlowdown,
 		},
-		Executor: *flagExecutor,
-		GDB: *flagGDB,
-		Done: ctx.done,
+		Executor:       *flagExecutor,
+		GDB:            *flagGDB,
+		Done:           ctx.done,
 		MachineChecked: ctx.machineChecked,
 	}
 	if err := rpcserver.RunLocal(cfg); err != nil {
@@ -180,7 +180,7 @@ func main() {
 }
 
 type Context struct {
-	target *prog.Target
+	target      *prog.Target
 	done        chan bool
 	progs       []*prog.Prog
 	defaultOpts flatrpc.ExecOpts
@@ -225,7 +225,7 @@ func (ctx *Context) Next() *queue.Request {
 		log.Logf(0, "executing program:\n%s", data)
 		ctx.logMu.Unlock()
 	}
-	
+
 	req := &queue.Request{
 		Prog: p,
 	}
