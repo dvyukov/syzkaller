@@ -144,6 +144,7 @@ static void cover_enable(cover_t* cov, bool collect_comps, bool extra)
 			exitf("cover enable write trace failed, mode=%d", kcov_mode);
 		return;
 	}
+	fail("remote coverage is currently broken in the kernel");
 	kcov_remote_arg<1> arg = {
 	    .trace_mode = kcov_mode,
 	    // Coverage buffer size of background threads.
