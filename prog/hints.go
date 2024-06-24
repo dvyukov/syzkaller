@@ -146,8 +146,17 @@ func generateHints(compMap CompMap, arg Arg, exec func() bool) {
 
 	switch a := arg.(type) {
 	case *ConstArg:
+		if arg.Type().TypeBitSize() <= 8 {
+			// Very small arg, hopefully we can guess it w/o hints help.
+			return
+		}
 		checkConstArg(a, compMap, exec)
 	case *DataArg:
+		if arg.Size() <= 3 {
+			// Let's assume it either does not contain anything interesting,
+			// or we can guess everything eventually by brute force.
+			return
+		}
 		if typ.(*BufferType).Kind == BufferCompressed {
 			checkCompressedArg(a, compMap, exec)
 		} else {
@@ -161,6 +170,9 @@ func checkConstArg(arg *ConstArg, compMap CompMap, exec func() bool) {
 	// Note: because shrinkExpand returns a map, order of programs is non-deterministic.
 	// This can affect test coverage reports.
 	for _, replacer := range shrinkExpand(original, compMap, arg.Type().TypeBitSize(), false) {
+		if arg.Type().(uselessHinter).uselessHint(replacer) {
+			continue
+		}
 		arg.Val = replacer
 		if !exec() {
 			break

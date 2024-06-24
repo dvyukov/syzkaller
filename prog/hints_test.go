@@ -50,16 +50,16 @@ func TestHintsCheckConstArg(t *testing.T) {
 			name:  "multiple-replacers-test",
 			in:    0xabcd,
 			size:  2,
-			comps: CompMap{0xabcd: compSet(0x2, 0x3)},
-			res:   []uint64{0x2, 0x3},
+			comps: CompMap{0xabcd: compSet(0x32, 0x33)},
+			res:   []uint64{0x32, 0x33},
 		},
 		// Checks that special ints are not used.
 		{
 			name:  "special-ints-test",
 			in:    0xabcd,
 			size:  2,
-			comps: CompMap{0xabcd: compSet(0x1, 0x2)},
-			res:   []uint64{0x2},
+			comps: CompMap{0xabcd: compSet(0x1, 0x2, 0x42)},
+			res:   []uint64{0x42},
 		},
 
 		// The following tests check the size limits for each replacer and for the initial value
@@ -125,7 +125,7 @@ func TestHintsCheckConstArg(t *testing.T) {
 				0xffffffffffffffab: compSet(0x12, 0xffffffffffffff0a),
 				0xfffffffffffff8ab: compSet(0x13, 0xffffffffffffff00),
 			},
-			res: []uint64{0x11, 0x13, 0x80a, 0x812, 0xf00},
+			res: []uint64{0x11, 0x13, 0x812, 0xf00},
 		},
 		{
 			name:    "int16-negative-invalid-value-bitsize-12",
@@ -198,7 +198,7 @@ func TestHintsCheckDataArg(t *testing.T) {
 		// Checks that for every such operand a program is generated.
 		{
 			"multiple-replacers-test",
-			"\xcd\xab",
+			"\xcd\xab\x42\x42",
 			CompMap{0xabcd: compSet(0x2, 0x3)},
 			map[string]bool{
 				"\x02\x00": true, "\x03\x00": true,
@@ -207,7 +207,7 @@ func TestHintsCheckDataArg(t *testing.T) {
 		// Checks that special ints are not used.
 		{
 			"special-ints-test",
-			"\xcd\xab",
+			"\xcd\xab\x42\x42",
 			CompMap{0xabcd: compSet(0x1, 0x2)},
 			map[string]bool{
 				"\x02\x00": true,

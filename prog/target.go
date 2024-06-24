@@ -6,10 +6,13 @@ package prog
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/google/syzkaller/pkg/hash"
 )
 
 // Target describes target OS/arch pair.
@@ -130,6 +133,7 @@ func (target *Target) lazyInit() {
 	target.Neutralize = func(c *Call, fixStructure bool) error { return nil }
 	target.AnnotateCall = func(c ExecCall) string { return "" }
 	target.initTarget()
+	target.initUselessHints()
 	target.initArch(target)
 	// Give these 2 known addresses fixed positions and prepend target-specific ones at the end.
 	target.SpecialPointers = append([]uint64{
@@ -179,6 +183,56 @@ func (target *Target) initTarget() {
 	for _, res := range target.Resources {
 		target.resourceCtors[res.Name] = target.calcResourceCtors(res, false)
 	}
+}
+
+func (target *Target) initUselessHints() {
+	groups := make(map[string]map[int][]uint64)
+	for _, call := range target.Syscalls {
+		id := call.CallName
+		for i, field := range call.Args {
+			switch arg := field.Type.(type) {
+			case *ResourceType:
+				id += fmt.Sprintf("-%v:%v", i, arg.Name())
+			case *PtrType:
+				if typ, ok := arg.Elem.(*BufferType); ok && typ.Kind == BufferString && len(typ.Values) == 1 {
+					id += fmt.Sprintf("-%v:%v", i, typ.Values[0])
+				}
+			}
+		}
+		group := groups[id]
+		if group.group == nil {
+			group = map[int][]uint64
+			groups[id] = group
+		}
+		collectConstraints(call, 0, 0, -1, 0, &discriminationConstraint{})
+	}
+	
+
+	computed := make(map[Type]bool)
+	dedup := make(map[string]map[uint64]struct{})
+	ForeachType(target.Syscalls, func(t Type, ctx *TypeCtx) {
+		hinter, ok := t.(uselessHinter)
+		if !ok || computed[t] {
+			return
+		}
+		computed[t] = true
+		hints := hinter.calcUselessHints()
+		if len(hints) == 0 {
+			return
+		}
+		slices.Sort(hints)
+		hints = slices.Compact(hints)
+		sig := hash.String(hints)
+		m := dedup[sig]
+		if m == nil {
+			m = make(map[uint64]struct{})
+			for _, v := range hints {
+				m[v] = struct{}{}
+			}
+			dedup[sig] = m
+		}
+		hinter.setUselessHints(m)
+	})
 }
 
 func (target *Target) GetConst(name string) uint64 {
