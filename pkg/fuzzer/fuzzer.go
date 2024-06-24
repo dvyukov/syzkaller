@@ -86,8 +86,7 @@ func newExecQueues(fuzzer *Fuzzer) execQueues {
 		ret.triageCandidateQueue,
 		ret.candidateQueue,
 		ret.triageQueue,
-		// Alternate smash jobs with exec/fuzz once in 3 times.
-		queue.Alternate(ret.smashQueue, 3),
+		ret.smashQueue,
 		queue.Callback(fuzzer.genFuzz),
 	)
 	return ret

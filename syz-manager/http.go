@@ -41,6 +41,7 @@ func (mgr *Manager) initHTTP() {
 	handle("/config", mgr.httpConfig)
 	handle("/expert_mode", mgr.httpExpertMode)
 	handle("/stats", mgr.httpStats)
+	handle("/hints", mgr.httpHints)
 	handle("/vms", mgr.httpVMs)
 	handle("/vm", mgr.httpVM)
 	handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}).ServeHTTP)
@@ -164,6 +165,11 @@ func (mgr *Manager) httpStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(data)
+}
+
+func (mgr *Manager) httpHints(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", ctTextPlain)
+	prog.DumpCompStats(w)
 }
 
 func (mgr *Manager) httpVMs(w http.ResponseWriter, r *http.Request) {
