@@ -121,7 +121,7 @@ func (job *triageJob) handleCall(call int, info *triageCall) {
 	}
 	if job.flags&ProgSmashed == 0 {
 		job.fuzzer.startJob(job.fuzzer.statJobsSmash, &smashJob{
-			exec: job.fuzzer.smashQueue.Append(),
+			exec: job.fuzzer.smashQueue,
 			p:    p.Clone(),
 			call: call,
 		})
@@ -303,40 +303,10 @@ func (job *smashJob) run(fuzzer *Fuzzer) {
 	fuzzer.Logf(2, "smashing the program %s (call=%d):", job.p, job.call)
 	if fuzzer.Config.Comparisons && job.call >= 0 {
 		fuzzer.startJob(fuzzer.statJobsHints, &hintsJob{
-			exec: fuzzer.smashQueue.Append(),
+			exec: fuzzer.smashQueue,
 			p:    job.p.Clone(),
 			call: job.call,
 		})
-	}
-
-	const iters = 75
-	rnd := fuzzer.rand()
-	for i := 0; i < iters; i++ {
-		p := job.p.Clone()
-		p.Mutate(rnd, prog.RecommendedCalls,
-			fuzzer.ChoiceTable(),
-			fuzzer.Config.NoMutateCalls,
-			fuzzer.Config.Corpus.Programs())
-		result := fuzzer.execute(job.exec, &queue.Request{
-			Prog:     p,
-			ExecOpts: setFlags(flatrpc.ExecFlagCollectSignal),
-			Stat:     fuzzer.statExecSmash,
-		})
-		if result.Stop() {
-			return
-		}
-		if fuzzer.Config.Collide {
-			result := fuzzer.execute(job.exec, &queue.Request{
-				Prog: randomCollide(p, rnd),
-				Stat: fuzzer.statExecCollide,
-			})
-			if result.Stop() {
-				return
-			}
-		}
-	}
-	if fuzzer.Config.FaultInjection && job.call >= 0 {
-		job.faultInjection(fuzzer)
 	}
 }
 

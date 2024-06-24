@@ -67,7 +67,7 @@ func NewFuzzer(ctx context.Context, cfg *Config, rnd *rand.Rand,
 }
 
 type execQueues struct {
-	smashQueue           *queue.DynamicOrderer
+	smashQueue           *queue.PlainQueue
 	triageQueue          *queue.DynamicOrderer
 	candidateQueue       *queue.PlainQueue
 	triageCandidateQueue *queue.DynamicOrderer
@@ -79,15 +79,14 @@ func newExecQueues(fuzzer *Fuzzer) execQueues {
 		triageCandidateQueue: queue.DynamicOrder(),
 		candidateQueue:       queue.Plain(),
 		triageQueue:          queue.DynamicOrder(),
-		smashQueue:           queue.DynamicOrder(),
+		smashQueue:           queue.Plain(),
 	}
 	// Sources are listed in the order, in which they will be polled.
 	ret.source = queue.Order(
 		ret.triageCandidateQueue,
 		ret.candidateQueue,
 		ret.triageQueue,
-		// Alternate smash jobs with exec/fuzz once in 3 times.
-		queue.Alternate(ret.smashQueue, 3),
+		ret.smashQueue,
 		queue.Callback(fuzzer.genFuzz),
 	)
 	return ret

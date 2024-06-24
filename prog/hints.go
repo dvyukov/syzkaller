@@ -22,10 +22,142 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"maps"
+	"io"
 	"sort"
+	"sync"
 
 	"github.com/google/syzkaller/pkg/image"
 )
+
+var (
+	statsMu       sync.Mutex
+	syscallHints  = make(map[string]*perSyscall)
+	compTypes     = make(map[string]int)
+	compArgs      = make(map[string]int)
+	compReplacers = make(map[string]int)
+)
+
+type compType int
+
+const (
+	compTypeConst compType = iota
+	compTypeInt
+	compTypeFlags
+	compTypeLen
+	compTypeData
+	compTypeCompressed
+	compTypeTotal
+	compTypeCount
+)
+
+func (t compType) String() string {
+	switch t {
+	case compTypeConst:
+		return "const"
+	case compTypeInt:
+		return "int"
+	case compTypeFlags:
+		return "flags"
+	case compTypeLen:
+		return "len"
+	case compTypeData:
+		return "data"
+	case compTypeCompressed:
+		return "compressed"
+	case compTypeTotal:
+		return "total"
+	}
+	panic("unknown type")
+}
+
+type perSyscall struct {
+	name  string
+	count int
+	comps int
+	types [compTypeCount]int
+}
+
+func DumpCompStats(w io.Writer) {
+	statsMu.Lock()
+	defer statsMu.Unlock()
+	type syscallStat struct {
+		name  string
+		count int
+		comps int
+		types [compTypeCount]int
+	}
+	total := 0
+	var syscalls []syscallStat
+	for name, syscall := range syscallHints {
+		total += syscall.count
+		syscalls = append(syscalls, syscallStat{
+			name:  name,
+			count: syscall.count,
+			comps: syscall.comps / syscall.count,
+			types: [compTypeCount]int{
+				syscall.types[compTypeConst] / syscall.count,
+				syscall.types[compTypeInt] / syscall.count,
+				syscall.types[compTypeFlags] / syscall.count,
+				syscall.types[compTypeLen] / syscall.count,
+				syscall.types[compTypeData] / syscall.count,
+				syscall.types[compTypeCompressed] / syscall.count,
+				syscall.types[compTypeTotal] / syscall.count,
+			},
+		})
+	}
+	sort.Slice(syscalls, func(i, j int) bool {
+		if syscalls[i].types[compTypeTotal] != syscalls[j].types[compTypeTotal] {
+			return syscalls[i].types[compTypeTotal] > syscalls[j].types[compTypeTotal]
+		}
+		return syscalls[i].name < syscalls[j].name
+	})
+	fmt.Fprintf(w, "Per syscall info\n")
+	for _, s := range syscalls {
+		fmt.Fprintf(w, "%-50v: hints %5v comps %5v replacers %5v const %4v int %4v flags %4v len %4v data %4v compressed %4v\n",
+			s.name, s.count, s.comps, s.types[compTypeTotal],
+			s.types[compTypeConst], s.types[compTypeInt], s.types[compTypeFlags],
+			s.types[compTypeLen], s.types[compTypeData], s.types[compTypeCompressed])
+	}
+	fmt.Fprintf(w, "\n")
+	types := maps.Clone(compTypes)
+	for k, v := range types {
+		types[k] = v / total
+	}	
+	dumpCompStat(w, types, "Replacer types")
+	dumpCompStat(w, compReplacers, "Replacers per type")
+	dumpCompStat(w, compArgs, "Comparison arguments")
+}
+
+func dumpCompStat(w io.Writer, m map[string]int, name string) {
+	type stat struct {
+		what string
+		val  int
+	}
+	total := 0
+	stats := make([]stat, 0, len(m))
+	for k, v := range m {
+		total += v
+		stats = append(stats, stat{k, v})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].val != stats[j].val {
+			return stats[i].val > stats[j].val
+		}
+		return stats[i].what < stats[j].what
+	})
+	fmt.Fprintf(w, "%v (total %v records with %v sum)\n", name, len(stats), total)
+	for _, s := range stats[:min(len(stats), 1000)] {
+		fmt.Fprintf(w, "%-50v: %v\n", s.what, s.val)
+	}
+	if len(stats) > 1000 {
+		fmt.Fprintf(w, "\n...\n")
+		for _, s := range stats[len(stats)-100:] {
+			fmt.Fprintf(w, "%-50v: %v\n", s.what, s.val)
+		}
+	}
+	fmt.Fprintf(w, "\n")
+}
 
 // Example: for comparisons {(op1, op2), (op1, op3), (op1, op4), (op2, op1)}
 // this map will store the following:
@@ -82,10 +214,30 @@ func (m CompMap) InplaceIntersect(other CompMap) {
 // The callback must return whether we should continue substitution (true)
 // or abort the process (false).
 func (p *Prog) MutateWithHints(callIndex int, comps CompMap, exec func(p *Prog) bool) {
+	statsMu.Lock()
+	total := 0
+	for arg1, args2 := range comps {
+		for arg2 := range args2 {
+			compArgs[fmt.Sprintf("0x%x - 0x%x", arg1, arg2)]++
+			total++
+		}
+	}
+	callName := p.Calls[callIndex].Meta.Name
+	syscall := syscallHints[callName]
+	if syscall == nil {
+		syscall = &perSyscall{
+			name: callName,
+		}
+		syscallHints[callName] = syscall
+	}
+	syscall.count++
+	syscall.comps += total
+	statsMu.Unlock()
+
 	p = p.Clone()
 	c := p.Calls[callIndex]
 	doMore := true
-	execValidate := func() bool {
+	execValidate := func(compType compType, replacer uint64) bool {
 		// Don't try to fix the candidate program.
 		// Assuming the original call was sanitized, we've got a bad call
 		// as the result of hint substitution, so just throw it away.
@@ -99,6 +251,14 @@ func (p *Prog) MutateWithHints(callIndex int, comps CompMap, exec func(p *Prog) 
 			// Let's just ignore such mutations.
 			return true
 		}
+		statsMu.Lock()
+		syscall.types[compType]++
+		syscall.types[compTypeTotal]++
+		compTypes[compType.String()]++
+		compTypes[compTypeTotal.String()]++
+		compReplacers[fmt.Sprintf("%s 0x%x", compType, replacer)]++
+		statsMu.Unlock()
+
 		p.debugValidate()
 		doMore = exec(p)
 		return doMore
@@ -112,7 +272,7 @@ func (p *Prog) MutateWithHints(callIndex int, comps CompMap, exec func(p *Prog) 
 	})
 }
 
-func generateHints(compMap CompMap, arg Arg, exec func() bool) {
+func generateHints(compMap CompMap, arg Arg, exec func(compType, uint64) bool) {
 	typ := arg.Type()
 	if typ == nil || arg.Dir() == DirOut {
 		return
@@ -165,7 +325,7 @@ func generateHints(compMap CompMap, arg Arg, exec func() bool) {
 	}
 }
 
-func checkConstArg(arg *ConstArg, compMap CompMap, exec func() bool) {
+func checkConstArg(arg *ConstArg, compMap CompMap, exec func(compType, uint64) bool) {
 	original := arg.Val
 	// Note: because shrinkExpand returns a map, order of programs is non-deterministic.
 	// This can affect test coverage reports.
@@ -173,15 +333,24 @@ func checkConstArg(arg *ConstArg, compMap CompMap, exec func() bool) {
 		if arg.Type().(uselessHinter).uselessHint(replacer) {
 			continue
 		}
+		typ := compTypeConst
+		switch arg.Type().(type) {
+		case *IntType:
+			typ = compTypeInt
+		case *FlagsType:
+			typ = compTypeFlags
+		case *LenType:
+			typ = compTypeLen
+		}
 		arg.Val = replacer
-		if !exec() {
+		if !exec(typ, replacer) {
 			break
 		}
 	}
 	arg.Val = original
 }
 
-func checkDataArg(arg *DataArg, compMap CompMap, exec func() bool) {
+func checkDataArg(arg *DataArg, compMap CompMap, exec func(compType, uint64) bool) {
 	bytes := make([]byte, 8)
 	data := arg.Data()
 	size := len(data)
@@ -195,7 +364,7 @@ func checkDataArg(arg *DataArg, compMap CompMap, exec func() bool) {
 		for _, replacer := range shrinkExpand(val, compMap, 64, false) {
 			binary.LittleEndian.PutUint64(bytes, replacer)
 			copy(data[i:], bytes)
-			if !exec() {
+			if !exec(compTypeData, replacer) {
 				break
 			}
 		}
@@ -203,7 +372,7 @@ func checkDataArg(arg *DataArg, compMap CompMap, exec func() bool) {
 	}
 }
 
-func checkCompressedArg(arg *DataArg, compMap CompMap, exec func() bool) {
+func checkCompressedArg(arg *DataArg, compMap CompMap, exec func(compType, uint64) bool) {
 	data0 := arg.Data()
 	data, dtor := image.MustDecompress(data0)
 	defer dtor()
@@ -221,7 +390,7 @@ func checkCompressedArg(arg *DataArg, compMap CompMap, exec func() bool) {
 			binary.LittleEndian.PutUint64(bytes, replacer)
 			copy(data[i:], bytes)
 			arg.SetData(image.Compress(data))
-			if !exec() {
+			if !exec(compTypeCompressed, replacer) {
 				break
 			}
 		}
