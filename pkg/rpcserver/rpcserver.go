@@ -83,6 +83,7 @@ type Server struct {
 }
 
 type Runner struct {
+	name          string
 	stopped       bool
 	finished      chan bool
 	injectExec    chan<- bool
@@ -580,6 +581,7 @@ func (serv *Server) handleExecResult(runner *Runner, msg *flatrpc.ExecResult) er
 		Info:   msg.Info,
 		Output: slices.Clone(msg.Output),
 		Err:    resErr,
+		VM:     runner.name,
 	})
 	return nil
 }
@@ -669,6 +671,7 @@ func (serv *Server) printMachineCheck(checkFilesInfo []*flatrpc.FileInfo, enable
 
 func (serv *Server) CreateInstance(name string, injectExec chan<- bool) {
 	runner := &Runner{
+		name:       name,
 		injectExec: injectExec,
 		infoc:      make(chan chan []byte),
 		finished:   make(chan bool),

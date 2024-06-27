@@ -141,6 +141,7 @@ type Result struct {
 	Output []byte
 	Status Status
 	Err    error // More details in case of ExecFailure.
+	VM string
 }
 
 func (r *Result) clone() *Result {

@@ -57,6 +57,7 @@ type triageJob struct {
 	flags  ProgFlags
 	fuzzer *Fuzzer
 	queue  queue.Executor
+	vm     string
 	// Set of calls that gave potential new coverage.
 	calls map[int]*triageCall
 }
@@ -151,6 +152,7 @@ func (job *triageJob) handleCall(call int, info *triageCall) {
 }
 
 func (job *triageJob) deflake(exec func(*queue.Request, ProgFlags) *queue.Result) (stop bool) {
+	vms := map[string]bool{job.vm: true}
 	prevTotalNewSignal := 0
 	for run := 1; ; run++ {
 		totalNewSignal := 0
@@ -199,6 +201,7 @@ func (job *triageJob) deflake(exec func(*queue.Request, ProgFlags) *queue.Result
 		if result.Stop() {
 			return true
 		}
+		vms[result.VM] = true
 		if result.Info == nil {
 			continue // the program has failed
 		}
@@ -237,10 +240,15 @@ func (job *triageJob) deflake(exec func(*queue.Request, ProgFlags) *queue.Result
 		}
 		deflakeCall(-1, result.Info.Extra)
 	}
+	stat := job.fuzzer.statFailedTriageVMs
 	for _, info := range job.calls {
 		info.stableSignal = info.signals[deflakeNeedRuns-1]
 		info.newStableSignal = info.newSignal.Intersection(info.stableSignal)
+		if len(info.newStableSignal) != 0 {
+			stat = job.fuzzer.statSuccessfulTriageVMs
+		}
 	}
+	stat.Add(len(vms))
 	return false
 }
 

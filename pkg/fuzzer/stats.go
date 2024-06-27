@@ -25,6 +25,8 @@ type Stats struct {
 	statExecHint            *stats.Val
 	statExecSeed            *stats.Val
 	statExecCollide         *stats.Val
+	statSuccessfulTriageVMs *stats.Val
+	statFailedTriageVMs     *stats.Val
 }
 
 func newStats() Stats {
@@ -61,5 +63,9 @@ func newStats() Stats {
 			stats.Rate{}, stats.StackedGraph("exec")),
 		statExecCollide: stats.Create("exec collide", "Executions of programs in collide mode",
 			stats.Rate{}, stats.StackedGraph("exec")),
+		statSuccessfulTriageVMs: stats.Create("successful triage VMs", "Successful triage VMs",
+			stats.Distribution{}),
+		statFailedTriageVMs: stats.Create("failed triage VMs", "Failed triage VMs",
+			stats.Distribution{}),
 	}
 }
