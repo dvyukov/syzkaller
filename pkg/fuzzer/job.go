@@ -146,14 +146,14 @@ func (job *triageJob) handleCall(call int, info *triageCall) {
 		})
 		if job.fuzzer.Config.Comparisons && call >= 0 {
 			job.fuzzer.startJob(job.fuzzer.statJobsHints, &hintsJob{
-				exec: job.fuzzer.hintsQueue.Append(),
+				exec: job.fuzzer.hintsQueue,
 				p:    p.Clone(),
 				call: call,
 			})
 		}
 		if job.fuzzer.Config.FaultInjection && call >= 0 {
 			job.fuzzer.startJob(job.fuzzer.statJobsFaultInjection, &faultInjectionJob{
-				exec: job.fuzzer.hintsQueue.Append(),
+				exec: job.fuzzer.hintsQueue,
 				p:    p.Clone(),
 				call: call,
 			})

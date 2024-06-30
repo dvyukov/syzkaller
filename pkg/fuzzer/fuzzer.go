@@ -70,7 +70,7 @@ type execQueues struct {
 	triageCandidateQueue *queue.DynamicOrderer
 	candidateQueue       *queue.PlainQueue
 	triageQueue          *queue.DynamicOrderer
-	hintsQueue           *queue.DynamicOrderer
+	hintsQueue           *queue.PlainQueue
 	smashQueue           *queue.PlainQueue
 	source               queue.Source
 }
@@ -80,7 +80,7 @@ func newExecQueues(fuzzer *Fuzzer) execQueues {
 		triageCandidateQueue: queue.DynamicOrder(),
 		candidateQueue:       queue.Plain(),
 		triageQueue:          queue.DynamicOrder(),
-		hintsQueue:           queue.DynamicOrder(),
+		hintsQueue:           queue.Plain(),
 		smashQueue:           queue.Plain(),
 	}
 	// Sources are listed in the order, in which they will be polled.
