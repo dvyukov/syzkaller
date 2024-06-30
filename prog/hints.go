@@ -27,14 +27,8 @@ import (
 	"github.com/google/syzkaller/pkg/image"
 )
 
-// Example: for comparisons {(op1, op2), (op1, op3), (op1, op4), (op2, op1)}
-// this map will store the following:
-//
-//	m = {
-//			op1: {map[op2]: true, map[op3]: true, map[op4]: true},
-//			op2: {map[op1]: true}
-//	}.
-type CompMap map[uint64]map[uint64]bool
+// CompMap maps comparison operand that could come from the input to the second operand to the PC.
+type CompMap map[uint64]map[uint64]map[uint64]bool
 
 const (
 	maxDataLength = 100
@@ -42,11 +36,18 @@ const (
 
 var specialIntsSet map[uint64]bool
 
-func (m CompMap) AddComp(arg1, arg2 uint64) {
+func (m CompMap) Add(pc, arg1, arg2 uint64, isConst bool) {
 	if _, ok := m[arg1]; !ok {
-		m[arg1] = make(map[uint64]bool)
+		m[arg1] = make(map[uint64]map[uint64]bool)
 	}
-	m[arg1][arg2] = true
+	if _, ok := m[arg1][arg2]; !ok {
+		m[arg1][arg2] = make(map[uint64]bool)
+	}
+	m[arg1][arg2][pc] = true
+	if !isConst {
+		// Both operands could come from the input.
+		m.Add(pc, arg2, arg1, true)
+	}
 }
 
 func (m CompMap) String() string {
@@ -66,8 +67,13 @@ func (m CompMap) String() string {
 // InplaceIntersect() only leaves the value pairs that are also present in other.
 func (m CompMap) InplaceIntersect(other CompMap) {
 	for val1, nested := range m {
-		for val2 := range nested {
-			if !other[val1][val2] {
+		for val2, pcs := range nested {
+			for pc := range pcs {
+				if !other[val1][val2][pc] {
+					delete(pcs, pc)
+				}
+			}
+			if len(pcs) == 0 {
 				delete(nested, val2)
 			}
 		}
