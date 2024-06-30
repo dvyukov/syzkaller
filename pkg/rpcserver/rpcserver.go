@@ -444,7 +444,7 @@ func (serv *Server) printMachineCheck(checkFilesInfo []*flatrpc.FileInfo, enable
 
 func (serv *Server) CreateInstance(name string, injectExec chan<- bool) {
 	runner := &Runner{
-		source:          serv.baseSource,
+		source:          serv.execSource,
 		kernelAddresses: serv.kernelAddresses,
 		isKernel64Bit:   serv.isKernel64Bit,
 		cover:           serv.cfg.Cover,
