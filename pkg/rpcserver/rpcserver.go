@@ -72,10 +72,13 @@ type Server struct {
 	canonicalModules *cover.Canonicalizer
 	coverFilter      []uint64
 
-	mu             sync.Mutex
-	runners        map[string]*Runner
-	info           map[string]VMState
-	execSource     queue.Source
+	mu      sync.Mutex
+	runners map[string]*Runner
+	info    map[string]VMState
+	// TODO: replace names with indices.
+	ids            map[string]int
+	idSeq          int
+	execSource     *queue.Avoider
 	triagedCorpus  atomic.Bool
 	statVMRestarts *stats.Val
 	*runnerStats
@@ -132,9 +135,10 @@ func newImpl(cfg *Config, mgr Manager) (*Server, error) {
 		isKernel64Bit:   sysTarget.PtrSize == 8,
 		runners:         make(map[string]*Runner),
 		info:            make(map[string]VMState),
+		ids:             make(map[string]int),
 		checker:         checker,
 		baseSource:      baseSource,
-		execSource:      queue.Retry(baseSource),
+		execSource:      queue.Avoid(queue.Retry(baseSource)),
 
 		StatExecs: stats.Create("exec total", "Total test program executions",
 			stats.Console, stats.Rate{}, stats.Prometheus("syz_exec_total")),
@@ -469,6 +473,13 @@ func (serv *Server) CreateInstance(name string, injectExec chan<- bool) {
 	}
 	serv.runners[name] = runner
 	serv.info[name] = VMState{StateBooting, time.Now()}
+	id, ok := serv.ids[name]
+	if !ok {
+		id = serv.idSeq
+		serv.idSeq++
+		serv.ids[name] = id
+	}
+	runner.id = id
 	serv.mu.Unlock()
 }
 
