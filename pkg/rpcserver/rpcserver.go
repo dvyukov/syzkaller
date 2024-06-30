@@ -86,10 +86,14 @@ func New(cfg *mgrconfig.Config, mgr Manager, debug bool) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	fetures := flatrpc.AllFeatures
+	if !cfg.Experimental.RemoteCover {
+		fetures &= ^flatrpc.FeatureExtraCoverage
+	}
 	return newImpl(&Config{
 		Config: vminfo.Config{
 			Target:     cfg.Target,
-			Features:   flatrpc.AllFeatures,
+			Features:   fetures,
 			Syscalls:   cfg.Syscalls,
 			Debug:      debug,
 			Cover:      cfg.Cover,
@@ -100,7 +104,7 @@ func New(cfg *mgrconfig.Config, mgr Manager, debug bool) (*Server, error) {
 		RPC:    cfg.RPC,
 		VMLess: cfg.VMLess,
 		// gVisor coverage is not a trace, so producing edges won't work.
-		UseCoverEdges: cfg.Type != targets.GVisor,
+		UseCoverEdges: cfg.Experimental.CoverEdges && cfg.Type != targets.GVisor,
 		// gVisor/Starnix are not Linux, so filtering against Linux ranges won't work.
 		FilterSignal:      cfg.Type != targets.GVisor && cfg.Type != targets.Starnix,
 		PrintMachineCheck: true,
