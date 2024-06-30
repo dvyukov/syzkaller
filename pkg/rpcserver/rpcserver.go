@@ -249,7 +249,7 @@ func (serv *Server) handleConn(conn *flatrpc.Conn) {
 	defer close(runner.finished)
 
 	if serv.triagedCorpus.Load() {
-		if err := runner.sendStartLeakChecks(); err != nil {
+		if err := runner.sendCorpusTriaged(); err != nil {
 			log.Logf(2, "%v", err)
 			return
 		}
@@ -516,7 +516,7 @@ func (serv *Server) DistributeSignalDelta(plus signal.Signal) {
 func (serv *Server) TriagedCorpus() {
 	serv.triagedCorpus.Store(true)
 	serv.foreachRunnerAsync(func(runner *Runner) {
-		runner.sendStartLeakChecks()
+		runner.sendCorpusTriaged()
 	})
 }
 
