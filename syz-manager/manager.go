@@ -769,6 +769,12 @@ func (mgr *Manager) preloadCorpus() {
 	for _, sig := range brokenCorpus {
 		mgr.corpusDB.Delete(sig)
 	}
+	if err := mgr.corpusDB.Flush(); err != nil {
+		log.Fatalf("failed to save corpus database: %v", err)
+	}
+	// Switch database to the mode when it does not keep records in memory.
+	// We don't need them anymore and they consume lots of memory.
+	mgr.corpusDB.DiscardData()
 	mgr.corpusPreload <- candidates
 }
 
