@@ -10,6 +10,7 @@ package vm
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,7 @@ type Pool struct {
 	template           string
 	timeouts           targets.Timeouts
 	activeCount        int32
+	snapshot           bool
 	hostFuzzer         bool
 	statOutputReceived *stats.Val
 }
@@ -107,6 +109,7 @@ func Create(cfg *mgrconfig.Config, debug bool) (*Pool, error) {
 		SSHKey:    cfg.SSHKey,
 		SSHUser:   cfg.SSHUser,
 		Timeouts:  cfg.Timeouts,
+		Snapshot:  cfg.Snapshot,
 		Debug:     debug,
 		Config:    cfg.VM,
 		KernelSrc: cfg.KernelSrc,
@@ -120,6 +123,7 @@ func Create(cfg *mgrconfig.Config, debug bool) (*Pool, error) {
 		workdir:    env.Workdir,
 		template:   cfg.WorkdirTemplate,
 		timeouts:   cfg.Timeouts,
+		snapshot:   cfg.Snapshot,
 		hostFuzzer: cfg.SysTarget.HostFuzzer,
 		statOutputReceived: stats.Create("vm output", "Bytes of VM console output received",
 			stats.Graph("traffic"), stats.Rate{}, stats.FormatMB),
@@ -169,6 +173,21 @@ func (pool *Pool) Close() error {
 		return closer.Close()
 	}
 	return nil
+}
+
+// RunSnapshot runs one input in snapshotting mode.
+// Input is copied into the VM in an implementation defined way.
+// Result is the result provided by the executor.
+// Output is the kernel console output during execution of the input.
+func (inst *Instance) RunSnapshot(input []byte) (result, output []byte, err error) {
+	type snapshotter interface {
+		RunSnapshot([]byte) ([]byte, []byte, error)
+	}
+	impl, ok := inst.impl.(snapshotter)
+	if !ok {
+		return nil, nil, errors.New("this VM type does not support snapshot mode")
+	}
+	return impl.RunSnapshot(input)
 }
 
 func (inst *Instance) Copy(hostSrc string) (string, error) {

@@ -84,6 +84,7 @@ type Manager struct {
 	firstConnect    atomic.Int64 // unix time, or 0 if not connected
 	crashTypes      map[string]bool
 	vmStop          chan bool
+	loopStop        chan bool
 	enabledFeatures flatrpc.Feature
 	checkDone       atomic.Bool
 	fresh           bool
@@ -98,6 +99,7 @@ type Manager struct {
 
 	mu                    sync.Mutex
 	fuzzer                atomic.Pointer[fuzzer.Fuzzer]
+	source                queue.Source
 	phase                 int
 	targetEnabledSyscalls map[*prog.Syscall]bool
 
@@ -238,6 +240,7 @@ func RunManager(cfg *mgrconfig.Config) {
 		dataRaceFrames:     make(map[string]bool),
 		fresh:              true,
 		vmStop:             make(chan bool),
+		loopStop:           make(chan bool),
 		externalReproQueue: make(chan *Crash, 10),
 		needMoreRepros:     make(chan chan bool),
 		reproRequest:       make(chan chan map[string]bool),
@@ -298,6 +301,11 @@ func RunManager(cfg *mgrconfig.Config) {
 		return
 	}
 	mgr.vmLoop()
+	if cfg.Snapshot {
+		log.Logf(0, "starting VMs for snapshot mode")
+		mgr.serv.Close()
+		mgr.snapshotLoop()
+	}
 }
 
 // Exit successfully in special operation modes.
@@ -519,6 +527,10 @@ func (mgr *Manager) vmLoop() {
 		case <-shutdown:
 			log.Logf(1, "loop: shutting down...")
 			shutdown = nil
+		case <-mgr.loopStop:
+			mgr.loopStop = nil
+			shutdown = nil
+			close(mgr.vmStop)
 		case crash := <-mgr.externalReproQueue:
 			log.Logf(1, "loop: got repro request")
 			pendingRepro[crash] = true
@@ -535,6 +547,51 @@ func (mgr *Manager) vmLoop() {
 			goto wait
 		}
 	}
+}
+
+func (mgr *Manager) snapshotLoop() {
+	errc := make(chan error)
+	for index := 0; index < mgr.vmPool.Count(); index++ {
+		index := index
+		go func() {
+			errc <- mgr.snapshotVM(index)
+		}()
+	}
+	log.Fatal(<-errc)
+}
+
+func (mgr *Manager) snapshotVM(index int) error {
+	inst, err := mgr.vmPool.Create(index)
+	if err != nil {
+		return err
+	}
+	executor, err := inst.Copy(mgr.cfg.ExecutorBin)
+	if err != nil {
+		return err
+	}
+
+	// vm.InjectExecuting(injectExec)
+	go func() {
+		_, rep, err := inst.Run(365*24*time.Hour, mgr.reporter, executor+" snapshot")
+		log.Fatalf("instance stopped: err=%v rep=%+v", err, rep)
+	}()
+
+	res, _, err := inst.RunSnapshot([]byte{0xaa, 0xbb})
+	if err != nil {
+		return err
+	}
+	log.Logf(0, "got result: %+v", res)
+
+	res, _, err = inst.RunSnapshot([]byte{0xcc, 0xdd, 0xee})
+	if err != nil {
+		return err
+	}
+	log.Logf(0, "got result: %+v", res)
+
+	//!!! mgr.serv.StatExecs
+	// mgr.serv.StatNumFuzzing
+
+	return nil
 }
 
 func reportReproError(err error) {
@@ -1550,7 +1607,16 @@ func (mgr *Manager) MachineChecked(features flatrpc.Feature, enabledSyscalls map
 				go mgr.dashboardReproTasks()
 			}
 		}
-		return queue.DefaultOpts(fuzzerObj, opts)
+		source := queue.DefaultOpts(fuzzerObj, opts)
+		if mgr.cfg.Snapshot {
+			log.Logf(0, "stopping VMs for snapshot mode")
+			mgr.source = source
+			close(mgr.loopStop)
+			return queue.Callback(func() *queue.Request {
+				return nil
+			})
+		}
+		return source
 	} else if mgr.mode == ModeCorpusRun {
 		ctx := &corpusRunner{
 			candidates: corpus,
@@ -1649,7 +1715,7 @@ func (mgr *Manager) MaxSignal() signal.Signal {
 
 func (mgr *Manager) fuzzerLoop(fuzzer *fuzzer.Fuzzer) {
 	for ; ; time.Sleep(time.Second / 2) {
-		if mgr.cfg.Cover {
+		if mgr.cfg.Cover && !mgr.cfg.Snapshot {
 			// Distribute new max signal over all instances.
 			newSignal := fuzzer.Cover.GrabSignalDelta()
 			log.Logf(2, "distributing %d new signal", len(newSignal))
@@ -1665,8 +1731,10 @@ func (mgr *Manager) fuzzerLoop(fuzzer *fuzzer.Fuzzer) {
 			}
 			mgr.mu.Lock()
 			if mgr.phase == phaseLoadedCorpus {
-				if mgr.enabledFeatures&flatrpc.FeatureLeak != 0 {
-					mgr.serv.TriagedCorpus()
+				if !mgr.cfg.Snapshot {
+					if mgr.enabledFeatures&flatrpc.FeatureLeak != 0 {
+						mgr.serv.TriagedCorpus()
+					}
 				}
 				if mgr.cfg.HubClient != "" {
 					mgr.phase = phaseTriagedCorpus

@@ -15,14 +15,17 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/syzkaller/pkg/config"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/report"
 	"github.com/google/syzkaller/sys/targets"
 	"github.com/google/syzkaller/vm/vmimpl"
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -84,30 +87,34 @@ type Pool struct {
 }
 
 type instance struct {
-	index       int
-	cfg         *Config
-	target      *targets.Target
-	archConfig  *archConfig
-	version     string
-	args        []string
-	image       string
-	debug       bool
-	os          string
-	workdir     string
-	sshkey      string
-	sshuser     string
-	timeouts    targets.Timeouts
-	port        int
-	monport     int
-	forwardPort int
-	mon         net.Conn
-	monEnc      *json.Encoder
-	monDec      *json.Decoder
-	rpipe       io.ReadCloser
-	wpipe       io.WriteCloser
-	qemu        *exec.Cmd
-	merger      *vmimpl.OutputMerger
-	files       map[string]string
+	index         int
+	cfg           *Config
+	target        *targets.Target
+	archConfig    *archConfig
+	version       string
+	args          []string
+	image         string
+	snapshot      bool
+	debug         bool
+	os            string
+	workdir       string
+	sshkey        string
+	sshuser       string
+	timeouts      targets.Timeouts
+	port          int
+	monport       int
+	forwardPort   int
+	mon           net.Conn
+	monEnc        *json.Encoder
+	monDec        *json.Decoder
+	rpipe         io.ReadCloser
+	wpipe         io.WriteCloser
+	qemu          *exec.Cmd
+	merger        *vmimpl.OutputMerger
+	files         map[string]string
+	snapshotReady bool
+	shmemFD       int
+	shmem         []byte
 }
 
 type archConfig struct {
@@ -353,7 +360,7 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 	}
 }
 
-func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (vmimpl.Instance, error) {
+func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (*instance, error) {
 	inst := &instance{
 		index:      index,
 		cfg:        pool.cfg,
@@ -361,6 +368,7 @@ func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (vmimpl.Insta
 		archConfig: pool.archConfig,
 		version:    pool.version,
 		image:      pool.env.Image,
+		snapshot:   pool.env.Snapshot,
 		debug:      pool.env.Debug,
 		os:         pool.env.OS,
 		timeouts:   pool.env.Timeouts,
@@ -411,6 +419,12 @@ func (inst *instance) Close() {
 	}
 	if inst.mon != nil {
 		inst.mon.Close()
+	}
+	if inst.shmemFD != 0 {
+		syscall.Close(inst.shmemFD)
+	}
+	if inst.shmem != nil {
+		syscall.Munmap(inst.shmem)
 	}
 }
 
@@ -499,6 +513,13 @@ func (inst *instance) boot() error {
 		args = append(args,
 			"-device", "isa-applesmc,osk="+inst.cfg.AppleSmcOsk,
 		)
+	}
+	if inst.snapshot {
+		snapshotArgs, err := inst.enableSnapshot()
+		if err != nil {
+			return err
+		}
+		args = append(args, snapshotArgs...)
 	}
 	if inst.debug {
 		log.Logf(0, "running command: %v %#v", inst.cfg.Qemu, args)
@@ -677,6 +698,63 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 		Debug: inst.debug,
 		Scale: inst.timeouts.Scale,
 	})
+}
+
+func (inst *instance) enableSnapshot() ([]string, error) {
+	shmemFD, err := unix.MemfdCreate("syz-qemu-shmem", 0)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: memfd_create failed: %v", err)
+	}
+	inst.shmemFD = shmemFD
+	const shmemSize = 64 << 20
+	if err := syscall.Ftruncate(shmemFD, shmemSize); err != nil {
+		return nil, fmt.Errorf("qemu: ftruncate failed: %v", err)
+	}
+	shmem, err := syscall.Mmap(shmemFD, 0, shmemSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: shmem mmap failed: %v", err)
+	}
+	inst.shmem = shmem
+	inst.shmem[0] = byte(flatrpc.SnapshotStateInitial)
+	shmemFile := fmt.Sprintf("/proc/%v/fd/%v", syscall.Getpid(), shmemFD)
+	return []string{
+		"-cpu", "host,migratable=on",
+		"-device", "ivshmem-plain,master=on,memdev=snapshot-shmem",
+		"-object", fmt.Sprintf("memory-backend-file,size=%v,share=on,discard-data=on,id=snapshot-shmem,mem-path=%v",
+			shmemSize, shmemFile),
+	}, nil
+}
+
+func (inst *instance) RunSnapshot(input []byte) (result, output []byte, err error) {
+	if !inst.snapshotReady {
+		for ; inst.shmem[0] != byte(flatrpc.SnapshotStateReady); time.Sleep(10 * time.Millisecond) {
+		}
+		//!!! comment
+		if _, err := inst.hmp("migrate_set_capability x-ignore-shared on", 0); err != nil {
+			return nil, nil, err
+		}
+		if _, err := inst.hmp("savevm syz", 0); err != nil {
+			return nil, nil, err
+		}
+		inst.shmem[0] = byte(flatrpc.SnapshotStateSnapshotted)
+		for ; inst.shmem[0] != byte(flatrpc.SnapshotStateExecuted); time.Sleep(10 * time.Millisecond) {
+		}
+		inst.snapshotReady = true
+	}
+
+	copy(inst.shmem[1:], input)
+	inst.shmem[0] = byte(flatrpc.SnapshotStateInputReady)
+
+	if _, err := inst.hmp("loadvm syz", 0); err != nil {
+		return nil, nil, err
+	}
+
+	log.Logf(0, "waiting for reply")
+	for ; inst.shmem[0] != byte(flatrpc.SnapshotStateExecuted); time.Sleep(10 * time.Millisecond) {
+	}
+
+	log.Logf(0, "got reply")
+	return inst.shmem[4<<20 : 4<<20+4], nil, nil
 }
 
 func (inst *instance) Info() ([]byte, error) {

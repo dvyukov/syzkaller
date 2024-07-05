@@ -389,6 +389,42 @@ func (v CallFlag) String() string {
 	return "CallFlag(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
+type SnapshotState byte
+
+const (
+	SnapshotStateInvalid     SnapshotState = 0
+	SnapshotStateInitial     SnapshotState = 1
+	SnapshotStateReady       SnapshotState = 2
+	SnapshotStateSnapshotted SnapshotState = 3
+	SnapshotStateInputReady  SnapshotState = 4
+	SnapshotStateExecuted    SnapshotState = 5
+)
+
+var EnumNamesSnapshotState = map[SnapshotState]string{
+	SnapshotStateInvalid:     "Invalid",
+	SnapshotStateInitial:     "Initial",
+	SnapshotStateReady:       "Ready",
+	SnapshotStateSnapshotted: "Snapshotted",
+	SnapshotStateInputReady:  "InputReady",
+	SnapshotStateExecuted:    "Executed",
+}
+
+var EnumValuesSnapshotState = map[string]SnapshotState{
+	"Invalid":     SnapshotStateInvalid,
+	"Initial":     SnapshotStateInitial,
+	"Ready":       SnapshotStateReady,
+	"Snapshotted": SnapshotStateSnapshotted,
+	"InputReady":  SnapshotStateInputReady,
+	"Executed":    SnapshotStateExecuted,
+}
+
+func (v SnapshotState) String() string {
+	if s, ok := EnumNamesSnapshotState[v]; ok {
+		return s
+	}
+	return "SnapshotState(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
 type ConnectRequestRawT struct {
 	Name        string `json:"name"`
 	Arch        string `json:"arch"`

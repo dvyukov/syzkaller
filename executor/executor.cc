@@ -493,6 +493,8 @@ static feature_t features[] = {};
 #include "files.h"
 #include "subprocess.h"
 
+#include "snapshot.h"
+
 #include "executor_runner.h"
 
 #include "test.h"
@@ -509,6 +511,10 @@ int main(int argc, char** argv)
 	if (argc >= 2 && strcmp(argv[1], "runner") == 0) {
 		runner(argv, argc);
 		fail("runner returned");
+	}
+	if (argc >= 2 && strcmp(argv[1], "snapshot") == 0) {
+		Snapshot(argv, argc);
+		fail("snapshot returned");
 	}
 	if (argc >= 2 && strcmp(argv[1], "leak") == 0) {
 #if SYZ_HAVE_LEAK_CHECK
