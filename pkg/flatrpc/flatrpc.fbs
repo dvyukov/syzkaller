@@ -235,3 +235,14 @@ table ExecResultRaw {
 table StateResultRaw {
 	data			:[uint8];
 }
+
+//!!! comment
+enum SnapshotState : uint8 {
+	Initial,
+	Handshake,
+	Ready,
+	Snapshotted,
+	Execute,
+	Executed,
+	Failed,
+}

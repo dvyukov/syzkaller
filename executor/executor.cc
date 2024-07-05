@@ -143,6 +143,8 @@ struct alignas(8) OutputData {
 	std::atomic<uint32> size;
 	std::atomic<uint32> consumed;
 	std::atomic<uint32> completed;
+	std::atomic<uint32> data_offset;
+	std::atomic<uint32> data_size;
 	struct {
 		// Call index in the test program (they may be out-of-order is some syscalls block).
 		int index;
@@ -248,6 +250,7 @@ static bool dedup(uint32 sig);
 
 static uint64 start_time_ms = 0;
 static bool flag_debug;
+static bool flag_snapshot;
 static bool flag_coverage;
 static bool flag_sandbox_none;
 static bool flag_sandbox_setuid;
@@ -465,6 +468,8 @@ static bool coverage_filter(uint64 pc);
 static std::tuple<rpc::ComparisonRaw, bool, bool> convert(const kcov_comparison_t& cmp);
 static flatbuffers::span<uint8_t> finish_output(OutputData* output, int proc_id, uint64 req_id,
 						uint64 elapsed, uint64 freshness, uint32 status, const std::vector<uint8_t>* process_output);
+static void parse_execute(const execute_req& req);
+static void parse_handshake(const handshake_req& req);
 
 #include "syscalls.h"
 
@@ -495,6 +500,8 @@ static feature_t features[] = {};
 #include "files.h"
 #include "subprocess.h"
 
+#include "snapshot.h"
+
 #include "executor_runner.h"
 
 #include "test.h"
@@ -508,11 +515,15 @@ static uint64 sandbox_arg = 0;
 
 int main(int argc, char** argv)
 {
-	if (argc >= 2 && strcmp(argv[1], "runner") == 0) {
+	if (argc == 1) {
+		fprintf(stderr, "no command");
+		return 1;
+	}
+	if (strcmp(argv[1], "runner") == 0) {
 		runner(argv, argc);
 		fail("runner returned");
 	}
-	if (argc >= 2 && strcmp(argv[1], "leak") == 0) {
+	if (strcmp(argv[1], "leak") == 0) {
 #if SYZ_HAVE_LEAK_CHECK
 		check_leaks(argv + 2, argc - 2);
 #else
@@ -520,10 +531,10 @@ int main(int argc, char** argv)
 #endif
 		return 0;
 	}
-	if (argc >= 2 && strcmp(argv[1], "test") == 0)
+	if (strcmp(argv[1], "test") == 0)
 		return run_tests(argc == 3 ? argv[2] : nullptr);
 
-	if (argc < 2 || strcmp(argv[1], "exec") != 0) {
+	if (strcmp(argv[1], "exec") != 0) {
 		fprintf(stderr, "unknown command");
 		return 1;
 	}
@@ -531,45 +542,55 @@ int main(int argc, char** argv)
 	start_time_ms = current_time_ms();
 
 	os_init(argc, argv, (char*)SYZ_DATA_OFFSET, SYZ_NUM_PAGES * SYZ_PAGE_SIZE);
-	current_thread = &threads[0];
-
-	void* mmap_out = mmap(NULL, kMaxInput, PROT_READ, MAP_SHARED, kInFd, 0);
-	if (mmap_out == MAP_FAILED)
-		fail("mmap of input file failed");
-	input_data = static_cast<uint8*>(mmap_out);
-
-	mmap_output(kInitialOutput);
-	// Prevent test programs to mess with these fds.
-	// Due to races in collider mode, a program can e.g. ftruncate one of these fds,
-	// which will cause fuzzer to crash.
-	close(kInFd);
-#if !SYZ_EXECUTOR_USES_FORK_SERVER
-	close(kOutFd);
-#endif
-	// For SYZ_EXECUTOR_USES_FORK_SERVER, close(kOutFd) is invoked in the forked child,
-	// after the program has been received.
-
-	if (fcntl(kMaxSignalFd, F_GETFD) != -1) {
-		// Use random addresses for coverage filters to not collide with output_data.
-		max_signal.emplace(kMaxSignalFd, reinterpret_cast<void*>(0x110c230000ull));
-		close(kMaxSignalFd);
-	}
-	if (fcntl(kCoverFilterFd, F_GETFD) != -1) {
-		cover_filter.emplace(kCoverFilterFd, reinterpret_cast<void*>(0x110f230000ull));
-		close(kCoverFilterFd);
-	}
-
 	use_temporary_dir();
 	install_segv_handler();
-	setup_control_pipes();
-	receive_handshake();
+	current_thread = &threads[0];
+
+	if (argc > 2 && strcmp(argv[2], "snapshot") == 0) {
+		flag_snapshot = true; //!!! do we need it?
+		SnapshotSetup(argv, argc);
+		// mmap_output(flag_snapshot ? kMaxOutput : kInitialOutput);
+	} else {
+		void* mmap_out = mmap(NULL, kMaxInput, PROT_READ, MAP_SHARED, kInFd, 0);
+		if (mmap_out == MAP_FAILED)
+			fail("mmap of input file failed");
+		input_data = static_cast<uint8*>(mmap_out);
+
+		mmap_output(kInitialOutput);
+
+		// Prevent test programs to mess with these fds.
+		// Due to races in collider mode, a program can e.g. ftruncate one of these fds,
+		// which will cause fuzzer to crash.
+		close(kInFd);
 #if !SYZ_EXECUTOR_USES_FORK_SERVER
-	// We receive/reply handshake when fork server is disabled just to simplify runner logic.
-	// It's a bit suboptimal, but no fork server is much slower anyway.
-	reply_execute(0);
-	receive_execute();
+		// For SYZ_EXECUTOR_USES_FORK_SERVER, close(kOutFd) is invoked in the forked child,
+		// after the program has been received.
+		close(kOutFd);
 #endif
+
+		if (fcntl(kMaxSignalFd, F_GETFD) != -1) {
+			// Use random addresses for coverage filters to not collide with output_data.
+			max_signal.emplace(kMaxSignalFd, reinterpret_cast<void*>(0x110c230000ull));
+			close(kMaxSignalFd);
+		}
+		if (fcntl(kCoverFilterFd, F_GETFD) != -1) {
+			cover_filter.emplace(kCoverFilterFd, reinterpret_cast<void*>(0x110f230000ull));
+			close(kCoverFilterFd);
+		}
+
+		setup_control_pipes();
+		receive_handshake();
+#if !SYZ_EXECUTOR_USES_FORK_SERVER
+		// We receive/reply handshake when fork server is disabled just to simplify runner logic.
+		// It's a bit suboptimal, but no fork server is much slower anyway.
+		reply_execute(0);
+		receive_execute();
+#endif
+	}
+
 	if (flag_coverage) {
+		//!!! in snapshot mode setup all with max size and prefault everything.
+
 		int create_count = kCoverDefaultCount, mmap_count = create_count;
 		if (flag_delay_kcov_mmap) {
 			create_count = kCoverOptimizedCount;
@@ -690,6 +711,11 @@ void receive_handshake()
 	ssize_t n = read(kInPipeFd, &req, sizeof(req));
 	if (n != sizeof(req))
 		failmsg("handshake read failed", "read=%zu", n);
+	parse_handshake(req);
+}
+
+void parse_handshake(const handshake_req& req)
+{
 	if (req.magic != kInMagic)
 		failmsg("bad handshake magic", "magic=0x%llx", req.magic);
 #if SYZ_HAVE_SANDBOX_ANDROID
@@ -728,6 +754,11 @@ void receive_execute()
 		;
 	if (n != (ssize_t)sizeof(req))
 		failmsg("control pipe read failed", "read=%zd want=%zd", n, sizeof(req));
+	parse_execute(req);
+}
+
+void parse_execute(const execute_req& req)
+{
 	request_id = req.id;
 	flag_collect_signal = req.exec_flags & (1 << 0);
 	flag_collect_cover = req.exec_flags & (1 << 1);
@@ -755,6 +786,8 @@ bool cover_collection_required()
 
 void reply_execute(uint32 status)
 {
+	if (flag_snapshot)
+		SnapshotDone(status == kFailStatus);
 	if (write(kOutPipeFd, &status, sizeof(status)) != sizeof(status))
 		fail("control pipe write failed");
 }
@@ -777,7 +810,10 @@ void realloc_output_data()
 void execute_one()
 {
 	in_execute_one = true;
-	realloc_output_data();
+	if (flag_snapshot)
+		SnapshotStart();
+	else
+		realloc_output_data();
 	output_builder.emplace(output_data, output_size);
 	uint64 start = current_time_ms();
 	uint8* input_pos = input_data;

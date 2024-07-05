@@ -389,6 +389,45 @@ func (v CallFlag) String() string {
 	return "CallFlag(" + strconv.FormatInt(int64(v), 10) + ")"
 }
 
+type SnapshotState byte
+
+const (
+	SnapshotStateInitial     SnapshotState = 0
+	SnapshotStateHandshake   SnapshotState = 1
+	SnapshotStateReady       SnapshotState = 2
+	SnapshotStateSnapshotted SnapshotState = 3
+	SnapshotStateExecute     SnapshotState = 4
+	SnapshotStateExecuted    SnapshotState = 5
+	SnapshotStateFailed      SnapshotState = 6
+)
+
+var EnumNamesSnapshotState = map[SnapshotState]string{
+	SnapshotStateInitial:     "Initial",
+	SnapshotStateHandshake:   "Handshake",
+	SnapshotStateReady:       "Ready",
+	SnapshotStateSnapshotted: "Snapshotted",
+	SnapshotStateExecute:     "Execute",
+	SnapshotStateExecuted:    "Executed",
+	SnapshotStateFailed:      "Failed",
+}
+
+var EnumValuesSnapshotState = map[string]SnapshotState{
+	"Initial":     SnapshotStateInitial,
+	"Handshake":   SnapshotStateHandshake,
+	"Ready":       SnapshotStateReady,
+	"Snapshotted": SnapshotStateSnapshotted,
+	"Execute":     SnapshotStateExecute,
+	"Executed":    SnapshotStateExecuted,
+	"Failed":      SnapshotStateFailed,
+}
+
+func (v SnapshotState) String() string {
+	if s, ok := EnumNamesSnapshotState[v]; ok {
+		return s
+	}
+	return "SnapshotState(" + strconv.FormatInt(int64(v), 10) + ")"
+}
+
 type ConnectRequestRawT struct {
 	Name        string `json:"name"`
 	Arch        string `json:"arch"`

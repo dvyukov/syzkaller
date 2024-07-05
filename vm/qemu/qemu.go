@@ -15,14 +15,18 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/google/syzkaller/pkg/config"
+	"github.com/google/syzkaller/pkg/flatrpc"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/report"
 	"github.com/google/syzkaller/sys/targets"
 	"github.com/google/syzkaller/vm/vmimpl"
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -91,6 +95,7 @@ type instance struct {
 	version     string
 	args        []string
 	image       string
+	snapshot    bool
 	debug       bool
 	os          string
 	workdir     string
@@ -108,6 +113,9 @@ type instance struct {
 	qemu        *exec.Cmd
 	merger      *vmimpl.OutputMerger
 	files       map[string]string
+	shmemFD     int
+	eventFD     int
+	shmem       []byte
 }
 
 type archConfig struct {
@@ -353,7 +361,7 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 	}
 }
 
-func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (vmimpl.Instance, error) {
+func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (*instance, error) {
 	inst := &instance{
 		index:      index,
 		cfg:        pool.cfg,
@@ -361,6 +369,7 @@ func (pool *Pool) ctor(workdir, sshkey, sshuser string, index int) (vmimpl.Insta
 		archConfig: pool.archConfig,
 		version:    pool.version,
 		image:      pool.env.Image,
+		snapshot:   pool.env.Snapshot,
 		debug:      pool.env.Debug,
 		os:         pool.env.OS,
 		timeouts:   pool.env.Timeouts,
@@ -411,6 +420,12 @@ func (inst *instance) Close() error {
 	}
 	if inst.mon != nil {
 		inst.mon.Close()
+	}
+	if inst.shmemFD != 0 {
+		syscall.Close(inst.shmemFD)
+	}
+	if inst.shmem != nil {
+		syscall.Munmap(inst.shmem)
 	}
 	return nil
 }
@@ -500,6 +515,13 @@ func (inst *instance) boot() error {
 		args = append(args,
 			"-device", "isa-applesmc,osk="+inst.cfg.AppleSmcOsk,
 		)
+	}
+	if inst.snapshot {
+		snapshotArgs, err := inst.enableSnapshot()
+		if err != nil {
+			return err
+		}
+		args = append(args, snapshotArgs...)
 	}
 	if inst.debug {
 		log.Logf(0, "running command: %v %#v", inst.cfg.Qemu, args)
@@ -678,6 +700,224 @@ func (inst *instance) Run(timeout time.Duration, stop <-chan bool, command strin
 		Debug: inst.debug,
 		Scale: inst.timeouts.Scale,
 	})
+}
+
+func (inst *instance) enableSnapshot() ([]string, error) {
+	shmemFD, err := unix.MemfdCreate("syz-qemu-shmem", 0)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: memfd_create failed: %v", err)
+	}
+	inst.shmemFD = shmemFD
+	const shmemSize = 64 << 20
+	if err := syscall.Ftruncate(shmemFD, shmemSize); err != nil {
+		return nil, fmt.Errorf("qemu: ftruncate failed: %v", err)
+	}
+	shmem, err := syscall.Mmap(shmemFD, 0, shmemSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: shmem mmap failed: %v", err)
+	}
+	inst.shmem = shmem
+	//inst.shmem[0] = byte(flatrpc.SnapshotStateInitial)
+	shmemFile := fmt.Sprintf("/proc/%v/fd/%v", syscall.Getpid(), shmemFD)
+
+	shmemFD2, err := unix.MemfdCreate("syz-qemu-shmem2", 0)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: memfd_create failed: %v", err)
+	}
+	if err := syscall.Ftruncate(shmemFD2, 4<<10); err != nil {
+		return nil, fmt.Errorf("qemu: ftruncate failed: %v", err)
+	}
+
+	/*
+		fds, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			return nil, fmt.Errorf("qemu: unix socketpair : %v", err)
+		}
+		shmemFile := fmt.Sprintf("/proc/%v/fd/%v", syscall.Getpid(), shmemFD)
+	*/
+	eventFD, err := unix.Eventfd(0, unix.EFD_SEMAPHORE)
+	if err != nil {
+		return nil, fmt.Errorf("qemu: eventfd failed: %v", err)
+	}
+	inst.eventFD = eventFD
+
+	sockPath := filepath.Join(inst.workdir, "ivs.sock")
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: sockPath, Net: "unix"})
+	if err != nil {
+		log.Fatalf("Listen error: %v", err) //!!!
+	}
+	go func() {
+		conn, err := ln.AcceptUnix()
+		if err != nil {
+			log.Fatalf("Accept error: %v", err) //!!!
+		}
+		log.Logf(0, "accepted qemu ivshmem-doorbell connection")
+		_ = conn
+
+		protoVersion := make([]byte, 8)
+		if _, err := conn.Write(protoVersion); err != nil {
+			log.Fatalf("Write error: %v", err) //!!!
+		}
+		if _, err := conn.Write(protoVersion); err != nil {
+			log.Fatalf("Write error: %v", err) //!!!
+		}
+		neg := [8]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+		rights := syscall.UnixRights(shmemFD2)
+		if _, _, err := conn.WriteMsgUnix(neg[:], rights, nil); err != nil {
+			log.Fatalf("WriteMsgUnix1 error: %v", err) //!!!
+		}
+
+		// little-endian
+		one := [8]byte{1, 0, 0, 0, 0, 0, 0, 0}
+		/*
+				eventFD, err := syscall.Dup(inst.eventFD)
+				if err != nil {
+			        	log.Fatalf("Dup error: %v", err) //!!!
+				}
+		*/
+
+		rights = syscall.UnixRights(inst.eventFD)
+		if _, _, err := conn.WriteMsgUnix(one[:], rights, nil); err != nil {
+			log.Fatalf("WriteMsgUnix2 error: %v", err) //!!!
+		}
+
+	}()
+	_ = shmemFile
+
+	return []string{
+		//!!! comment tsc
+		"-cpu", "host,migratable=on,tsc=off",
+		"-device", "ivshmem-plain,master=on,memdev=snapshot-shmem",
+		"-object", fmt.Sprintf("memory-backend-file,size=%v,share=on,discard-data=on,id=snapshot-shmem,mem-path=%v",
+			shmemSize, shmemFile),
+
+		"-chardev", fmt.Sprintf("socket,path=%v,id=snapshot-shmem2", sockPath),
+		"-device", "ivshmem-doorbell,master=on,vectors=1,chardev=snapshot-shmem2",
+	}, nil
+}
+
+func (inst *instance) setSnapshotState(state flatrpc.SnapshotState) {
+	//log.Logf(0, "CHANGING STATE %v -> %v",
+	//	flatrpc.EnumNamesSnapshotState[flatrpc.SnapshotState(inst.shmem[0])], flatrpc.EnumNamesSnapshotState[state])
+	inst.shmem[0] = byte(state)
+}
+
+func (inst *instance) waitSnapshotStateChange(state flatrpc.SnapshotState, timeout time.Duration) bool {
+	//log.Logf(0, "WAITING FOR STATE CHANGE FROM %v (current %v)", flatrpc.EnumNamesSnapshotState[state], flatrpc.EnumNamesSnapshotState[flatrpc.SnapshotState(inst.shmem[0])])
+	for start := time.Now(); inst.shmem[0] == byte(state) && time.Since(start) < timeout; time.Sleep(10 * time.Millisecond) {
+	}
+	return inst.shmem[0] != byte(state)
+	//log.Logf(0, "GOT STATE %v", flatrpc.EnumNamesSnapshotState[flatrpc.SnapshotState(inst.shmem[0])])
+}
+
+func (inst *instance) SetupSnapshot(input []byte) error {
+	copy(inst.shmem[1:], input)
+	inst.setSnapshotState(flatrpc.SnapshotStateHandshake)
+	if !inst.waitSnapshotStateChange(flatrpc.SnapshotStateHandshake, 10*time.Minute) {
+		return fmt.Errorf("executor does not start snapshot handshake")
+	}
+
+	/*
+		flags, err := unix.FcntlInt(uintptr(inst.eventFD), unix.F_GETFL, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err := unix.FcntlInt(uintptr(inst.eventFD), unix.F_SETFL, flags &^ unix.O_NONBLOCK); err != nil {
+			return nil, nil, err
+		}
+	*/
+
+	//!!! comment
+	if _, err := inst.hmp("migrate_set_capability x-ignore-shared on", 0); err != nil {
+		return err
+	}
+
+	//if _, err := inst.hmp("migrate_set_capability dirty-bitmaps on", 0); err != nil {
+	//	return nil, nil, err
+	//}
+
+	if _, err := inst.hmp("savevm syz", 0); err != nil {
+		return err
+	}
+	if inst.debug {
+		inst.hmp("info snapshots", 0)
+	}
+	inst.setSnapshotState(flatrpc.SnapshotStateSnapshotted)
+	//var buf [8]byte
+	//n, err := syscall.Read(inst.eventFD, buf[:])
+	//!!! use syscall.Select()
+	//log.Logf(0, "read eventfd: %v, %v", n, err)
+	/*
+		var buf [8]byte
+		if _, err := syscall.Read(inst.eventFD, buf[:]); err != nil {
+			return nil, nil, err
+		}
+		if inst.shmem[0] != byte(flatrpc.SnapshotStateExecuted) {
+			return nil, nil, fmt.Errorf("bad state")
+		}
+	*/
+	if !inst.waitSnapshotStateChange(flatrpc.SnapshotStateSnapshotted, time.Minute) {
+		return fmt.Errorf("executor does not confirm snapshot handshake")
+	}
+	//time.Sleep(100 * time.Millisecond)//!!!
+	//n, err = syscall.Read(inst.eventFD, buf[:])
+	//log.Logf(0, "read eventfd: %v, %v", n, err)
+	return nil
+}
+
+func (inst *instance) RunSnapshot(input []byte) (result, output []byte, err error) {
+	type OutputData struct {
+		size        uint32
+		consumed    uint32
+		completed   uint32
+		data_offset uint32
+		data_size   uint32
+	}
+	for i := 0; i < int(unsafe.Sizeof(OutputData{})); i++ {
+		inst.shmem[4<<20+i] = 0
+	}
+
+	copy(inst.shmem[1:], input)
+	inst.setSnapshotState(flatrpc.SnapshotStateExecute)
+
+	if _, err := inst.hmp("loadvm syz", 0); err != nil {
+		return nil, nil, err
+	}
+
+	//log.Logf(0, "waiting for reply")
+
+	/*
+		var buf [8]byte
+		if _, err := syscall.Read(inst.eventFD, buf[:]); err != nil {
+			return nil, nil, err
+		}
+		//log.Logf(0, "read eventfd: %v, %v", n, err)
+		if inst.shmem[0] != byte(flatrpc.SnapshotStateExecuted) {
+			return nil, nil, fmt.Errorf("bad state")
+		}
+	*/
+
+	if !inst.waitSnapshotStateChange(flatrpc.SnapshotStateExecute, 6*time.Second) {
+	}
+
+loop:
+	for {
+		select {
+		case out := <-inst.merger.Output:
+			output = append(output, out...)
+		default:
+			//!!! wait a bit more if there was at least some output?
+			break loop
+		}
+	}
+
+	//!!! check status
+	//log.Logf(0, "got reply")
+
+	out := (*OutputData)(unsafe.Pointer(&inst.shmem[4<<20]))
+	//log.Logf(0, "output data %v / %v", out.data_offset, out.data_size)
+	res := inst.shmem[4<<20+out.data_offset : 4<<20+out.data_offset+out.data_size]
+	return res, output, nil
 }
 
 func (inst *instance) Info() ([]byte, error) {

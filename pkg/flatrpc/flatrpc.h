@@ -644,6 +644,51 @@ inline const char *EnumNameCallFlag(CallFlag e) {
   return EnumNamesCallFlag()[index];
 }
 
+enum class SnapshotState : uint8_t {
+  Initial = 0,
+  Handshake = 1,
+  Ready = 2,
+  Snapshotted = 3,
+  Execute = 4,
+  Executed = 5,
+  Failed = 6,
+  MIN = Initial,
+  MAX = Failed
+};
+
+inline const SnapshotState (&EnumValuesSnapshotState())[7] {
+  static const SnapshotState values[] = {
+    SnapshotState::Initial,
+    SnapshotState::Handshake,
+    SnapshotState::Ready,
+    SnapshotState::Snapshotted,
+    SnapshotState::Execute,
+    SnapshotState::Executed,
+    SnapshotState::Failed
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesSnapshotState() {
+  static const char * const names[8] = {
+    "Initial",
+    "Handshake",
+    "Ready",
+    "Snapshotted",
+    "Execute",
+    "Executed",
+    "Failed",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameSnapshotState(SnapshotState e) {
+  if (flatbuffers::IsOutRange(e, SnapshotState::Initial, SnapshotState::Failed)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesSnapshotState()[index];
+}
+
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) ExecOptsRaw FLATBUFFERS_FINAL_CLASS {
  private:
   uint64_t env_flags_;

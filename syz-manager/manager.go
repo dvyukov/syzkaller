@@ -21,7 +21,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
+	"github.com/google/flatbuffers/go"
 	"github.com/google/syzkaller/dashboard/dashapi"
 	"github.com/google/syzkaller/pkg/asset"
 	"github.com/google/syzkaller/pkg/corpus"
@@ -85,6 +87,7 @@ type Manager struct {
 	corpusPreload   chan []fuzzer.Candidate
 	firstConnect    atomic.Int64 // unix time, or 0 if not connected
 	crashTypes      map[string]bool
+	loopStop        func()
 	enabledFeatures flatrpc.Feature
 	checkDone       atomic.Bool
 	fresh           bool
@@ -99,6 +102,7 @@ type Manager struct {
 
 	mu                    sync.Mutex
 	fuzzer                atomic.Pointer[fuzzer.Fuzzer]
+	source                queue.Source
 	phase                 int
 	targetEnabledSyscalls map[*prog.Syscall]bool
 
@@ -301,13 +305,19 @@ func RunManager(cfg *mgrconfig.Config) {
 		<-vm.Shutdown
 		return
 	}
-	ctx := vm.ShutdownCtx()
+	ctx, cancel := context.WithCancel(vm.ShutdownCtx())
+	mgr.loopStop = cancel
 	mgr.pool = vm.NewDispatcher(mgr.vmPool, mgr.fuzzerInstance)
 	mgr.reproMgr = newReproManager(mgr, mgr.vmPool.Count()-mgr.cfg.FuzzingVMs, mgr.cfg.DashboardOnlyRepro)
 	go mgr.processFuzzingResults(ctx)
 	go mgr.checkUsedFiles()
 	go mgr.reproMgr.Loop(ctx)
 	mgr.pool.Loop(ctx)
+	if cfg.Snapshot {
+		log.Logf(0, "starting VMs for snapshot mode")
+		mgr.serv.Close()
+		mgr.snapshotLoop()
+	}
 }
 
 // Exit successfully in special operation modes.
@@ -435,6 +445,184 @@ func (mgr *Manager) convertBootError(err error) *Crash {
 		return &Crash{
 			Report: rep,
 		}
+	}
+	return nil
+}
+
+func (mgr *Manager) snapshotLoop() {
+	mgr.serv.StatNumFuzzing.Add(mgr.vmPool.Count())
+	errc := make(chan error)
+	for index := 0; index < mgr.vmPool.Count(); index++ {
+		index := index
+		go func() {
+			errc <- mgr.snapshotVM(index)
+		}()
+	}
+	log.Fatal(<-errc)
+}
+
+func (mgr *Manager) snapshotVM(index int) error {
+	inst, err := mgr.vmPool.Create(index)
+	if err != nil {
+		return err
+	}
+	executor, err := inst.Copy(mgr.cfg.ExecutorBin)
+	if err != nil {
+		return err
+	}
+
+	// vm.InjectExecuting(injectExec)
+	//go func() {
+	cmd := fmt.Sprintf("nohup %v exec snapshot 1>/dev/null 2>/dev/kmsg </dev/null &", executor)
+
+	_, rep, err := inst.Run(time.Hour, mgr.reporter, cmd)
+	log.Logf(0, "instance stopped: err=%v rep=%+v", err, rep)
+	//}()
+
+	type handshake_req struct {
+		magic              uint64
+		use_cover_edges    bool
+		is_kernel_64_bit   bool
+		flags              flatrpc.ExecEnv
+		pid                uint64
+		sandbox_arg        uint64
+		syscall_timeout_ms uint64
+		program_timeout_ms uint64
+		slowdown_scale     uint64
+	}
+
+	type execute_req struct {
+		magic            uint64
+		id               uint64
+		exec_flags       flatrpc.ExecFlag
+		all_call_signal  uint64
+		all_extra_signal bool
+	}
+
+	//times := make([]time.Duration, 10)
+	first := true
+	for {
+		mgr.serv.StatExecs.Add(1)
+		req := mgr.source.Next()
+
+		if first {
+			first = false
+			req := handshake_req{
+				magic:              0xbadc0ffeebadface,
+				use_cover_edges:    true,
+				is_kernel_64_bit:   true,
+				flags:              req.ExecOpts.EnvFlags, //  flatrpc.ExecEnvDebug | flatrpc.ExecEnvSandboxNone | flatrpc.ExecEnvEnableNetDev,
+				pid:                0,
+				sandbox_arg:        0,
+				syscall_timeout_ms: 50,
+				program_timeout_ms: 5000,
+				slowdown_scale:     1,
+			}
+			reqBuf := unsafe.Slice((*byte)(unsafe.Pointer(&req)), unsafe.Sizeof(req))
+			if err := inst.SetupSnapshot(reqBuf); err != nil {
+				return err
+			}
+		}
+
+		progData, err := req.Prog.SerializeForExec()
+		if err != nil {
+			req.Done(&queue.Result{Status: queue.ExecFailure})
+			continue
+		}
+
+		ereq := execute_req{
+			magic:            0xbadc0ffeebadface,
+			id:               0,
+			exec_flags:       req.ExecOpts.ExecFlags,
+			all_call_signal:  0,
+			all_extra_signal: false,
+		}
+		ereqBuf := unsafe.Slice((*byte)(unsafe.Pointer(&ereq)), unsafe.Sizeof(ereq))
+
+		buf := new(bytes.Buffer)
+		//binary.Write(buf, binary.LittleEndian, &ereq)
+		buf.Write(ereqBuf)
+		buf.Write(progData)
+
+		//start := time.Now()
+		res, output, err := inst.RunSnapshot(buf.Bytes())
+		if err != nil {
+			return err
+		}
+		//times[i] = time.Since(start)
+		//log.Logf(0, "elapsed: %v\n%s", times[i], output)
+
+		if mgr.reporter.ContainsCrash(output) {
+			rep := mgr.reporter.Parse(output)
+			log.Logf(0, "FOUND CRASH: %v", rep.Title)
+			//!!! mutex
+			mgr.saveCrash(&Crash{
+				Report: rep,
+			})
+			req.Done(&queue.Result{
+				Status: queue.Crashed,
+			})
+			continue
+		}
+
+		//log.Logf(0, "raw result: %+v", res)
+		execError := ""
+		var info *flatrpc.ProgInfo
+		if len(res) > 4 {
+			res = res[4:]
+			var raw flatrpc.ExecutorMessageRaw
+			raw.Init(res, flatbuffers.GetUOffsetT(res))
+			union := raw.UnPack()
+
+			if union.Msg == nil || union.Msg.Value == nil {
+				return errors.New("received no message")
+			}
+			msg := union.Msg.Value.(*flatrpc.ExecResult)
+			//log.Logf(0, "result: %+v", msg)
+
+			if msg.Info != nil {
+				for len(msg.Info.Calls) < len(req.Prog.Calls) {
+					msg.Info.Calls = append(msg.Info.Calls, &flatrpc.CallInfo{
+						Error: 999,
+					})
+				}
+				msg.Info.Calls = msg.Info.Calls[:len(req.Prog.Calls)]
+				/*
+					if !runner.cover && req.ExecOpts.ExecFlags&flatrpc.ExecFlagCollectSignal != 0 {
+						// Coverage collection is disabled, but signal was requested => use a substitute signal.
+						addFallbackSignal(req.Prog, msg.Info)
+					}
+					for _, call := range msg.Info.Calls {
+						runner.convertCallInfo(call)
+					}
+				*/
+				if len(msg.Info.ExtraRaw) != 0 {
+					msg.Info.Extra = msg.Info.ExtraRaw[0]
+					for _, info := range msg.Info.ExtraRaw[1:] {
+						// All processing in the fuzzer later will convert signal/cover to maps and dedup,
+						// so there is little point in deduping here.
+						msg.Info.Extra.Cover = append(msg.Info.Extra.Cover, info.Cover...)
+						msg.Info.Extra.Signal = append(msg.Info.Extra.Signal, info.Signal...)
+					}
+					msg.Info.ExtraRaw = nil
+					//runner.convertCallInfo(msg.Info.Extra)
+				}
+			}
+			info = msg.Info
+			execError = msg.Error
+		}
+		status := queue.Success
+		var resErr error
+		if execError != "" {
+			status = queue.ExecFailure
+			resErr = errors.New(execError)
+		}
+		req.Done(&queue.Result{
+			Status: status,
+			Info:   info,
+			Output: output,
+			Err:    resErr,
+		})
 	}
 	return nil
 }
@@ -1365,7 +1553,16 @@ func (mgr *Manager) MachineChecked(features flatrpc.Feature, enabledSyscalls map
 				go mgr.dashboardReproTasks()
 			}
 		}
-		return queue.DefaultOpts(fuzzerObj, opts)
+		source := queue.DefaultOpts(fuzzerObj, opts)
+		if mgr.cfg.Snapshot {
+			log.Logf(0, "stopping VMs for snapshot mode")
+			mgr.source = source
+			mgr.loopStop()
+			return queue.Callback(func() *queue.Request {
+				return nil
+			})
+		}
+		return source
 	} else if mgr.mode == ModeCorpusRun {
 		ctx := &corpusRunner{
 			candidates: corpus,
@@ -1464,7 +1661,7 @@ func (mgr *Manager) MaxSignal() signal.Signal {
 
 func (mgr *Manager) fuzzerLoop(fuzzer *fuzzer.Fuzzer) {
 	for ; ; time.Sleep(time.Second / 2) {
-		if mgr.cfg.Cover {
+		if mgr.cfg.Cover && !mgr.cfg.Snapshot {
 			// Distribute new max signal over all instances.
 			newSignal := fuzzer.Cover.GrabSignalDelta()
 			log.Logf(3, "distributing %d new signal", len(newSignal))
@@ -1480,8 +1677,10 @@ func (mgr *Manager) fuzzerLoop(fuzzer *fuzzer.Fuzzer) {
 			}
 			mgr.mu.Lock()
 			if mgr.phase == phaseLoadedCorpus {
-				if mgr.enabledFeatures&flatrpc.FeatureLeak != 0 {
-					mgr.serv.TriagedCorpus()
+				if !mgr.cfg.Snapshot {
+					if mgr.enabledFeatures&flatrpc.FeatureLeak != 0 {
+						mgr.serv.TriagedCorpus()
+					}
 				}
 				if mgr.cfg.HubClient != "" {
 					mgr.phase = phaseTriagedCorpus
