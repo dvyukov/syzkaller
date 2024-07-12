@@ -1743,8 +1743,12 @@ func (s *ConfusionMatrix) UnmarshalJSON(data []byte) error {
 // format in which a you can specify a query label, see labels in the
 // JobConfiguration resource type:
 // https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#jobconfiguration
-// Additional properties are allowed, but ignored. Specifying multiple
-// connection properties with the same key returns an error.
+// * **service_account**: indicates the service account to use to run a
+// continuous query. If set, the query job uses the service account to access
+// Google Cloud resources. Service account access is bounded by the IAM
+// permissions that you have granted to the service account. Additional
+// properties are allowed, but ignored. Specifying multiple connection
+// properties with the same key returns an error.
 type ConnectionProperty struct {
 	// Key: The key of the property to set.
 	Key string `json:"key,omitempty"`
@@ -1949,9 +1953,9 @@ type Dataset struct {
 	// '': empty string. Default to case-sensitive behavior.
 	DefaultCollation string `json:"defaultCollation,omitempty"`
 	// DefaultEncryptionConfiguration: The default encryption key for all tables in
-	// the dataset. Once this property is set, all newly-created partitioned tables
-	// in the dataset will have encryption key set to this value, unless table
-	// creation request (or query) overrides the key.
+	// the dataset. After this property is set, the encryption key of all
+	// newly-created tables in the dataset is set to this value unless the table
+	// creation request or query explicitly overrides the key.
 	DefaultEncryptionConfiguration *EncryptionConfiguration `json:"defaultEncryptionConfiguration,omitempty"`
 	// DefaultPartitionExpirationMs: This default partition expiration, expressed
 	// in milliseconds. When new time-partitioned tables are created in a dataset
@@ -2046,6 +2050,14 @@ type Dataset struct {
 	// value can be from 48 to 168 hours (2 to 7 days). The default value is 168
 	// hours if this is not set.
 	MaxTimeTravelHours int64 `json:"maxTimeTravelHours,omitempty,string"`
+	// ResourceTags: Optional. The tags (/bigquery/docs/tags) attached to this
+	// dataset. Tag keys are globally unique. Tag key is expected to be in the
+	// namespaced format, for example "123456789012/environment" where 123456789012
+	// is the ID of the parent organization or project resource for this tag key.
+	// Tag value is expected to be the short name, for example "Production". See
+	// Tag definitions (/iam/docs/tags-access-control#definitions) for more
+	// details.
+	ResourceTags map[string]string `json:"resourceTags,omitempty"`
 	// Restrictions: Optional. Output only. Restriction config for all tables and
 	// dataset. If set, restrict certain accesses on the dataset and all its tables
 	// based on the config. See Data egress
@@ -3387,6 +3399,32 @@ func (s *ForeignTypeInfo) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(*s), s.ForceSendFields, s.NullFields)
 }
 
+// ForeignViewDefinition: A view can be represented in multiple ways. Each
+// representation has its own dialect. This message stores the metadata
+// required for these representations.
+type ForeignViewDefinition struct {
+	// Dialect: Optional. Represents the dialect of the query.
+	Dialect string `json:"dialect,omitempty"`
+	// Query: Required. The query that defines the view.
+	Query string `json:"query,omitempty"`
+	// ForceSendFields is a list of field names (e.g. "Dialect") to unconditionally
+	// include in API requests. By default, fields with empty or default values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "Dialect") to include in API
+	// requests with the JSON null value. By default, fields with empty values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s *ForeignViewDefinition) MarshalJSON() ([]byte, error) {
+	type NoMethod ForeignViewDefinition
+	return gensupport.MarshalJSON(NoMethod(*s), s.ForceSendFields, s.NullFields)
+}
+
 // GetIamPolicyRequest: Request message for `GetIamPolicy` method.
 type GetIamPolicyRequest struct {
 	// Options: OPTIONAL: A `GetPolicyOptions` object for specifying options to
@@ -4203,7 +4241,10 @@ type JobConfiguration struct {
 	// Extract: [Pick one] Configures an extract job.
 	Extract *JobConfigurationExtract `json:"extract,omitempty"`
 	// JobTimeoutMs: Optional. Job timeout in milliseconds. If this time limit is
-	// exceeded, BigQuery might attempt to stop the job.
+	// exceeded, BigQuery will attempt to stop a longer job, but may not always
+	// succeed in canceling it before the job completes. For example, a job that
+	// takes more than 60 seconds to complete has a better chance of being stopped
+	// than a job that takes 10 seconds to complete.
 	JobTimeoutMs int64 `json:"jobTimeoutMs,omitempty,string"`
 	// JobType: Output only. The type of the job. Can be QUERY, LOAD, EXTRACT, COPY
 	// or UNKNOWN.
@@ -4313,6 +4354,20 @@ type JobConfigurationLoad struct {
 	Autodetect bool `json:"autodetect,omitempty"`
 	// Clustering: Clustering specification for the destination table.
 	Clustering *Clustering `json:"clustering,omitempty"`
+	// ColumnNameCharacterMap: Optional. Character map supported for column names
+	// in CSV/Parquet loads. Defaults to STRICT and can be overridden by Project
+	// Config Service. Using this option with unsupporting load formats will result
+	// in an error.
+	//
+	// Possible values:
+	//   "COLUMN_NAME_CHARACTER_MAP_UNSPECIFIED" - Unspecified column name
+	// character map.
+	//   "STRICT" - Support flexible column name and reject invalid column names.
+	//   "V1" - Support alphanumeric + underscore characters and names must start
+	// with a letter or underscore. Invalid column names will be normalized.
+	//   "V2" - Support flexible column name. Invalid column names will be
+	// normalized.
+	ColumnNameCharacterMap string `json:"columnNameCharacterMap,omitempty"`
 	// ConnectionProperties: Optional. Connection properties which can modify the
 	// load job behavior. Currently, only the 'session_id' connection property is
 	// supported, and is used to resolve _SESSION appearing as the dataset id.
@@ -6246,15 +6301,15 @@ type ParquetOptions struct {
 	// EnumAsString: Optional. Indicates whether to infer Parquet ENUM logical type
 	// as STRING instead of BYTES by default.
 	EnumAsString bool `json:"enumAsString,omitempty"`
-	// MapTargetType: Optional. Will indicate how to represent a parquet map if
+	// MapTargetType: Optional. Indicates how to represent a Parquet map if
 	// present.
 	//
 	// Possible values:
-	//   "MAP_TARGET_TYPE_UNSPECIFIED" - In this mode, we fall back to the default.
-	// Currently (3/24) we represent the map as: struct map_field_name { repeated
-	// struct key_value { key value } }
-	//   "ARRAY_OF_STRUCT" - In this mode, we omit parquet's key_value struct and
-	// represent the map as: repeated struct map_field_name { key value }
+	//   "MAP_TARGET_TYPE_UNSPECIFIED" - In this mode, the map will have the
+	// following schema: struct map_field_name { repeated struct key_value { key
+	// value } }.
+	//   "ARRAY_OF_STRUCT" - In this mode, the map will have the following schema:
+	// repeated struct map_field_name { key value }.
 	MapTargetType string `json:"mapTargetType,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "EnableListInference") to
 	// unconditionally include in API requests. By default, fields with empty or
@@ -6298,7 +6353,7 @@ func (s *PartitionSkew) MarshalJSON() ([]byte, error) {
 
 // PartitionedColumn: The partitioning column information.
 type PartitionedColumn struct {
-	// Field: Output only. The name of the partition column.
+	// Field: Required. The name of the partition column.
 	Field string `json:"field,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "Field") to unconditionally
 	// include in API requests. By default, fields with empty or default values are
@@ -6319,11 +6374,17 @@ func (s *PartitionedColumn) MarshalJSON() ([]byte, error) {
 }
 
 // PartitioningDefinition: The partitioning information, which includes managed
-// table and external table partition information.
+// table, external table and metastore partitioned table partition information.
 type PartitioningDefinition struct {
-	// PartitionedColumn: Output only. Details about each partitioning column.
-	// BigQuery native tables only support 1 partitioning column. Other table types
-	// may support 0, 1 or more partitioning columns.
+	// PartitionedColumn: Optional. Details about each partitioning column. This
+	// field is output only for all partitioning types other than metastore
+	// partitioned tables. BigQuery native tables only support 1 partitioning
+	// column. Other table types may support 0, 1 or more partitioning columns. For
+	// metastore partitioned tables, the order must match the definition order in
+	// the Hive Metastore, where it must match the physical layout of the table.
+	// For example, CREATE TABLE a_table(id BIGINT, name STRING) PARTITIONED BY
+	// (city STRING, state STRING). In this case the values must be ['city',
+	// 'state'] in that order.
 	PartitionedColumn []*PartitionedColumn `json:"partitionedColumn,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "PartitionedColumn") to
 	// unconditionally include in API requests. By default, fields with empty or
@@ -7033,9 +7094,8 @@ func (s *QueryTimelineSample) MarshalJSON() ([]byte, error) {
 }
 
 type RangePartitioning struct {
-	// Field: Required. [Experimental] The table is partitioned by this field. The
-	// field must be a top-level NULLABLE/REQUIRED field. The only supported type
-	// is INTEGER/INT64.
+	// Field: Required. The name of the column to partition the table on. It must
+	// be a top-level, INT64 column whose mode is NULLABLE or REQUIRED.
 	Field string `json:"field,omitempty"`
 	// Range: [Experimental] Defines the ranges for range partitioning.
 	Range *RangePartitioningRange `json:"range,omitempty"`
@@ -8451,6 +8511,10 @@ type Table struct {
 	// NumBytes: Output only. The size of this table in logical bytes, excluding
 	// any data in the streaming buffer.
 	NumBytes int64 `json:"numBytes,omitempty,string"`
+	// NumCurrentPhysicalBytes: Output only. Number of physical bytes used by
+	// current live data storage. This data is not kept in real time, and might be
+	// delayed by a few seconds to a few minutes.
+	NumCurrentPhysicalBytes int64 `json:"numCurrentPhysicalBytes,omitempty,string"`
 	// NumLongTermBytes: Output only. The number of logical bytes in the table that
 	// are considered "long-term storage".
 	NumLongTermBytes int64 `json:"numLongTermBytes,omitempty,string"`
@@ -8482,9 +8546,11 @@ type Table struct {
 	// bytes. This also includes storage used for time travel. This data is not
 	// kept in real time, and might be delayed by a few seconds to a few minutes.
 	NumTotalPhysicalBytes int64 `json:"numTotalPhysicalBytes,omitempty,string"`
-	// PartitionDefinition: Output only. The partition information for all table
-	// formats, including managed partitioned tables, hive partitioned tables, and
-	// iceberg partitioned tables.
+	// PartitionDefinition: Optional. The partition information for all table
+	// formats, including managed partitioned tables, hive partitioned tables,
+	// iceberg partitioned, and metastore partitioned tables. This field is only
+	// populated for metastore partitioned tables. For other table formats, this is
+	// an output only field.
 	PartitionDefinition *PartitioningDefinition `json:"partitionDefinition,omitempty"`
 	// RangePartitioning: If specified, configures range partitioning for this
 	// table.
@@ -10099,7 +10165,8 @@ func (s *TransformColumn) MarshalJSON() ([]byte, error) {
 // UndeleteDatasetRequest: Request format for undeleting a dataset.
 type UndeleteDatasetRequest struct {
 	// DeletionTime: Optional. The exact time when the dataset was deleted. If not
-	// specified, the most recently deleted version is undeleted.
+	// specified, the most recently deleted version is undeleted. Undeleting a
+	// dataset using deletion time is not supported.
 	DeletionTime string `json:"deletionTime,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "DeletionTime") to
 	// unconditionally include in API requests. By default, fields with empty or
@@ -10193,6 +10260,8 @@ func (s *VectorSearchStatistics) MarshalJSON() ([]byte, error) {
 
 // ViewDefinition: Describes the definition of a logical view.
 type ViewDefinition struct {
+	// ForeignDefinitions: Optional. Foreign view representations.
+	ForeignDefinitions []*ForeignViewDefinition `json:"foreignDefinitions,omitempty"`
 	// PrivacyPolicy: Optional. Specifices the privacy policy for the view.
 	PrivacyPolicy *PrivacyPolicy `json:"privacyPolicy,omitempty"`
 	// Query: Required. A query that BigQuery executes when the view is referenced.
@@ -10210,15 +10279,15 @@ type ViewDefinition struct {
 	// UserDefinedFunctionResources: Describes user-defined function resources used
 	// in the query.
 	UserDefinedFunctionResources []*UserDefinedFunctionResource `json:"userDefinedFunctionResources,omitempty"`
-	// ForceSendFields is a list of field names (e.g. "PrivacyPolicy") to
+	// ForceSendFields is a list of field names (e.g. "ForeignDefinitions") to
 	// unconditionally include in API requests. By default, fields with empty or
 	// default values are omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
 	// details.
 	ForceSendFields []string `json:"-"`
-	// NullFields is a list of field names (e.g. "PrivacyPolicy") to include in API
-	// requests with the JSON null value. By default, fields with empty values are
-	// omitted from API requests. See
+	// NullFields is a list of field names (e.g. "ForeignDefinitions") to include
+	// in API requests with the JSON null value. By default, fields with empty
+	// values are omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
 	NullFields []string `json:"-"`
 }
