@@ -4,7 +4,7 @@
 # 4d63.com/gochecknoglobals v0.2.1
 ## explicit; go 1.15
 4d63.com/gochecknoglobals/checknoglobals
-# cloud.google.com/go v0.114.0
+# cloud.google.com/go v0.115.0
 ## explicit; go 1.20
 cloud.google.com/go
 cloud.google.com/go/civil
@@ -22,7 +22,7 @@ cloud.google.com/go/internal/version
 cloud.google.com/go/ai/generativelanguage/apiv1beta
 cloud.google.com/go/ai/generativelanguage/apiv1beta/generativelanguagepb
 cloud.google.com/go/ai/internal
-# cloud.google.com/go/auth v0.4.2
+# cloud.google.com/go/auth v0.7.0
 ## explicit; go 1.20
 cloud.google.com/go/auth
 cloud.google.com/go/auth/credentials
@@ -41,23 +41,23 @@ cloud.google.com/go/auth/internal/transport/cert
 # cloud.google.com/go/auth/oauth2adapt v0.2.2
 ## explicit; go 1.19
 cloud.google.com/go/auth/oauth2adapt
-# cloud.google.com/go/batch v1.8.3
-## explicit; go 1.19
+# cloud.google.com/go/batch v1.9.0
+## explicit; go 1.20
 cloud.google.com/go/batch/apiv1
 cloud.google.com/go/batch/apiv1/batchpb
 cloud.google.com/go/batch/internal
-# cloud.google.com/go/bigquery v1.60.0
+# cloud.google.com/go/bigquery v1.61.0
 ## explicit; go 1.19
 cloud.google.com/go/bigquery
 cloud.google.com/go/bigquery/internal
 cloud.google.com/go/bigquery/internal/query
 cloud.google.com/go/bigquery/storage/apiv1
 cloud.google.com/go/bigquery/storage/apiv1/storagepb
-# cloud.google.com/go/compute/metadata v0.3.0
-## explicit; go 1.19
+# cloud.google.com/go/compute/metadata v0.4.0
+## explicit; go 1.20
 cloud.google.com/go/compute/metadata
-# cloud.google.com/go/iam v1.1.8
-## explicit; go 1.19
+# cloud.google.com/go/iam v1.1.10
+## explicit; go 1.20
 cloud.google.com/go/iam
 cloud.google.com/go/iam/apiv1/iampb
 # cloud.google.com/go/logging v1.10.0
@@ -67,8 +67,8 @@ cloud.google.com/go/logging/apiv2
 cloud.google.com/go/logging/apiv2/loggingpb
 cloud.google.com/go/logging/internal
 cloud.google.com/go/logging/logadmin
-# cloud.google.com/go/longrunning v0.5.7
-## explicit; go 1.19
+# cloud.google.com/go/longrunning v0.5.9
+## explicit; go 1.20
 cloud.google.com/go/longrunning
 cloud.google.com/go/longrunning/autogen
 cloud.google.com/go/longrunning/autogen/longrunningpb
@@ -76,26 +76,26 @@ cloud.google.com/go/longrunning/autogen/longrunningpb
 ## explicit; go 1.19
 cloud.google.com/go/profiler
 cloud.google.com/go/profiler/internal
-# cloud.google.com/go/pubsub v1.38.0
-## explicit; go 1.19
+# cloud.google.com/go/pubsub v1.40.0
+## explicit; go 1.20
 cloud.google.com/go/pubsub
 cloud.google.com/go/pubsub/apiv1
 cloud.google.com/go/pubsub/apiv1/pubsubpb
 cloud.google.com/go/pubsub/internal
 cloud.google.com/go/pubsub/internal/distribution
 cloud.google.com/go/pubsub/internal/scheduler
-# cloud.google.com/go/secretmanager v1.13.1
+# cloud.google.com/go/secretmanager v1.13.3
 ## explicit; go 1.20
 cloud.google.com/go/secretmanager/apiv1
 cloud.google.com/go/secretmanager/apiv1/secretmanagerpb
 cloud.google.com/go/secretmanager/internal
-# cloud.google.com/go/spanner v1.60.0
-## explicit; go 1.19
+# cloud.google.com/go/spanner v1.64.0
+## explicit; go 1.20
 cloud.google.com/go/spanner
 cloud.google.com/go/spanner/apiv1
 cloud.google.com/go/spanner/apiv1/spannerpb
 cloud.google.com/go/spanner/internal
-# cloud.google.com/go/storage v1.40.0
+# cloud.google.com/go/storage v1.41.0
 ## explicit; go 1.19
 cloud.google.com/go/storage
 cloud.google.com/go/storage/internal
@@ -133,6 +133,11 @@ github.com/GaijinEntertainment/go-exhaustruct/v3/analyzer
 github.com/GaijinEntertainment/go-exhaustruct/v3/internal/comment
 github.com/GaijinEntertainment/go-exhaustruct/v3/internal/pattern
 github.com/GaijinEntertainment/go-exhaustruct/v3/internal/structure
+# github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.5.0
+## explicit; go 1.12
+github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp
+github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp/grpc_gcp
+github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp/multiendpoint
 # github.com/Masterminds/semver v1.5.0
 ## explicit
 github.com/Masterminds/semver
@@ -155,29 +160,29 @@ github.com/alexkohler/prealloc/pkg
 # github.com/alingse/asasalint v0.0.11
 ## explicit; go 1.18
 github.com/alingse/asasalint
-# github.com/apache/arrow/go/v14 v14.0.2
+# github.com/apache/arrow/go/v15 v15.0.2
 ## explicit; go 1.20
-github.com/apache/arrow/go/v14/arrow
-github.com/apache/arrow/go/v14/arrow/array
-github.com/apache/arrow/go/v14/arrow/arrio
-github.com/apache/arrow/go/v14/arrow/bitutil
-github.com/apache/arrow/go/v14/arrow/decimal128
-github.com/apache/arrow/go/v14/arrow/decimal256
-github.com/apache/arrow/go/v14/arrow/encoded
-github.com/apache/arrow/go/v14/arrow/endian
-github.com/apache/arrow/go/v14/arrow/float16
-github.com/apache/arrow/go/v14/arrow/internal
-github.com/apache/arrow/go/v14/arrow/internal/debug
-github.com/apache/arrow/go/v14/arrow/internal/dictutils
-github.com/apache/arrow/go/v14/arrow/internal/flatbuf
-github.com/apache/arrow/go/v14/arrow/ipc
-github.com/apache/arrow/go/v14/arrow/memory
-github.com/apache/arrow/go/v14/arrow/memory/internal/cgoalloc
-github.com/apache/arrow/go/v14/arrow/memory/mallocator
-github.com/apache/arrow/go/v14/internal/bitutils
-github.com/apache/arrow/go/v14/internal/hashing
-github.com/apache/arrow/go/v14/internal/json
-github.com/apache/arrow/go/v14/internal/utils
+github.com/apache/arrow/go/v15/arrow
+github.com/apache/arrow/go/v15/arrow/array
+github.com/apache/arrow/go/v15/arrow/arrio
+github.com/apache/arrow/go/v15/arrow/bitutil
+github.com/apache/arrow/go/v15/arrow/decimal128
+github.com/apache/arrow/go/v15/arrow/decimal256
+github.com/apache/arrow/go/v15/arrow/encoded
+github.com/apache/arrow/go/v15/arrow/endian
+github.com/apache/arrow/go/v15/arrow/float16
+github.com/apache/arrow/go/v15/arrow/internal
+github.com/apache/arrow/go/v15/arrow/internal/debug
+github.com/apache/arrow/go/v15/arrow/internal/dictutils
+github.com/apache/arrow/go/v15/arrow/internal/flatbuf
+github.com/apache/arrow/go/v15/arrow/ipc
+github.com/apache/arrow/go/v15/arrow/memory
+github.com/apache/arrow/go/v15/arrow/memory/internal/cgoalloc
+github.com/apache/arrow/go/v15/arrow/memory/mallocator
+github.com/apache/arrow/go/v15/internal/bitutils
+github.com/apache/arrow/go/v15/internal/hashing
+github.com/apache/arrow/go/v15/internal/json
+github.com/apache/arrow/go/v15/internal/utils
 # github.com/ashanbrown/forbidigo v1.6.0
 ## explicit; go 1.13
 github.com/ashanbrown/forbidigo/forbidigo
@@ -419,7 +424,6 @@ github.com/golang/groupcache/lru
 # github.com/golang/protobuf v1.5.4
 ## explicit; go 1.17
 github.com/golang/protobuf/proto
-github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/struct
@@ -537,8 +541,8 @@ github.com/google/uuid
 ## explicit; go 1.19
 github.com/googleapis/enterprise-certificate-proxy/client
 github.com/googleapis/enterprise-certificate-proxy/client/util
-# github.com/googleapis/gax-go/v2 v2.12.4
-## explicit; go 1.19
+# github.com/googleapis/gax-go/v2 v2.12.5
+## explicit; go 1.20
 github.com/googleapis/gax-go/v2
 github.com/googleapis/gax-go/v2/apierror
 github.com/googleapis/gax-go/v2/apierror/internal/proto
@@ -610,9 +614,6 @@ github.com/jirfag/go-printf-func-name/pkg/analyzer
 # github.com/jjti/go-spancheck v0.5.3
 ## explicit; go 1.20
 github.com/jjti/go-spancheck
-# github.com/json-iterator/go v1.1.12
-## explicit; go 1.12
-github.com/json-iterator/go
 # github.com/julz/importas v0.1.0
 ## explicit; go 1.15
 github.com/julz/importas
@@ -701,12 +702,6 @@ github.com/mitchellh/go-homedir
 # github.com/mitchellh/mapstructure v1.5.0
 ## explicit; go 1.14
 github.com/mitchellh/mapstructure
-# github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd
-## explicit
-github.com/modern-go/concurrent
-# github.com/modern-go/reflect2 v1.0.2
-## explicit; go 1.12
-github.com/modern-go/reflect2
 # github.com/moricho/tparallel v0.3.1
 ## explicit; go 1.20
 github.com/moricho/tparallel
@@ -1055,8 +1050,8 @@ go.uber.org/zap/internal/bufferpool
 go.uber.org/zap/internal/color
 go.uber.org/zap/internal/exit
 go.uber.org/zap/zapcore
-# golang.org/x/crypto v0.24.0
-## explicit; go 1.18
+# golang.org/x/crypto v0.25.0
+## explicit; go 1.20
 golang.org/x/crypto/chacha20
 golang.org/x/crypto/chacha20poly1305
 golang.org/x/crypto/cryptobyte
@@ -1078,7 +1073,7 @@ golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/modfile
 golang.org/x/mod/module
 golang.org/x/mod/semver
-# golang.org/x/net v0.26.0
+# golang.org/x/net v0.27.0
 ## explicit; go 1.18
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2
@@ -1086,7 +1081,7 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/timeseries
 golang.org/x/net/trace
-# golang.org/x/oauth2 v0.20.0
+# golang.org/x/oauth2 v0.21.0
 ## explicit; go 1.18
 golang.org/x/oauth2
 golang.org/x/oauth2/authhandler
@@ -1107,13 +1102,13 @@ golang.org/x/perf/storage/benchfmt
 ## explicit; go 1.18
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
-# golang.org/x/sys v0.21.0
+# golang.org/x/sys v0.22.0
 ## explicit; go 1.18
 golang.org/x/sys/cpu
 golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
-# golang.org/x/term v0.21.0
+# golang.org/x/term v0.22.0
 ## explicit; go 1.18
 golang.org/x/term
 # golang.org/x/text v0.16.0
@@ -1223,7 +1218,7 @@ golang.org/x/tools/txtar
 ## explicit; go 1.18
 golang.org/x/xerrors
 golang.org/x/xerrors/internal
-# google.golang.org/api v0.182.0
+# google.golang.org/api v0.188.0
 ## explicit; go 1.20
 google.golang.org/api/bigquery/v2
 google.golang.org/api/compute/v1
@@ -1264,8 +1259,8 @@ google.golang.org/appengine/v2/log
 google.golang.org/appengine/v2/mail
 google.golang.org/appengine/v2/memcache
 google.golang.org/appengine/v2/user
-# google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda
-## explicit; go 1.19
+# google.golang.org/genproto v0.0.0-20240708141625-4ad9e859172b
+## explicit; go 1.20
 google.golang.org/genproto/googleapis/appengine/logging/v1
 google.golang.org/genproto/googleapis/cloud/audit
 google.golang.org/genproto/googleapis/cloud/location
@@ -1274,8 +1269,8 @@ google.golang.org/genproto/googleapis/iam/v1
 google.golang.org/genproto/googleapis/logging/type
 google.golang.org/genproto/googleapis/type/date
 google.golang.org/genproto/googleapis/type/expr
-# google.golang.org/genproto/googleapis/api v0.0.0-20240513163218-0867130af1f8
-## explicit; go 1.19
+# google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094
+## explicit; go 1.20
 google.golang.org/genproto/googleapis/api
 google.golang.org/genproto/googleapis/api/annotations
 google.golang.org/genproto/googleapis/api/distribution
@@ -1283,7 +1278,7 @@ google.golang.org/genproto/googleapis/api/expr/v1alpha1
 google.golang.org/genproto/googleapis/api/label
 google.golang.org/genproto/googleapis/api/metric
 google.golang.org/genproto/googleapis/api/monitoredres
-# google.golang.org/genproto/googleapis/rpc v0.0.0-20240521202816-d264139d666e
+# google.golang.org/genproto/googleapis/rpc v0.0.0-20240708141625-4ad9e859172b
 ## explicit; go 1.20
 google.golang.org/genproto/googleapis/rpc/code
 google.golang.org/genproto/googleapis/rpc/context/attribute_context
@@ -1415,8 +1410,8 @@ google.golang.org/grpc/xds/internal/xdsclient/xdslbregistry
 google.golang.org/grpc/xds/internal/xdsclient/xdslbregistry/converter
 google.golang.org/grpc/xds/internal/xdsclient/xdsresource
 google.golang.org/grpc/xds/internal/xdsclient/xdsresource/version
-# google.golang.org/protobuf v1.34.1
-## explicit; go 1.17
+# google.golang.org/protobuf v1.34.2
+## explicit; go 1.20
 google.golang.org/protobuf/encoding/protodelim
 google.golang.org/protobuf/encoding/protojson
 google.golang.org/protobuf/encoding/prototext
