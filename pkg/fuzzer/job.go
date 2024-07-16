@@ -4,7 +4,9 @@
 package fuzzer
 
 import (
+	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 
 	"github.com/google/syzkaller/pkg/corpus"
@@ -136,8 +138,9 @@ func (job *triageJob) handleCall(call int, info *triageCall) {
 	}
 
 	p := job.p.Clone()
+	log := ""
 	if job.flags&ProgMinimized == 0 {
-		p, call = job.minimize(call, info)
+		p, call, log = job.minimize(call, info)
 		if p == nil {
 			return
 		}
@@ -173,6 +176,7 @@ func (job *triageJob) handleCall(call int, info *triageCall) {
 		Signal:   info.stableSignal,
 		Cover:    info.cover.Serialize(),
 		RawCover: info.rawCover,
+		Log:      log,
 	}
 	job.fuzzer.Config.Corpus.Save(input)
 }
@@ -285,16 +289,22 @@ func (job *triageJob) stopDeflake(run, needRuns int, noNewSignal bool) bool {
 	return false
 }
 
-func (job *triageJob) minimize(call int, info *triageCall) (*prog.Prog, int) {
+func (job *triageJob) minimize(call int, info *triageCall) (*prog.Prog, int, string) {
 	const minimizeAttempts = 3
 	stop := false
+	var log strings.Builder
+	var step int
+	fmt.Fprintf(&log, "Minimizing this program for call %d\n%s\n\n", call, job.p.Serialize())
 	p, call := prog.Minimize(job.p, call, prog.MinimizeParams{},
 		func(p1 *prog.Prog, call1 int) bool {
 			if stop {
 				return false
 			}
 			var mergedSignal signal.Signal
+			step++
+			fmt.Fprintf(&log, "\n> Minimize step %d:\n{call %d}\n%s\n", step, call1, p1.Serialize())
 			for i := 0; i < minimizeAttempts; i++ {
+				fmt.Fprintf(&log, ">> attempt %d\n", i)
 				result := job.execute(&queue.Request{
 					Prog:            p1,
 					ExecOpts:        setFlags(flatrpc.ExecFlagCollectSignal),
@@ -305,7 +315,9 @@ func (job *triageJob) minimize(call int, info *triageCall) (*prog.Prog, int) {
 					stop = true
 					return false
 				}
-				if !reexecutionSuccess(result.Info, info.errno, call1) {
+				success, newErrno := reexecutionSuccess(result.Info, info.errno, call1)
+				fmt.Fprintf(&log, ">> reexecution success %v (want errno=%d, got=%d)\n", success, info.errno, newErrno)
+				if !success {
 					// The call was not executed or failed.
 					continue
 				}
@@ -315,31 +327,44 @@ func (job *triageJob) minimize(call int, info *triageCall) (*prog.Prog, int) {
 				} else {
 					mergedSignal.Merge(thisSignal)
 				}
-				if info.newStableSignal.Intersection(mergedSignal).Len() == info.newStableSignal.Len() {
+				intersects := info.newStableSignal.Intersection(mergedSignal)
+				fmt.Fprintf(&log, ">> collected %d signal / %d total, %d intersects (want %d)\n",
+					thisSignal.Len(), mergedSignal.Len(), intersects.Len(), info.newStableSignal.Len())
+				if intersects.Len() == info.newStableSignal.Len() {
+					fmt.Fprintf(&log, ">> verdict true\n")
 					return true
 				}
+				missing := mergedSignal.Diff(info.newStableSignal)
+				if missing.Len() < 16 {
+					fmt.Fprintf(&log, "Missing PCs: ")
+					for _, pc := range missing.ToRaw() {
+						fmt.Fprintf(&log, " %x", pc)
+					}
+					fmt.Fprintf(&log, "\n")
+				}
 			}
+			fmt.Fprintf(&log, ">> verdict false\n")
 			return false
 		})
 	if stop {
-		return nil, 0
+		return nil, 0, log.String()
 	}
-	return p, call
+	return p, call, log.String()
 }
 
-func reexecutionSuccess(info *flatrpc.ProgInfo, oldErrno int32, call int) bool {
+func reexecutionSuccess(info *flatrpc.ProgInfo, oldErrno int32, call int) (bool, int32) {
 	if info == nil || len(info.Calls) == 0 {
-		return false
+		return false, -1
 	}
 	if call != -1 {
 		// Don't minimize calls from successful to unsuccessful.
 		// Successful calls are much more valuable.
 		if oldErrno == 0 && info.Calls[call].Error != 0 {
-			return false
+			return false, info.Calls[call].Error
 		}
-		return len(info.Calls[call].Signal) != 0
+		return len(info.Calls[call].Signal) != 0, info.Calls[call].Error
 	}
-	return info.Extra != nil && len(info.Extra.Signal) != 0
+	return info.Extra != nil && len(info.Extra.Signal) != 0, -2
 }
 
 func getSignalAndCover(p *prog.Prog, info *flatrpc.ProgInfo, call int) signal.Signal {

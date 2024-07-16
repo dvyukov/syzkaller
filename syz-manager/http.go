@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/syzkaller/pkg/cover"
 	"github.com/google/syzkaller/pkg/html/pages"
+	"github.com/google/syzkaller/pkg/image"
 	"github.com/google/syzkaller/pkg/log"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/stat"
@@ -517,6 +518,11 @@ func (mgr *Manager) httpInput(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(inp.Prog.Serialize())
+
+	log, dtor := image.MustDecompress(inp.LastLog)
+	w.Write([]byte("\n\n\n"))
+	w.Write(log)
+	dtor()
 }
 
 func (mgr *Manager) httpDebugInput(w http.ResponseWriter, r *http.Request) {

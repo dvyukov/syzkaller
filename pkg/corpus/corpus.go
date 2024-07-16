@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/syzkaller/pkg/cover"
 	"github.com/google/syzkaller/pkg/hash"
+	"github.com/google/syzkaller/pkg/image"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/pkg/stat"
 	"github.com/google/syzkaller/prog"
@@ -67,6 +68,7 @@ type Item struct {
 	Signal  signal.Signal
 	Cover   []uint64
 	Updates []ItemUpdate
+	LastLog []byte
 }
 
 func (item Item) StringCall() string {
@@ -79,6 +81,7 @@ type NewInput struct {
 	Signal   signal.Signal
 	Cover    []uint64
 	RawCover []uint64
+	Log      string
 }
 
 type NewItemEvent struct {
@@ -115,6 +118,7 @@ func (corpus *Corpus) Save(inp NewInput) {
 			Signal:  newSignal,
 			Cover:   newCover.Serialize(),
 			Updates: append([]ItemUpdate{}, old.Updates...),
+			LastLog: image.Compress([]byte(inp.Log)),
 		}
 		const maxUpdates = 32
 		if len(newItem.Updates) < maxUpdates {
@@ -130,6 +134,7 @@ func (corpus *Corpus) Save(inp NewInput) {
 			Signal:  inp.Signal,
 			Cover:   inp.Cover,
 			Updates: []ItemUpdate{update},
+			LastLog: image.Compress([]byte(inp.Log)),
 		}
 		corpus.saveProgram(inp.Prog, inp.Signal)
 	}
