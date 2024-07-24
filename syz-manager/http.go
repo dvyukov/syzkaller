@@ -244,9 +244,10 @@ func (mgr *Manager) httpCorpus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		data.Inputs = append(data.Inputs, &UIInput{
-			Sig:   inp.Sig,
-			Short: inp.Prog.String(),
-			Cover: len(inp.Cover),
+			Sig:    inp.Sig,
+			Short:  inp.Prog.String(),
+			Cover:  len(inp.Cover),
+			HasLog: len(inp.LastLog) != 0,
 		})
 	}
 	sort.Slice(data.Inputs, func(i, j int) bool {
@@ -517,12 +518,13 @@ func (mgr *Manager) httpInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(inp.Prog.Serialize())
-
-	log, dtor := image.MustDecompress(inp.LastLog)
-	w.Write([]byte("\n\n\n"))
-	w.Write(log)
-	dtor()
+	var inputLog []byte
+	if inp.LastLog != nil {
+		log, dtor := image.MustDecompress(inp.LastLog)
+		defer dtor()
+		inputLog = log
+	}
+	fmt.Fprintf(w, "%s\n\n\n%s", inp.Prog.Serialize(), inputLog)
 }
 
 func (mgr *Manager) httpDebugInput(w http.ResponseWriter, r *http.Request) {
@@ -843,9 +845,10 @@ type UICorpus struct {
 }
 
 type UIInput struct {
-	Sig   string
-	Short string
-	Cover int
+	Sig    string
+	Short  string
+	Cover  int
+	HasLog bool
 }
 
 var summaryTemplate = pages.Create(`
@@ -1027,6 +1030,7 @@ var corpusTemplate = pages.Create(`
 	<caption>Corpus{{if $.Call}} for {{$.Call}}{{end}}:</caption>
 	<tr>
 		<th>Coverage</th>
+		<th>Log</th>
 		<th>Program</th>
 	</tr>
 	{{range $inp := $.Inputs}}
@@ -1037,6 +1041,7 @@ var corpusTemplate = pages.Create(`
 		/ <a href="/debuginput?sig={{$inp.Sig}}">[raw]</a>
 	{{end}}
 		</td>
+		<td>{{if $inp.HasLog}}LOG{{end}}</td>
 		<td><a href="/input?sig={{$inp.Sig}}">{{$inp.Short}}</a></td>
 	</tr>
 	{{end}}

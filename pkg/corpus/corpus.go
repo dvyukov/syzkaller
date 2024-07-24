@@ -102,6 +102,10 @@ func (corpus *Corpus) Save(inp NewInput) {
 		Call:     inp.Call,
 		RawCover: inp.RawCover,
 	}
+	var lastLog []byte
+	if inp.Log != "" {
+		lastLog = image.Compress([]byte(inp.Log))
+	}
 	exists := false
 	if old, ok := corpus.progs[sig]; ok {
 		exists = true
@@ -118,7 +122,7 @@ func (corpus *Corpus) Save(inp NewInput) {
 			Signal:  newSignal,
 			Cover:   newCover.Serialize(),
 			Updates: append([]ItemUpdate{}, old.Updates...),
-			LastLog: image.Compress([]byte(inp.Log)),
+			LastLog: lastLog,
 		}
 		const maxUpdates = 32
 		if len(newItem.Updates) < maxUpdates {
@@ -134,7 +138,7 @@ func (corpus *Corpus) Save(inp NewInput) {
 			Signal:  inp.Signal,
 			Cover:   inp.Cover,
 			Updates: []ItemUpdate{update},
-			LastLog: image.Compress([]byte(inp.Log)),
+			LastLog: lastLog,
 		}
 		corpus.saveProgram(inp.Prog, inp.Signal)
 	}
