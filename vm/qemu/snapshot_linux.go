@@ -197,6 +197,7 @@ func (inst *instance) RunSnapshot(timeout time.Duration, input []byte) (result, 
 	if resEnd <= len(inst.shmem) {
 		res = inst.shmem[resStart:resEnd:resEnd]
 	}
+	time.Sleep(time.Second)
 	output = inst.readOutput()
 	return res, output, nil
 }
