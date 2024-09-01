@@ -22,11 +22,11 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync/atomic"
 
 	"google.golang.org/grpc/internal"
 	"google.golang.org/grpc/internal/grpclog"
-	"google.golang.org/grpc/internal/grpcrand"
 	"google.golang.org/grpc/internal/grpcsync"
 	"google.golang.org/grpc/internal/pretty"
 	iresolver "google.golang.org/grpc/internal/resolver"
@@ -50,7 +50,7 @@ const Scheme = "xds"
 func newBuilderForTesting(config []byte) (resolver.Builder, error) {
 	return &xdsResolverBuilder{
 		newXDSClient: func() (xdsclient.XDSClient, func(), error) {
-			return xdsclient.NewWithBootstrapContentsForTesting(config)
+			return xdsclient.NewForTesting(xdsclient.OptionsForTesting{Contents: config})
 		},
 	}, nil
 }
@@ -75,7 +75,7 @@ func (b *xdsResolverBuilder) Build(target resolver.Target, cc resolver.ClientCon
 	r := &xdsResolver{
 		cc:             cc,
 		activeClusters: make(map[string]*clusterInfo),
-		channelID:      grpcrand.Uint64(),
+		channelID:      rand.Uint64(),
 	}
 	defer func() {
 		if retErr != nil {
