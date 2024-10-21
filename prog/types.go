@@ -563,7 +563,7 @@ type ProcType struct {
 }
 
 const (
-	MaxPids          = 32
+	MaxPids          = 32                 // matches executor kMaxPids
 	procDefaultValue = 0xffffffffffffffff // special value denoting 0 for all procs
 )
 

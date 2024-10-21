@@ -416,6 +416,7 @@ func (serv *server) CreateInstance(id int, injectExec chan<- bool, updInfo dispa
 		infoc:         make(chan chan []byte),
 		requests:      make(map[int64]*queue.Request),
 		executing:     make(map[int64]bool),
+		hanged:        make(map[int64]bool),
 		lastExec:      MakeLastExecuting(serv.cfg.Procs, 6),
 		stats:         serv.runnerStats,
 		procs:         serv.cfg.Procs,

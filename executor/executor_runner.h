@@ -27,6 +27,20 @@ inline std::ostream& operator<<(std::ostream& ss, const rpc::ExecRequestRawT& re
 		  << "\n";
 }
 
+inline void SoftExit()
+{
+	exitf("SYZ-EXECUTOR: PREEMPTED");
+}
+
+inline int AllocateProcID()
+{
+	static const int kMaxPids = 32; // matches prog.MaxPids
+	static int next_id = 0;
+	if (next_id >= kMaxPids)
+		SoftExit();
+	return next_id++;
+}
+
 // Proc represents one subprocess that runs tests (re-execed syz-executor with 'exec' argument).
 // The object is persistent and re-starts subprocess when it crashes.
 class Proc
@@ -36,7 +50,8 @@ public:
 	     bool use_cover_edges, bool is_kernel_64_bit, uint32 slowdown, uint32 syscall_timeout_ms, uint32 program_timeout_ms)
 	    : conn_(conn),
 	      bin_(bin),
-	      id_(id),
+	      host_id_(id),
+	      effective_id_(AllocateProcID()),
 	      restarting_(restarting),
 	      corpus_triaged_(corpus_triaged),
 	      max_signal_fd_(max_signal_fd),
@@ -57,7 +72,7 @@ public:
 	{
 		if (state_ != State::Started && state_ != State::Idle)
 			return false;
-		if (msg.avoid & (1ull << id_))
+		if (msg.avoid & (1ull << effective_id_))
 			return false;
 		if (msg_)
 			fail("already have pending msg");
@@ -92,7 +107,7 @@ public:
 			// fork server is enabled, so we use quite large timeout. Child process can be slow
 			// due to global locks in namespaces and other things, so let's better wait than
 			// report false misleading crashes.
-			uint64 timeout = 2 * program_timeout_ms_;
+			uint64 timeout = 3 * program_timeout_ms_;
 #else
 			uint64 timeout = program_timeout_ms_;
 #endif
@@ -134,7 +149,8 @@ private:
 
 	Connection& conn_;
 	const char* const bin_;
-	const int id_;
+	const int host_id_;
+	int effective_id_;
 	int& restarting_;
 	const bool& corpus_triaged_;
 	const int max_signal_fd_;
@@ -165,7 +181,7 @@ private:
 
 	friend std::ostream& operator<<(std::ostream& ss, const Proc& proc)
 	{
-		ss << "id=" << proc.id_
+		ss << "id=" << proc.host_id_ << "/" << proc.effective_id_
 		   << " state=" << static_cast<int>(proc.state_)
 		   << " freshness=" << proc.freshness_
 		   << " attempts=" << proc.attempts_
@@ -187,10 +203,11 @@ private:
 
 	void Restart()
 	{
-		debug("proc %d: restarting subprocess, current state %u attempts %llu\n", id_, state_, attempts_);
+		debug("proc %d/%d: restarting subprocess, current state %u attempts %llu\n",
+		      host_id_, effective_id_, state_, attempts_);
 		int status = process_->KillAndWait();
 		process_.reset();
-		debug("proc %d: subprocess exit status %d\n", id_, status);
+		debug("proc %d: subprocess exit status %d\n", host_id_, status);
 		if (++attempts_ > 20) {
 			while (ReadOutput())
 				;
@@ -202,7 +219,7 @@ private:
 					wrote, output_.size(), errno);
 			uint64 req_id = msg_ ? msg_->id : -1;
 			failmsg("repeatedly failed to execute the program", "proc=%d req=%lld state=%d status=%d",
-				id_, req_id, state_, status);
+				host_id_, req_id, state_, status);
 		}
 		// Ignore all other errors.
 		// Without fork server executor can legitimately exit (program contains exit_group),
@@ -215,7 +232,13 @@ private:
 				while (ReadOutput())
 					;
 			}
-			HandleCompletion(status);
+			bool hanged = SYZ_EXECUTOR_USES_FORK_SERVER && state_ == State::Executing;
+			HandleCompletion(status, hanged);
+			if (hanged) {
+				// If the process has hanged, it may still be using per-proc resources,
+				// so allocate a fresh proc id.
+				effective_id_ = AllocateProcID();
+			}
 		} else if (attempts_ > 3)
 			sleep_ms(100 * attempts_);
 		Start();
@@ -279,7 +302,7 @@ private:
 	{
 		if (state_ != State::Started || !msg_)
 			fail("wrong handshake state");
-		debug("proc %d: handshaking to execute request %llu\n", id_, static_cast<uint64>(msg_->id));
+		debug("proc %d: handshaking to execute request %llu\n", host_id_, static_cast<uint64>(msg_->id));
 		ChangeState(State::Handshaking);
 		exec_start_ = current_time_ms();
 		exec_env_ = msg_->exec_opts->env_flags() & ~rpc::ExecEnv::ResetState;
@@ -289,7 +312,7 @@ private:
 		    .use_cover_edges = use_cover_edges_,
 		    .is_kernel_64_bit = is_kernel_64_bit_,
 		    .flags = exec_env_,
-		    .pid = static_cast<uint64>(id_),
+		    .pid = static_cast<uint64>(effective_id_),
 		    .sandbox_arg = static_cast<uint64>(sandbox_arg_),
 		    .syscall_timeout_ms = syscall_timeout_ms_,
 		    .program_timeout_ms = program_timeout_ms_,
@@ -306,11 +329,11 @@ private:
 		if (state_ != State::Idle || !msg_)
 			fail("wrong state for execute");
 
-		debug("proc %d: start executing request %llu\n", id_, static_cast<uint64>(msg_->id));
+		debug("proc %d: start executing request %llu\n", host_id_, static_cast<uint64>(msg_->id));
 
 		rpc::ExecutingMessageRawT exec;
 		exec.id = msg_->id;
-		exec.proc_id = id_;
+		exec.proc_id = host_id_;
 		exec.try_ = attempts_;
 
 		if (wait_start_) {
@@ -350,7 +373,7 @@ private:
 		}
 	}
 
-	void HandleCompletion(uint32 status)
+	void HandleCompletion(uint32 status, bool hanged = false)
 	{
 		if (!msg_)
 			fail("don't have executed msg");
@@ -370,7 +393,7 @@ private:
 			}
 		}
 		uint32 num_calls = read_input(&prog_data);
-		auto data = finish_output(resp_mem_, id_, msg_->id, num_calls, elapsed, freshness_++, status, output);
+		auto data = finish_output(resp_mem_, host_id_, msg_->id, num_calls, elapsed, freshness_++, status, hanged, output);
 		conn_.Send(data.data(), data.size());
 
 		resp_mem_->Reset();
@@ -393,17 +416,17 @@ private:
 				break;
 		}
 		if (n == 0) {
-			debug("proc %d: response pipe EOF\n", id_);
+			debug("proc %d: response pipe EOF\n", host_id_);
 			return false;
 		}
 		if (n != sizeof(status))
 			failmsg("proc resp pipe read failed", "n=%zd", n);
 		if (state_ == State::Handshaking) {
-			debug("proc %d: got handshake reply\n", id_);
+			debug("proc %d: got handshake reply\n", host_id_);
 			ChangeState(State::Idle);
 			Execute();
 		} else if (state_ == State::Executing) {
-			debug("proc %d: got execute reply\n", id_);
+			debug("proc %d: got execute reply\n", host_id_);
 			HandleCompletion(status);
 			if (out_of_requests)
 				wait_start_ = current_time_ms();
@@ -426,7 +449,7 @@ private:
 			fail("proc stdout read failed");
 		}
 		if (n == 0) {
-			debug("proc %d: output pipe EOF\n", id_);
+			debug("proc %d: output pipe EOF\n", host_id_);
 			return false;
 		}
 		if (flag_debug) {
@@ -441,7 +464,7 @@ private:
 				if (syzfail)
 					memcpy(syzfail, "NOTFAIL", strlen("NOTFAIL"));
 			}
-			debug("proc %d: got output: %s\n", id_, output);
+			debug("proc %d: got output: %s\n", host_id_, output);
 			output_.resize(output_.size() - 1);
 			debug_output_pos_ = output_.size();
 		}
@@ -757,7 +780,7 @@ private:
 static void SigintHandler(int sig)
 {
 	// GCE VM preemption is signalled as SIGINT, notify syz-manager.
-	exitf("SYZ-EXECUTOR: PREEMPTED");
+	SoftExit();
 }
 
 static void SigchldHandler(int sig)
