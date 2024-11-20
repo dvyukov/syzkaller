@@ -35,10 +35,25 @@ type KernelModule struct {
 	Path string
 }
 
+type IfaceInfo struct {
+	Files []FileInfo
+}
+
+type FileInfo struct {
+	Name string
+	Fops []Fop
+}
+
+type Fop struct {
+	Func string
+	SourceFile string
+}
+
 type Checker struct {
 	checker
 	source       queue.Source
 	checkContext *checkContext
+	ifaceExtract bool
 }
 
 type Config struct {
@@ -47,11 +62,12 @@ type Config struct {
 	// Set of features to check, missing features won't be checked/enabled after Run.
 	Features flatrpc.Feature
 	// Set of syscalls to check.
-	Syscalls   []int
-	Debug      bool
-	Cover      bool
-	Sandbox    flatrpc.ExecEnv
-	SandboxArg int64
+	Syscalls     []int
+	IfaceExtract bool
+	Debug        bool
+	Cover        bool
+	Sandbox      flatrpc.ExecEnv
+	SandboxArg   int64
 }
 
 func New(ctx context.Context, cfg *Config) *Checker {
@@ -71,6 +87,7 @@ func New(ctx context.Context, cfg *Config) *Checker {
 		checker:      impl,
 		source:       queue.Deduplicate(ctx, executor),
 		checkContext: newCheckContext(ctx, cfg, impl, executor),
+		ifaceExtract: cfg.IfaceExtract,
 	}
 }
 
@@ -103,12 +120,23 @@ func (checker *Checker) CheckFiles() []string {
 	return checker.checkFiles()
 }
 
-func (checker *Checker) Run(files []*flatrpc.FileInfo, featureInfos []*flatrpc.FeatureInfo) (
-	map[*prog.Syscall]bool, map[*prog.Syscall]string, Features, error) {
+func (checker *Checker) CheckGlobs() []string {
+	if checker.ifaceExtract {
+		return checker.extractGlobs()
+	}
+	return nil
+}
+
+func (checker *Checker) Run(info *flatrpc.InfoRequestRawT) (
+	enabledCalls map[*prog.Syscall]bool, disabledCalls map[*prog.Syscall]string, features Features, ifaceInfo *IfaceInfo, checkErr error) {
 	ctx := checker.checkContext
 	checker.checkContext = nil
-	ctx.start(files)
-	return ctx.wait(featureInfos)
+	if checker.ifaceExtract {
+		ifaceInfo, checkErr = checker.extract(ctx, info)
+	} else {
+		enabledCalls, disabledCalls, features, checkErr = ctx.check(info)
+	}
+	return
 }
 
 // Implementation of the queue.Source interface.
@@ -123,9 +151,11 @@ type machineInfoFunc func(files filesystem, w io.Writer) (string, error)
 type checker interface {
 	RequiredFiles() []string
 	checkFiles() []string
+	extractGlobs() []string
 	parseModules(files filesystem) ([]*KernelModule, error)
 	machineInfos() []machineInfoFunc
 	syscallCheck(*checkContext, *prog.Syscall) string
+	extract(ctx *checkContext, info *flatrpc.InfoRequestRawT) (*IfaceInfo, error)
 }
 
 type filesystem map[string]*flatrpc.FileInfo
@@ -183,6 +213,10 @@ func (nopChecker) checkFiles() []string {
 	return nil
 }
 
+func (nopChecker) extractGlobs() []string {
+	return nil
+}
+
 func (nopChecker) parseModules(files filesystem) ([]*KernelModule, error) {
 	return nil, nil
 }
@@ -193,4 +227,8 @@ func (nopChecker) machineInfos() []machineInfoFunc {
 
 func (nopChecker) syscallCheck(*checkContext, *prog.Syscall) string {
 	return ""
+}
+
+func (nopChecker) extract(ctx *checkContext, info *flatrpc.InfoRequestRawT) (*IfaceInfo, error) {
+	return nil, fmt.Errorf("interface extraction is not supported for this OS")
 }

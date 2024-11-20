@@ -56,7 +56,8 @@ type Config struct {
 type Manager interface {
 	MaxSignal() signal.Signal
 	BugFrames() (leaks []string, races []string)
-	MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source
+	MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool,
+		ifaceInfo *vminfo.IfaceInfo, checkErr error) queue.Source
 	CoverageFilter(modules []*vminfo.KernelModule) []uint64
 }
 
@@ -129,7 +130,7 @@ func NewNamedStats(name string) Stats {
 	}
 }
 
-func New(cfg *mgrconfig.Config, mgr Manager, stats Stats, debug bool) (Server, error) {
+func New(cfg *mgrconfig.Config, mgr Manager, stats Stats, ifaceExtract, debug bool) (Server, error) {
 	var pcBase uint64
 	if cfg.KernelObj != "" {
 		var err error
@@ -148,14 +149,15 @@ func New(cfg *mgrconfig.Config, mgr Manager, stats Stats, debug bool) (Server, e
 	}
 	return newImpl(context.Background(), &Config{
 		Config: vminfo.Config{
-			Target:     cfg.Target,
-			VMType:     cfg.Type,
-			Features:   features,
-			Syscalls:   cfg.Syscalls,
-			Debug:      debug,
-			Cover:      cfg.Cover,
-			Sandbox:    sandbox,
-			SandboxArg: cfg.SandboxArg,
+			Target:       cfg.Target,
+			VMType:       cfg.Type,
+			Features:     features,
+			Syscalls:     cfg.Syscalls,
+			IfaceExtract: ifaceExtract,
+			Debug:        debug,
+			Cover:        cfg.Cover,
+			Sandbox:      sandbox,
+			SandboxArg:   cfg.SandboxArg,
 		},
 		Stats:  stats,
 		VMArch: cfg.TargetVMArch,
@@ -165,7 +167,7 @@ func New(cfg *mgrconfig.Config, mgr Manager, stats Stats, debug bool) (Server, e
 		UseCoverEdges: cfg.Experimental.CoverEdges && cfg.Type != targets.GVisor,
 		// gVisor/Starnix are not Linux, so filtering against Linux ranges won't work.
 		FilterSignal:      cfg.Type != targets.GVisor && cfg.Type != targets.Starnix,
-		PrintMachineCheck: true,
+		PrintMachineCheck: !ifaceExtract,
 		Procs:             cfg.Procs,
 		Slowdown:          cfg.Timeouts.Slowdown,
 		pcBase:            pcBase,
@@ -268,7 +270,7 @@ func (serv *server) handleRunnerConn(runner *Runner, conn *flatrpc.Conn) error {
 		opts.Features = serv.setupFeatures
 	} else {
 		opts.Files = append(opts.Files, serv.checker.CheckFiles()...)
-		opts.Globs = serv.target.RequiredGlobs()
+		opts.Globs = append(serv.target.RequiredGlobs(), serv.checker.CheckGlobs()...)
 		opts.Features = serv.cfg.Features
 	}
 
@@ -320,11 +322,7 @@ func (serv *server) handleMachineInfo(infoReq *flatrpc.InfoRequestRawT) (handsha
 			file.Data = slices.Clone(file.Data)
 		}
 		// Now execute check programs.
-		go func() {
-			if err := serv.runCheck(infoReq.Files, infoReq.Features); err != nil {
-				log.Fatalf("check failed: %v", err)
-			}
-		}()
+		go serv.runCheck(infoReq)
 	})
 	canonicalizer := serv.canonicalModules.NewInstance(modules)
 	return handshakeResult{
@@ -370,23 +368,19 @@ func checkRevisions(a *flatrpc.ConnectRequest, target *prog.Target) error {
 	return nil
 }
 
-func (serv *server) runCheck(checkFilesInfo []*flatrpc.FileInfo, checkFeatureInfo []*flatrpc.FeatureInfo) error {
-	enabledCalls, disabledCalls, features, checkErr := serv.checker.Run(checkFilesInfo, checkFeatureInfo)
+func (serv *server) runCheck(info *flatrpc.InfoRequestRawT) {
+	enabledCalls, disabledCalls, features, ifaceInfo, checkErr := serv.checker.Run(info)
 	enabledCalls, transitivelyDisabled := serv.target.TransitivelyEnabledCalls(enabledCalls)
 	// Note: need to print disbled syscalls before failing due to an error.
 	// This helps to debug "all system calls are disabled".
 	if serv.cfg.PrintMachineCheck {
-		serv.printMachineCheck(checkFilesInfo, enabledCalls, disabledCalls, transitivelyDisabled, features)
-	}
-	if checkErr != nil {
-		return checkErr
+		serv.printMachineCheck(info.Files, enabledCalls, disabledCalls, transitivelyDisabled, features)
 	}
 	enabledFeatures := features.Enabled()
 	serv.setupFeatures = features.NeedSetup()
-	newSource := serv.mgr.MachineChecked(enabledFeatures, enabledCalls)
+	newSource := serv.mgr.MachineChecked(enabledFeatures, enabledCalls, ifaceInfo, checkErr)
 	serv.baseSource.Store(newSource)
 	serv.checkDone.Store(true)
-	return nil
 }
 
 func (serv *server) printMachineCheck(checkFilesInfo []*flatrpc.FileInfo, enabledCalls map[*prog.Syscall]bool,

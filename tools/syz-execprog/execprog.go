@@ -65,6 +65,8 @@ var (
 
 	flagGDB = flag.Bool("gdb", false, "start executor under gdb")
 
+	flagIfaceExtract = flag.Bool("iface-extract", false, "run interface extraction locally (for testing)")
+
 	// The following flag is only kept to let syzkaller remain compatible with older execprog versions.
 	// In order to test incoming patches or perform bug bisection, syz-ci must use the exact syzkaller
 	// version that detected the bug (as descriptions and syntax could've already been changed), and
@@ -137,7 +139,7 @@ func main() {
 	}
 
 	progs := loadPrograms(target, flag.Args())
-	if !*flagStress && len(progs) == 0 {
+	if !*flagStress && !*flagIfaceExtract && len(progs) == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -167,6 +169,7 @@ func main() {
 				VMType:     *flagType,
 				Features:   features,
 				Syscalls:   requestedSyscalls,
+				IfaceExtract: *flagIfaceExtract,
 				Debug:      *flagDebug,
 				Cover:      cover,
 				Sandbox:    sandbox,

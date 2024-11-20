@@ -57,9 +57,10 @@ func newCheckContext(ctx context.Context, cfg *Config, impl checker, executor qu
 	}
 }
 
-func (ctx *checkContext) start(fileInfos []*flatrpc.FileInfo) {
+func (ctx *checkContext) check(info *flatrpc.InfoRequestRawT) (
+	map[*prog.Syscall]bool, map[*prog.Syscall]string, Features, error) {
 	sysTarget := targets.Get(ctx.cfg.Target.OS, ctx.cfg.Target.Arch)
-	ctx.fs = createVirtualFilesystem(fileInfos)
+	ctx.fs = createVirtualFilesystem(info.Files)
 	for _, id := range ctx.cfg.Syscalls {
 		call := ctx.target.Syscalls[id]
 		if call.Attrs.Disabled {
@@ -91,10 +92,7 @@ func (ctx *checkContext) start(fileInfos []*flatrpc.FileInfo) {
 		}()
 	}
 	ctx.startFeaturesCheck()
-}
 
-func (ctx *checkContext) wait(featureInfos []*flatrpc.FeatureInfo) (
-	map[*prog.Syscall]bool, map[*prog.Syscall]string, Features, error) {
 	enabled := make(map[*prog.Syscall]bool)
 	disabled := make(map[*prog.Syscall]string)
 	for i := 0; i < ctx.pendingSyscalls; i++ {
@@ -105,7 +103,7 @@ func (ctx *checkContext) wait(featureInfos []*flatrpc.FeatureInfo) (
 			disabled[res.call] = res.reason
 		}
 	}
-	features, err := ctx.finishFeatures(featureInfos)
+	features, err := ctx.finishFeatures(info.Features)
 	return enabled, disabled, features, err
 }
 
@@ -267,6 +265,27 @@ func (ctx *checkContext) execRaw(calls []string, mode prog.DeserializeMode, root
 			len(info.Calls), len(calls), strings.Join(calls, "\n")))
 	}
 	return info
+}
+
+func (ctx *checkContext) execCover(text string) *flatrpc.ProgInfo {
+	p, err := ctx.target.Deserialize([]byte(text), prog.StrictUnsafe)
+	if err != nil {
+		panic(fmt.Sprintf("failed to deserialize: %v\n%v", err, text))
+	}
+	req := &queue.Request{
+		Prog: p,
+		ExecOpts: flatrpc.ExecOpts{
+			EnvFlags:   flatrpc.ExecEnvSandboxNone | flatrpc.ExecEnvSignal,
+			ExecFlags:  flatrpc.ExecFlagCollectCover,
+		},
+		Important: true,
+	}
+	ctx.executor.Submit(req)
+	res := req.Wait(ctx.ctx)
+	if res.Status != queue.Success {
+		return flatrpc.EmptyProgInfo(len(p.Calls))
+	}
+	return res.Info
 }
 
 func (ctx *checkContext) readFile(name string) ([]byte, error) {

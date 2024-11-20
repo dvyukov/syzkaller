@@ -26,9 +26,11 @@ import (
 	"github.com/google/syzkaller/pkg/mgrconfig"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/subsystem"
+	"github.com/google/syzkaller/pkg/instance"
 	_ "github.com/google/syzkaller/pkg/subsystem/lists"
 	"github.com/google/syzkaller/pkg/tool"
 	"github.com/google/syzkaller/sys/targets"
+	"github.com/google/syzkaller/tools/syz-declextract/probe"
 )
 
 var (
@@ -46,6 +48,15 @@ func main() {
 	if err != nil {
 		tool.Failf("failed to load manager config: %v", err)
 	}
+
+	// We don't need too many VMs.
+	instance.OverrideVMCount(cfg, 4)
+	probeInfo, err := probe.Run(cfg)
+	if err != nil {
+		tool.Failf("kernel probing failed: %v", err)
+	}
+	_ = probeInfo
+	return //!!! remove
 
 	compilationDatabase := filepath.Join(cfg.KernelObj, "compile_commands.json")
 	cmds, err := loadCompileCommands(compilationDatabase)

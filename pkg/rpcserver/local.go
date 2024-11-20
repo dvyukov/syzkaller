@@ -5,6 +5,7 @@ package rpcserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -112,7 +113,19 @@ type local struct {
 	setupDone chan bool
 }
 
-func (ctx *local) MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool) queue.Source {
+func (ctx *local) MachineChecked(features flatrpc.Feature, syscalls map[*prog.Syscall]bool,
+	ifaceInfo *vminfo.IfaceInfo, checkErr error) queue.Source {
+	if checkErr != nil {
+		log.Fatalf("machine check failed: %v", checkErr)
+	}
+	if ctx.cfg.Config.IfaceExtract {
+		data, err := json.MarshalIndent(ifaceInfo, "", "\t")
+		if err != nil {
+			log.Fatalf("failed to serialize interface info: %v", err)
+		}
+		fmt.Printf("interface info:\n%s", data)
+		os.Exit(0)
+	}
 	<-ctx.setupDone
 	ctx.serv.TriagedCorpus()
 	return ctx.cfg.MachineChecked(features, syscalls)
