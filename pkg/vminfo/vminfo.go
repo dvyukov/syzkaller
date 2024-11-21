@@ -37,7 +37,6 @@ type KernelModule struct {
 
 type Checker struct {
 	checker
-	vmType       string
 	source       queue.Source
 	checkContext *checkContext
 }
@@ -59,18 +58,17 @@ func New(ctx context.Context, cfg *Config) *Checker {
 	var impl checker
 	switch cfg.Target.OS {
 	case targets.Linux:
-		impl = new(linux)
+		impl = &linux{vmType: cfg.VMType}
 	case targets.NetBSD:
 		impl = new(netbsd)
 	case targets.OpenBSD:
 		impl = new(openbsd)
 	default:
-		impl = new(stub)
+		impl = new(nopChecker)
 	}
 	executor := queue.Plain()
 	return &Checker{
 		checker:      impl,
-		vmType:       cfg.VMType,
 		source:       queue.Deduplicate(ctx, executor),
 		checkContext: newCheckContext(ctx, cfg, impl, executor),
 	}
@@ -78,11 +76,7 @@ func New(ctx context.Context, cfg *Config) *Checker {
 
 func (checker *Checker) MachineInfo(fileInfos []*flatrpc.FileInfo) ([]*KernelModule, []byte, error) {
 	files := createVirtualFilesystem(fileInfos)
-	var modules []*KernelModule
-	var err error
-	if checker.vmType != targets.GVisor && checker.vmType != targets.Starnix {
-		modules, err = checker.parseModules(files)
-	}
+	modules, err := checker.parseModules(files)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -179,24 +173,24 @@ func (files filesystem) ReadDir(dir string) []string {
 	return res
 }
 
-type stub int
+type nopChecker int
 
-func (stub) RequiredFiles() []string {
+func (nopChecker) RequiredFiles() []string {
 	return nil
 }
 
-func (stub) checkFiles() []string {
+func (nopChecker) checkFiles() []string {
 	return nil
 }
 
-func (stub) parseModules(files filesystem) ([]*KernelModule, error) {
+func (nopChecker) parseModules(files filesystem) ([]*KernelModule, error) {
 	return nil, nil
 }
 
-func (stub) machineInfos() []machineInfoFunc {
+func (nopChecker) machineInfos() []machineInfoFunc {
 	return nil
 }
 
-func (stub) syscallCheck(*checkContext, *prog.Syscall) string {
+func (nopChecker) syscallCheck(*checkContext, *prog.Syscall) string {
 	return ""
 }
