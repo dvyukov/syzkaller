@@ -65,7 +65,7 @@ func main() {
 		log.Fatalf("strace_bin must not be empty in order to run with -strace")
 	}
 
-	vmPool, err := vm.Create(cfg, *flagDebug)
+	vmPool, err := vm.Create(cfg, 0, *flagDebug)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}

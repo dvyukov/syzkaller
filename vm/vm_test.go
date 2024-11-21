@@ -357,7 +357,7 @@ func testMonitorExecution(t *testing.T, test *Test) {
 		Workdir: dir,
 		Type:    "test",
 	}
-	pool, err := Create(cfg, false)
+	pool, err := Create(cfg, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

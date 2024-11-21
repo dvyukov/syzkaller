@@ -222,7 +222,7 @@ func RunManager(mode *Mode, cfg *mgrconfig.Config) {
 	var vmPool *vm.Pool
 	if !cfg.VMLess {
 		var err error
-		vmPool, err = vm.Create(cfg, *flagDebug)
+		vmPool, err = vm.Create(cfg, 0, *flagDebug)
 		if err != nil {
 			log.Fatalf("%v", err)
 		}

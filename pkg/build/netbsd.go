@@ -118,7 +118,7 @@ func (ctx netbsd) copyKernelToDisk(targetArch, vmType, outputDir, kernel string)
 		},
 	}
 	// Create a VM pool.
-	pool, err := vm.Create(cfg, false)
+	pool, err := vm.Create(cfg, 0, false)
 	if err != nil {
 		return fmt.Errorf("failed to create a VM Pool: %w", err)
 	}

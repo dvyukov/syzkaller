@@ -278,7 +278,7 @@ func setup(ctx context.Context, name string, cfg *mgrconfig.Config) *kernelConte
 		log.Fatalf("failed to create rpc server for %q: %v", name, err)
 	}
 
-	vmPool, err := vm.Create(cfg, *flagDebug)
+	vmPool, err := vm.Create(cfg, 0, *flagDebug)
 	if err != nil {
 		log.Fatalf("failed to create vm.Pool for %q: %v", name, err)
 	}

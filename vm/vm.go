@@ -110,7 +110,8 @@ func AllowsOvercommit(typ string) bool {
 }
 
 // Create creates a VM pool that can be used to create individual VMs.
-func Create(cfg *mgrconfig.Config, debug bool) (*Pool, error) {
+// maxInstances restricts number of instances if the config specifies more.
+func Create(cfg *mgrconfig.Config, maxInstances int, debug bool) (*Pool, error) {
 	typ, ok := vmimpl.Types[vmType(cfg.Type)]
 	if !ok {
 		return nil, fmt.Errorf("unknown instance type '%v'", cfg.Type)
@@ -137,6 +138,9 @@ func Create(cfg *mgrconfig.Config, debug bool) (*Pool, error) {
 	if debug && count > 1 {
 		log.Logf(0, "limiting number of VMs from %v to 1 in debug mode", count)
 		count = 1
+	}
+	if maxInstances > 0 {
+		count = min(count, maxInstances)
 	}
 	return &Pool{
 		impl:       impl,

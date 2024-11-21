@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open log file %v: %v", logFile, err)
 	}
-	vmPool, err := vm.Create(cfg, *flagDebug)
+	vmPool, err := vm.Create(cfg, 0, *flagDebug)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
