@@ -201,11 +201,12 @@ func probe(cfg *mgrconfig.Config, cfgFile string, cache bool) (*ifaceprobe.Info,
 			return info, nil
 		}
 	}
-	_, err := osutil.RunCmd(30*time.Minute, "", filepath.Join(cfg.Syzkaller, "bin", "syz-manager"),
+	output, err := osutil.RunCmd(30*time.Minute, "", filepath.Join(cfg.Syzkaller, "bin", "syz-manager"),
 		"-config", cfgFile, "-mode", "iface-probe")
 	if err != nil {
 		return nil, err
 	}
+	osutil.WriteFile(filepath.Join(cfg.Workdir, "interfaces.output"), output)
 	return readProbeResult(cfg)
 }
 
