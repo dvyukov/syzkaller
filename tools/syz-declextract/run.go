@@ -113,8 +113,7 @@ func main() {
 	ctx.finishDescriptions()
 
 	<-probeDone
-	ctx.parseProbeInfo(probeInfo)
-	ctx.createFileOperations()
+	ctx.createFileOperations(probeInfo)
 
 	desc := &ast.Description{
 		Nodes: ctx.nodes,
@@ -223,6 +222,7 @@ func readProbeResult(cfg *mgrconfig.Config) (*ifaceprobe.Info, error) {
 	return info, nil
 }
 
+/*
 func (ctx *context) parseProbeInfo(info *ifaceprobe.Info) {
 	pcToFunc := make(map[uint64]string)
 	for _, pc := range info.PCs {
@@ -241,23 +241,131 @@ func (ctx *context) parseProbeInfo(info *ifaceprobe.Info) {
 		}
 	}
 }
+*/
 
-func (ctx *context) createFileOperations() {
-	slices.SortFunc(ctx.fops, func(a, b *OutputFops) int {
+func (ctx *context) createFileOperations(info *ifaceprobe.Info) {
+	fopsCompare := func(a, b *OutputFops) int {
 		return strings.Compare(a.String(), b.String())
-	})
+	}
+	slices.SortFunc(ctx.fops, fopsCompare)
 	ctx.fops = slices.CompactFunc(ctx.fops, func(a, b *OutputFops) bool {
 		return a.String() == b.String()
 	})
 
+	unique := make(map[string]int)
+	funcToFops := make(map[string][]*OutputFops)
 	for _, fops := range ctx.fops {
-		ctx.createFops(fops)
+		for _, op := range fops.Ops() {
+			funcToFops[op] = append(funcToFops[op], fops)
+			unique[op]++
+		}
+	}
+
+	pcToFunc := make(map[uint64]string)
+	for _, pc := range info.PCs {
+		pcToFunc[pc.PC] = pc.Func
+	}
+
+	matchedFuncs := make(map[string]bool)
+	fileToFuncs := make(map[string]map[string]bool)
+	for _, file := range info.Files {
+		funcs := make(map[string]bool)
+		fileToFuncs[file.Name] = funcs
+		for _, pc := range file.Cover {
+			fn := pcToFunc[pc]
+			if len(funcToFops[fn]) != 0 {
+				funcs[fn] = true
+				matchedFuncs[fn] = true
+			}
+		}
+	}
+
+	generic := &OutputFops{
+		Open: "only_open",
+	}
+	opsToFiles := make(map[*OutputFops][]string)
+	for _, file := range info.Files {
+		funcs := fileToFuncs[file.Name]
+		candidates := make(map[*OutputFops]int)
+		for fn := range funcs {
+			for _, fops := range funcToFops[fn] {
+				if fops.Open != "" && (!funcs[fops.Open] || len(fops.Ops()) == 1) {
+					continue
+				}
+				if fops.Ioctl != "" && !funcs[fops.Ioctl] {
+					continue
+				}
+				candidates[fops] = 0
+			}
+		}
+		if len(candidates) == 0 {
+			candidates[generic] = 0
+		}
+		maxScore := 0
+		for fops := range candidates {
+			ops := fops.Ops()
+			score := len(ops)
+			for _, fn := range ops {
+				if !funcs[fn] {
+					continue
+				}
+				score += 10
+				if fn == fops.Ioctl {
+					score += 100
+				}
+				if unique[fn] == 1 {
+					score += 1000
+				}
+			}
+			candidates[fops] = score
+			maxScore = max(maxScore, score)
+		}
+		var best []*OutputFops
+		for fops, score := range candidates {
+			if score == maxScore {
+				best = append(best, fops)
+			}
+		}
+		slices.SortFunc(best, fopsCompare)
+		excessive := make(map[*OutputFops]bool)
+		for i := 0; i < len(best); i++ {
+			for j := i + 1; j < len(best); j++ {
+				a, b := best[i], best[j]
+				if (a.Ioctl == b.Ioctl || len(a.Cmds)+len(b.Cmds) == 0) &&
+					(a.Read == "") == (b.Read == "") &&
+					(a.Write == "") == (b.Write == "") &&
+					(a.Mmap == "") == (b.Mmap == "") &&
+					(a.Ioctl == "") == (b.Ioctl == "") {
+					excessive[b] = true
+				}
+			}
+		}
+
+		for _, fops := range best {
+			if !excessive[fops] {
+				opsToFiles[fops] = append(opsToFiles[fops], file.Name)
+			}
+		}
+
+		best = slices.DeleteFunc(best, func(a *OutputFops) bool {
+			return excessive[a]
+		})
+		if len(best) > 1 {
+			fmt.Printf("%v maped to multiple fops: %v funcs: %v\n", file.Name, best, funcs)
+		}
+	}
+
+	ctx.createFops(generic, opsToFiles[generic])
+	for _, fops := range ctx.fops {
+		ctx.createFops(fops, opsToFiles[fops])
 	}
 }
 
-func (ctx *context) createFops(fops *OutputFops) {
+func (ctx *context) createFops(fops *OutputFops, files []string) {
 	// TODO: also emit interface entry for the fops.
-	files := ctx.mapFopsToFiles(fops)
+	/*
+		files := ctx.mapFopsToFiles(fops)
+	*/
 	if len(files) == 0 {
 		fmt.Printf("%v is not mapped to any file\n", fops)
 		return

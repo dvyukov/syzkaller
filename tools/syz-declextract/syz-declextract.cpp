@@ -1043,6 +1043,8 @@ private:
 class FileOpsMatcher : public MatchFinder::MatchCallback {
 public:
   FileOpsMatcher(MatchFinder &Finder, const MacroMap &Macros) : Macros(Macros) {
+    // TODO: extract proc_ops, e.g.:
+    // https://elixir.bootlin.com/linux/v6.12.1/source/fs/proc/kmsg.c#L49
     // Match initialization of file_operations objects (both scalar and arrays).
     Finder.addMatcher(initListExpr(hasType(recordDecl(hasName("file_operations")))).bind("fops"), this);
   }
