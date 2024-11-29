@@ -114,16 +114,7 @@ func main() {
 
 	<-probeDone
 	ctx.parseProbeInfo(probeInfo)
-
-	slices.SortFunc(ctx.fops, func(a, b *OutputFops) int {
-		return strings.Compare(a.String(), b.String())
-	})
-	ctx.fops = slices.CompactFunc(ctx.fops, func(a, b *OutputFops) bool {
-		return a.String() == b.String()
-	})
-	for _, fops := range ctx.fops {
-		ctx.createFops(fops)
-	}
+	ctx.createFileOperations()
 
 	desc := &ast.Description{
 		Nodes: ctx.nodes,
@@ -176,6 +167,16 @@ type OutputFops struct {
 type OutputIoctlCmd struct {
 	Name string // literal name of the command (e.g. KCOV_REMOTE_ENABLE
 	Type string // inferred syzlang type (e.g. ptr[in, int32])
+}
+
+func (fops *OutputFops) Ops() []string {
+	var ops []string
+	for _, op := range []string{fops.Open, fops.Read, fops.Write, fops.Mmap, fops.Ioctl} {
+		if op != "" {
+			ops = append(ops, op)
+		}
+	}
+	return ops
 }
 
 func (fops *OutputFops) String() string {
@@ -241,11 +242,21 @@ func (ctx *context) parseProbeInfo(info *ifaceprobe.Info) {
 	}
 }
 
+func (ctx *context) createFileOperations() {
+	slices.SortFunc(ctx.fops, func(a, b *OutputFops) int {
+		return strings.Compare(a.String(), b.String())
+	})
+	ctx.fops = slices.CompactFunc(ctx.fops, func(a, b *OutputFops) bool {
+		return a.String() == b.String()
+	})
+
+	for _, fops := range ctx.fops {
+		ctx.createFops(fops)
+	}
+}
+
 func (ctx *context) createFops(fops *OutputFops) {
 	// TODO: also emit interface entry for the fops.
-	if fops.Read == "" && fops.Write == "" && fops.Mmap == "" && fops.Ioctl == "" {
-		return
-	}
 	name, files := ctx.mapFopsToFiles(fops)
 	if len(files) == 0 {
 		fmt.Printf("%v: %v is not mapped to any file\n", name, fops)
@@ -259,7 +270,12 @@ func (ctx *context) createFops(fops *OutputFops) {
 	files = files[:min(len(files), 1000)]
 	w := new(bytes.Buffer)
 	fmt.Fprintf(w, "\n# %v\n", fops)
-	fmt.Fprintf(w, "resource fd_%v[fd]\n", name)
+	// If it has only open, then emit only openat that returns generic fd.
+	fdt := "fd"
+	if len(fops.Ops()) > 1 || fops.Open == "" {
+		fdt = fmt.Sprintf("fd_%v", name)
+		fmt.Fprintf(w, "resource %v[fd]\n", fdt)
+	}
 	fileFlags := fmt.Sprintf("\"%s\"", files[0])
 	if len(files) > 1 {
 		fileFlags = fmt.Sprintf("%v_files", name)
@@ -273,8 +289,8 @@ func (ctx *context) createFops(fops *OutputFops) {
 		fmt.Fprintf(w, "\n")
 	}
 	fmt.Fprintf(w, "openat$%v(fd const[AT_FDCWD], file ptr[in, string[%v]],"+
-		" flags flags[open_flags], mode const[0]) fd_%v\n",
-		name, fileFlags, name)
+		" flags flags[open_flags], mode const[0]) %v\n",
+		name, fileFlags, fdt)
 	if fops.Read != "" {
 		fmt.Fprintf(w, "read$%v(fd fd_%v, buf ptr[out, array[int8]],"+
 			" len bytesize[buf])\n", name, name)
@@ -317,10 +333,7 @@ func (ctx *context) mapFopsToFiles(fops *OutputFops) (string, []string) {
 	first := true
 	var files map[string]bool
 	var unique map[string]int
-	for _, fn := range []string{fops.Open, fops.Read, fops.Write, fops.Mmap, fops.Ioctl} {
-		if fn == "" {
-			continue
-		}
+	for _, fn := range fops.Ops() {
 		files1 := ctx.probeFuncToFiles[fn]
 		var unique1 map[string]int
 		if fn != "seq_read" && !strings.HasPrefix(fn, "generic_") &&
