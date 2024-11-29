@@ -257,11 +257,12 @@ func (ctx *context) createFileOperations() {
 
 func (ctx *context) createFops(fops *OutputFops) {
 	// TODO: also emit interface entry for the fops.
-	name, files := ctx.mapFopsToFiles(fops)
+	files := ctx.mapFopsToFiles(fops)
 	if len(files) == 0 {
-		fmt.Printf("%v: %v is not mapped to any file\n", name, fops)
+		fmt.Printf("%v is not mapped to any file\n", fops)
 		return
 	}
+	name := ctx.mapFopsToName(fops)
 	fmt.Printf("%v: %v mapped to %v\n", name, fops, files[:min(10, len(files))])
 
 	// Some fops are mapped to too many files, usually these have generic callbacks
@@ -329,41 +330,52 @@ func (ctx *context) createFops(fops *OutputFops) {
 	ctx.nodes = append(ctx.nodes, &ast.NewLine{})
 }
 
-func (ctx *context) mapFopsToFiles(fops *OutputFops) (string, []string) {
+// mapFopsToFiles returns set of files that triggered all of the file_operations callbacks.
+func (ctx *context) mapFopsToFiles(fops *OutputFops) []string {
 	first := true
 	var files map[string]bool
-	var unique map[string]int
 	for _, fn := range fops.Ops() {
 		files1 := ctx.probeFuncToFiles[fn]
-		var unique1 map[string]int
-		if fn != "seq_read" && !strings.HasPrefix(fn, "generic_") &&
-			!strings.HasPrefix(fn, "simple_") {
-			unique1 = make(map[string]int)
-			for i, part := range strings.Split(fn, "_") {
-				switch part {
-				case "read", "write", "ioctl", "mmap", "open", "fops":
-					continue
-				}
-				unique1[part] = i
-			}
-			if unique == nil {
-				unique = unique1
-			} else {
-				for part := range unique {
-					if _, ok := unique1[part]; !ok {
-						delete(unique, part)
-					}
-				}
-			}
-		}
 		if first {
 			first = false
 			files = files1
 			continue
+		}
+		for file := range files {
+			if !files1[file] {
+				delete(files, file)
+			}
+		}
+	}
+	var sortedFiles []string
+	for file := range files {
+		sortedFiles = append(sortedFiles, file)
+	}
+	slices.Sort(sortedFiles)
+	return sortedFiles
+}
+
+// mapFopsToName returns a good name for file_operations based on common subparts in all callbacks.
+func (ctx *context) mapFopsToName(fops *OutputFops) string {
+	var unique map[string]int
+	for _, fn := range fops.Ops() {
+		if fn == "seq_read" || strings.HasPrefix(fn, "generic_") || strings.HasPrefix(fn, "simple_") {
+			continue
+		}
+		unique1 := make(map[string]int)
+		for i, part := range strings.Split(fn, "_") {
+			switch part {
+			case "read", "write", "ioctl", "mmap", "open", "fops":
+				continue
+			}
+			unique1[part] = i
+		}
+		if unique == nil {
+			unique = unique1
 		} else {
-			for file := range files {
-				if !files1[file] {
-					delete(files, file)
+			for part := range unique {
+				if _, ok := unique1[part]; !ok {
+					delete(unique, part)
 				}
 			}
 		}
@@ -383,19 +395,11 @@ func (ctx *context) mapFopsToFiles(fops *OutputFops) (string, []string) {
 	for _, part := range parts {
 		name += "_" + part.name
 	}
-	if len(files) == 0 {
-		return name, nil
-	}
 	ctx.fdNames[name]++
 	if ctx.fdNames[name] != 1 || len(parts) == 0 {
 		name += fmt.Sprint(ctx.fdNames[name])
 	}
-	var sortedFiles []string
-	for file := range files {
-		sortedFiles = append(sortedFiles, file)
-	}
-	slices.Sort(sortedFiles)
-	return name, sortedFiles
+	return name
 }
 
 type compileCommand struct {
