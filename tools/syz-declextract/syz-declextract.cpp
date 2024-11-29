@@ -648,7 +648,7 @@ private:
       printf("%s%s %s", sep, toIdentifier(name).c_str(), type.c_str());
       sep = ", ";
     }
-    printf(") (automatic)\n");
+    printf(")\n");
     recordExtractor.print();
   }
 };
@@ -984,8 +984,8 @@ private:
           continue;
         }
         emitInterface("NETLINK", ops.cmd, ops.cmd, ops.func, ops.access);
-        printf("sendmsg$auto_%s(fd sock_nl_generic, msg ptr[in, %s[%s, %s]], f flags[send_flags]) (automatic)\n",
-               ops.cmd.c_str(), msghdr.c_str(), ops.cmd.c_str(), policyName);
+        printf("sendmsg$auto_%s(fd sock_nl_generic, msg ptr[in, %s[%s, %s]], f flags[send_flags])\n", ops.cmd.c_str(),
+               msghdr.c_str(), ops.cmd.c_str(), policyName);
         printedCmds = true;
       }
     }
@@ -996,7 +996,7 @@ private:
     printf("resource %s[int16]\n", resourceName.c_str());
     printf("type %s[CMD, POLICY] msghdr_netlink[netlink_msg_t[%s, genlmsghdr_t[CMD], POLICY]]\n", msghdr.c_str(),
            resourceName.c_str());
-    printf("syz_genetlink_get_family_id$auto_%s(name ptr[in, string[\"%s\"]], fd sock_nl_generic) %s (automatic)\n",
+    printf("syz_genetlink_get_family_id$auto_%s(name ptr[in, string[\"%s\"]], fd sock_nl_generic) %s\n",
            identifierName.c_str(), familyName.c_str(), resourceName.c_str());
   }
 };
