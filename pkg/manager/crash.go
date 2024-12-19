@@ -211,6 +211,7 @@ type CrashInfo struct {
 type BugInfo struct {
 	ID            string
 	Title         string
+	FirstTime     time.Time
 	LastTime      time.Time
 	HasRepro      bool
 	HasCRepro     bool
@@ -232,6 +233,7 @@ func (cs *CrashStore) BugInfo(id string, full bool) (*BugInfo, error) {
 		return nil, err
 	}
 	ret.Title = strings.TrimSpace(string(desc))
+	ret.FirstTime = stat.ModTime()
 	ret.LastTime = stat.ModTime()
 	files, err := osutil.ListDir(dir)
 	if err != nil {
@@ -239,6 +241,13 @@ func (cs *CrashStore) BugInfo(id string, full bool) (*BugInfo, error) {
 	}
 	for _, f := range files {
 		if strings.HasPrefix(f, "log") {
+			stat, err := os.Stat(filepath.Join(dir, f))
+			if err != nil {
+				return nil, err
+			}
+			if ret.FirstTime.After(stat.ModTime()) {
+				ret.FirstTime = stat.ModTime()
+			}
 			index, err := strconv.ParseUint(f[3:], 10, 64)
 			if err == nil {
 				ret.Crashes = append(ret.Crashes, &CrashInfo{
