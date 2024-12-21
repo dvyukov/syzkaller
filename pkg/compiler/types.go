@@ -358,8 +358,7 @@ var typeArray = &typeDesc{
 				NoZ:        true,
 			}
 		}
-		// TypeSize is assigned later in layoutArray.
-		base.TypeAlign = elemType.Alignment()
+		// TypeSize/TypeAlign are assigned later in layoutArray.
 		return &prog.ArrayType{
 			TypeCommon: base.TypeCommon,
 			Elem:       elemType,
@@ -1006,11 +1005,6 @@ func init() {
 		switch typ1 := typ.(type) {
 		case *prog.UnionType:
 			typ1.Fields = fields
-			for _, f := range fields {
-				if a := f.Type.Alignment(); typ1.TypeAlign < a {
-					typ1.TypeAlign = a
-				}
-			}
 		case *prog.StructType:
 			typ1.Fields = fields
 			for i, field := range fields {
@@ -1021,20 +1015,8 @@ func init() {
 			if overlayField >= 0 {
 				typ1.OverlayField = overlayField
 			}
-			attrs := comp.parseIntAttrs(structAttrs, s, s.Attrs)
-			if align := attrs[attrAlign]; align != 0 {
-				typ1.TypeAlign = align
-			} else if attrs[attrPacked] != 0 {
-				typ1.TypeAlign = 1
-			} else {
-				for _, f := range fields {
-					a := f.Type.Alignment()
-					if typ1.TypeAlign < a {
-						typ1.TypeAlign = a
-					}
-				}
-			}
 		}
+		// TypeSize/TypeAlign are assigned later in layoutStruct.
 		return typ
 	}
 }
