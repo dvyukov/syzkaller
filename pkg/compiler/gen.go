@@ -288,9 +288,7 @@ func (comp *compiler) layoutUnion(t *prog.UnionType) {
 				" which is less than field %v size %v",
 				structNode.Name.Name, sizeAttr, fld.Type.Name(), sz)
 		}
-		if t.TypeSize < sz {
-			t.TypeSize = sz
-		}
+		t.TypeSize = max(t.TypeSize, sz)
 	}
 	if hasSize {
 		t.TypeSize = sizeAttr
@@ -326,9 +324,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType) {
 				size = 0
 			}
 			size += f.Size()
-			if t.TypeSize < size {
-				t.TypeSize = size
-			}
+			t.TypeSize = max(t.TypeSize, size)
 		}
 		sizeAttr, hasSize := attrs[attrSize]
 		if hasSize {
@@ -361,9 +357,7 @@ func (comp *compiler) layoutStructFields(t *prog.StructType, varlen, packed bool
 		fieldAlign := uint64(1)
 		if !packed {
 			fieldAlign = f.Alignment()
-			if structAlign < fieldAlign {
-				structAlign = fieldAlign
-			}
+			structAlign = max(structAlign, fieldAlign)
 		}
 		fullBitOffset := byteOffset*8 + bitOffset
 		var fieldOffset uint64
