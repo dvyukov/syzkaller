@@ -102,6 +102,8 @@ func runTool(cfg *Config, dbFile, file string) (*declextract.Output, error) {
 		if errors.As(err, &exitErr) {
 			err = fmt.Errorf("%v: %w\n%s", relFile, err, exitErr.Stderr)
 		}
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return &declextract.Output{}, nil
 		return nil, err
 	}
 	out, err := unmarshal(data)
@@ -152,6 +154,9 @@ func loadCompileCommands(dbFile string) ([]compileCommand, error) {
 	// (probably some host tools, etc).
 	cmds = slices.DeleteFunc(cmds, func(cmd compileCommand) bool {
 		return !strings.HasSuffix(cmd.File, ".c") ||
+			strings.HasSuffix(cmd.File, "test.c") ||
+			strings.HasSuffix(cmd.File, "tests.c") ||
+			strings.Contains(cmd.File, "selftest") ||
 			// Files compiled with gcc are not a part of the kernel
 			// (assuming compile commands were generated with make CC=clang).
 			// They are probably a part of some host tool.
