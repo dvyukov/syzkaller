@@ -732,6 +732,7 @@ func initMocks() {
 	timeNow = func(c context.Context) time.Time {
 		return getRequestContext(c).mockedTime
 	}
+	aidb.TimeNow = timeNow
 	sendEmail = func(c context.Context, msg *aemail.Message) error {
 		getRequestContext(c).emailSink <- msg
 		return nil
