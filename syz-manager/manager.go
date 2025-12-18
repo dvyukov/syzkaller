@@ -1456,7 +1456,7 @@ func (mgr *Manager) dashboardReporter() {
 }
 
 func (mgr *Manager) dashboardReproTasks() {
-	for range time.NewTicker(20 * time.Minute).C {
+	for range time.NewTicker(5 * time.Second).C {
 		if !mgr.reproLoop.CanReproMore() {
 			// We don't need reproducers at the moment.
 			continue
