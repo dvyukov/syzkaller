@@ -128,10 +128,12 @@ RUN apt-get install -y --no-install-recommends libdw-dev libelf-dev
 RUN apt-get install -y -q nodejs
 
 # Install gcloud sdk for dashboard/app tests.
-RUN curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-519.0.0-linux-x86_64.tar.gz | tar -C /usr/local -xz
+RUN curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-550.0.0-linux-x86_64.tar.gz | tar -C /usr/local -xz
 ENV PATH /usr/local/google-cloud-sdk/bin:$PATH
-RUN gcloud components install --quiet app-engine-python app-engine-go app-engine-python-extras cloud-datastore-emulator
+RUN gcloud components install --quiet app-engine-python app-engine-go app-engine-python-extras cloud-datastore-emulator cloud-spanner-emulator
 RUN chmod 0777 /usr/local/google-cloud-sdk
+# Fix up a bug in the installer: the dir is installed as 750 rather than 755 as other packages do.
+RUN chmod -R 0755 /usr/local/google-cloud-sdk/platform/google_appengine/lib/grpcio-1.70.0
 
 # Patch gcloud app-engine-python to fix projected queries problem, see issue #4785.
 RUN sed -i "s/entity\.key\.MergeFrom(original_entity\.key())/entity\.key\.MergeFrom(original_entity\.key)/g" \
