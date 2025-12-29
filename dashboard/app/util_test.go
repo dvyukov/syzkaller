@@ -22,20 +22,31 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/spanner/admin/database/apiv1"
+	"cloud.google.com/go/spanner/admin/database/apiv1/databasepb"
+	"cloud.google.com/go/spanner/admin/instance/apiv1"
+	"cloud.google.com/go/spanner/admin/instance/apiv1/instancepb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/syzkaller/dashboard/api"
+	"github.com/google/syzkaller/dashboard/app/aidb"
 	"github.com/google/syzkaller/dashboard/dashapi"
 	"github.com/google/syzkaller/pkg/coveragedb/spannerclient"
 	"github.com/google/syzkaller/pkg/covermerger"
 	"github.com/google/syzkaller/pkg/email"
+	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/subsystem"
+	"google.golang.org/api/option"
+	"google.golang.org/appengine/v2"
 	"google.golang.org/appengine/v2/aetest"
 	db "google.golang.org/appengine/v2/datastore"
 	"google.golang.org/appengine/v2/log"
 	aemail "google.golang.org/appengine/v2/mail"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Ctx struct {
@@ -58,11 +69,29 @@ var skipDevAppserverTests = func() bool {
 }()
 
 func NewCtx(t *testing.T) *Ctx {
+	return newCtx(t, false)
+}
+
+func newCtx(t *testing.T, needSpanner bool) *Ctx {
 	if skipDevAppserverTests {
 		t.Skip("skipping test (no dev_appserver.py)")
 	}
 	t.Parallel()
+	appID := ""
+	if needSpanner {
+		// We need a unique AppID b/c spanner database is attached to the AppID.
+		// But don't use it if spanner is not used b/c it alters some outputs
+		// checked by existing tests.
+		appID = fmt.Sprintf("testapp-%v", atomic.AddUint32(&appIDSeq, 1))
+		initSpannerOnce.Do(func() {
+			initSpannerErr = initSpanner()
+		})
+		if initSpannerErr != nil {
+			t.Fatalf("failed to init spanner emulator: %v", initSpannerErr)
+		}
+	}
 	inst, err := aetest.NewInstance(&aetest.Options{
+		AppID:          appID,
 		StartupTimeout: 120 * time.Second,
 		// Without this option datastore queries return data with slight delay,
 		// which fails reporting tests.
@@ -87,6 +116,131 @@ func NewCtx(t *testing.T) *Ctx {
 	c.publicClient = c.makeClient(clientPublicEmail, keyPublicEmail, true)
 	c.ctx = registerRequest(r, c).Context()
 	return c
+}
+
+var (
+	appIDSeq        = uint32(0)
+	initSpannerOnce sync.Once
+	initSpannerErr  error
+)
+
+// Use fixed address for now, assuming it's not used.
+// If this does not work, we could randomize the address,
+// or start with port 0, and parse out the actual port from the initial output.
+const spannerAddr = "localhost:47931"
+
+func NewSpannerCtx(t *testing.T) *Ctx {
+	c := newCtx(t, true)
+	if err := createSpannerDatabase(c.ctx); err != nil {
+		t.Fatalf("spanner: %v", err)
+	}
+	return c
+}
+
+func initSpanner() error {
+	appServerPath, err := exec.LookPath("dev_appserver.py")
+	if err != nil {
+		return err
+	}
+	bin := filepath.Join(filepath.Dir(appServerPath), "cloud_spanner_emulator", "emulator_main")
+	// Use osutil.Command to set PDEATHSIG.
+	cmd := osutil.Command(bin, "--host_port", spannerAddr, "--log_requests")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	os.Setenv("SPANNER_EMULATOR_HOST", spannerAddr)
+	// Without this connections to emulator hang, probably some bug somewhere.
+	os.Setenv("GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS", "false")
+	return nil
+}
+
+func createSpannerDatabase(ctx context.Context) error {
+	// Don't bother destroying instances/databases.
+	// We create isolated per-test instances, and the emulator is all in-memory.
+	// So when the emulator is killed with the test binary, everything is gone.
+	admin, err := instance.NewInstanceAdminClient(ctx,
+		option.WithEndpoint(spannerAddr),
+		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+	)
+	if err != nil {
+		return fmt.Errorf("failed NewInstanceAdminClient: %w", err)
+	}
+	defer admin.Close()
+	req := &instancepb.CreateInstanceRequest{
+		Parent:     fmt.Sprintf("projects/%s", appengine.AppID(ctx)),
+		InstanceId: aidb.Instance,
+		Instance: &instancepb.Instance{
+			Config:      fmt.Sprintf("projects/%s/instanceConfigs/emulator-config", appengine.AppID(ctx)),
+			DisplayName: "Test instance",
+			NodeCount:   1,
+		},
+	}
+	op, err := admin.CreateInstance(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed CreateInstance: %w", err)
+	}
+	if _, err := op.Wait(ctx); err != nil {
+		return fmt.Errorf("failed CreateInstance: %w", err)
+	}
+	dbAdmin, err := database.NewDatabaseAdminClient(ctx,
+		option.WithEndpoint(spannerAddr),
+		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+	)
+	if err != nil {
+		return fmt.Errorf("failed NewDatabaseAdminClient: %w", err)
+	}
+	defer dbAdmin.Close()
+	ddlStatements, err := loadDDLStatements("1_initialize.up.sql")
+	if err != nil {
+		return err
+	}
+	dbOp, err := dbAdmin.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
+		Parent:          fmt.Sprintf("projects/%s/instances/%v", appengine.AppID(ctx), aidb.Instance),
+		CreateStatement: fmt.Sprintf("CREATE DATABASE `%v`", aidb.Database),
+		ExtraStatements: ddlStatements,
+	})
+	if err != nil {
+		return fmt.Errorf("failed CreateDatabase: %w", err)
+	}
+	if _, err := dbOp.Wait(ctx); err != nil {
+		return fmt.Errorf("failed CreateDatabase: %w", err)
+	}
+	return nil
+}
+
+func executeSpannerDDL(ctx context.Context, statements []string) error {
+	dbAdmin, err := database.NewDatabaseAdminClient(ctx,
+		option.WithEndpoint(spannerAddr),
+		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+	)
+	if err != nil {
+		return fmt.Errorf("failed NewDatabaseAdminClient: %w", err)
+	}
+	defer dbAdmin.Close()
+	dbOp, err := dbAdmin.UpdateDatabaseDdl(ctx, &databasepb.UpdateDatabaseDdlRequest{
+		Database: fmt.Sprintf("projects/%s/instances/%v/databases/%v",
+			appengine.AppID(ctx), aidb.Instance, aidb.Database),
+		Statements: statements,
+	})
+	if err != nil {
+		return fmt.Errorf("failed UpdateDatabaseDdl: %w", err)
+	}
+	if err := dbOp.Wait(ctx); err != nil {
+		return fmt.Errorf("failed UpdateDatabaseDdl: %w", err)
+	}
+	return nil
+}
+
+func loadDDLStatements(file string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join("aidb", "migrations", file))
+	if err != nil {
+		return nil, err
+	}
+	// We need individual statements. Assume semicolon is not used in other places than statements end.
+	statements := strings.Split(string(data), ";")
+	return statements[:len(statements)-1], nil
 }
 
 func (c *Ctx) config() *GlobalConfig {
