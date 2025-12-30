@@ -39,6 +39,7 @@ import (
 	"github.com/google/syzkaller/pkg/email"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/subsystem"
+	spannertest "github.com/google/syzkaller/syz-cluster/pkg/db"
 	"google.golang.org/api/option"
 	"google.golang.org/appengine/v2"
 	"google.golang.org/appengine/v2/aetest"
@@ -69,27 +70,14 @@ var skipDevAppserverTests = func() bool {
 }()
 
 func NewCtx(t *testing.T) *Ctx {
-	return newCtx(t, false)
+	return newCtx(t, "")
 }
 
-func newCtx(t *testing.T, needSpanner bool) *Ctx {
+func newCtx(t *testing.T, appID string) *Ctx {
 	if skipDevAppserverTests {
 		t.Skip("skipping test (no dev_appserver.py)")
 	}
 	t.Parallel()
-	appID := ""
-	if needSpanner {
-		// We need a unique AppID b/c spanner database is attached to the AppID.
-		// But don't use it if spanner is not used b/c it alters some outputs
-		// checked by existing tests.
-		appID = fmt.Sprintf("testapp-%v", atomic.AddUint32(&appIDSeq, 1))
-		initSpannerOnce.Do(func() {
-			initSpannerErr = initSpanner()
-		})
-		if initSpannerErr != nil {
-			t.Fatalf("failed to init spanner emulator: %v", initSpannerErr)
-		}
-	}
 	inst, err := aetest.NewInstance(&aetest.Options{
 		AppID:          appID,
 		StartupTimeout: 120 * time.Second,
@@ -130,36 +118,18 @@ var (
 const spannerAddr = "localhost:47931"
 
 func NewSpannerCtx(t *testing.T) *Ctx {
-	c := newCtx(t, true)
-	if err := createSpannerDatabase(c.ctx); err != nil {
-		t.Fatalf("spanner: %v", err)
-	}
-	return c
+	// We need a unique AppID b/c spanner database is attached to the AppID.
+	// But don't use it if spanner is not used b/c it alters some outputs
+	// checked by existing tests.
+	appID := fmt.Sprintf("testapp-%v", atomic.AddUint32(&appIDSeq, 1))
+	uri := fmt.Sprintf("projects/%s/instances/%v/databases/%v", appID, aidb.Instance, aidb.Database)
+	spannertest.NewTestDB(t, uri, ddl)
+
+	return newCtx(t, appID)
 }
 
-func initSpanner() error {
-	appServerPath, err := exec.LookPath("dev_appserver.py")
-	if err != nil {
-		return err
-	}
-	bin := filepath.Join(filepath.Dir(appServerPath), "cloud_spanner_emulator", "emulator_main")
-	// Use osutil.Command to set PDEATHSIG.
-	cmd := osutil.Command(bin, "--host_port", spannerAddr, "--log_requests")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	os.Setenv("SPANNER_EMULATOR_HOST", spannerAddr)
-	// Without this connections to emulator hang, probably some bug somewhere.
-	os.Setenv("GOOGLE_CLOUD_SPANNER_MULTIPLEXED_SESSIONS", "false")
-	return nil
-}
 
 func createSpannerDatabase(ctx context.Context) error {
-	// Don't bother destroying instances/databases.
-	// We create isolated per-test instances, and the emulator is all in-memory.
-	// So when the emulator is killed with the test binary, everything is gone.
 	admin, err := instance.NewInstanceAdminClient(ctx,
 		option.WithEndpoint(spannerAddr),
 		option.WithGRPCDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),

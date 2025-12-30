@@ -72,25 +72,27 @@ func CreateSpannerInstance(ctx context.Context, uri ParsedURI) error {
 	return err
 }
 
-func CreateSpannerDB(ctx context.Context, uri ParsedURI) error {
+func CreateSpannerDB(ctx context.Context, uri ParsedURI, ddl []string) error {
 	client, err := database.NewDatabaseAdminClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	_, err = client.GetDatabase(ctx, &databasepb.GetDatabaseRequest{Name: uri.Full})
-	if err != nil && spanner.ErrCode(err) == codes.NotFound {
-		op, err := client.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
-			Parent:          uri.InstancePrefix,
-			CreateStatement: `CREATE DATABASE ` + uri.Database,
-			ExtraStatements: []string{},
-		})
-		if err != nil {
-			return err
+	if ddl == nil {
+		_, err = client.GetDatabase(ctx, &databasepb.GetDatabaseRequest{Name: uri.Full})
+		if err == nil {
+			return nil
 		}
-		_, err = op.Wait(ctx)
+	}
+	op, err := client.CreateDatabase(ctx, &databasepb.CreateDatabaseRequest{
+		Parent:          uri.InstancePrefix,
+		CreateStatement: `CREATE DATABASE ` + uri.Database,
+		ExtraStatements: ddl,
+	})
+	if err != nil {
 		return err
 	}
+	_, err = op.Wait(ctx)
 	return err
 }
 
@@ -128,31 +130,37 @@ func getMigrateInstance(uri string) (*migrate.Migrate, error) {
 }
 
 func NewTransientDB(t *testing.T) (*spanner.Client, context.Context) {
-	setupSpannerEmulator(t)
-	uri, err := ParseURI("projects/my-project/instances/test-instance/databases/" +
-		fmt.Sprintf("db%v", time.Now().UnixNano()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	uri := "projects/my-project/instances/test-instance/databases/" +
+		fmt.Sprintf("db%v", time.Now().UnixNano())
+	NewTestDB(t, uri, nil)
 	ctx := t.Context()
-	err = CreateSpannerInstance(ctx, uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = CreateSpannerDB(ctx, uri)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := spanner.NewClient(ctx, uri.Full)
+	client, err := spanner.NewClient(ctx, uri)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(client.Close)
-	err = RunMigrations(uri.Full)
+	err = RunMigrations(uri)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return client, ctx
+}
+
+func NewTestDB(t *testing.T, uri string, ddl []string) {
+	// Don't bother destroying instances/databases.
+	// We create isolated per-test databases, and the emulator is all in-memory.
+	// So when the emulator is killed with the test binary, everything is gone.
+	parsedURI, err := ParseURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupSpannerEmulator(t, parsedURI)
+	if err := CreateSpannerInstance(t.Context(), parsedURI); err != nil {
+		t.Fatalf("CreateSpannerInstance: %v", err)
+	}
+	if err := CreateSpannerDB(t.Context(), parsedURI, ddl); err != nil {
+		t.Fatalf("CreateSpannerDB: %v", err)
+	}
 }
 
 var (
@@ -161,9 +169,9 @@ var (
 	errSpannerSkip   = errors.New("no spanner emulator binary found, skipping test")
 )
 
-func setupSpannerEmulator(t *testing.T) {
+func setupSpannerEmulator(t *testing.T, uri ParsedURI) {
 	setupSpannerOnce.Do(func() {
-		setupSpannerErr = startSpannerEmulator()
+		setupSpannerErr = startSpannerEmulator(t.Context(), uri)
 	})
 	if setupSpannerErr == errSpannerSkip {
 		t.Skip(setupSpannerErr.Error())
@@ -173,7 +181,7 @@ func setupSpannerEmulator(t *testing.T) {
 	}
 }
 
-func startSpannerEmulator() error {
+func startSpannerEmulator(ctx context.Context, uri ParsedURI) error {
 	// This env is set by syz-env container.
 	bin := os.Getenv("SPANNER_EMULATOR_BIN")
 	if bin != "" {
