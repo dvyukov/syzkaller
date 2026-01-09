@@ -423,6 +423,16 @@ const currentAIJobCheckSeq = 1
 
 func workflowsForBug(bug *Bug, manual bool) map[ai.WorkflowType]bool {
 	workflows := make(map[ai.WorkflowType]bool)
+	/*	
+	TitleToCrashType
+	
+	
+	in moderation and has not reproducers
+	otherwise create manually for remaining
+	if strings.HasPrefix(bug.Title, "KASAN: ") && strings.HasPrefix(bug.Title, "KASAN: ") {
+		workflows[ai.WorkflowAssessmentKCSAN] = true
+	}
+	*/
 	if strings.HasPrefix(bug.Title, "KCSAN: data-race") {
 		workflows[ai.WorkflowAssessmentKCSAN] = true
 	}

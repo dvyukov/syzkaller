@@ -8,5 +8,6 @@ type WorkflowType string
 
 const (
 	WorkflowPatching        = WorkflowType("patching")
+	WorkflowAssessmentKASAN = WorkflowType("assessment-kasan")
 	WorkflowAssessmentKCSAN = WorkflowType("assessment-kcsan")
 )
