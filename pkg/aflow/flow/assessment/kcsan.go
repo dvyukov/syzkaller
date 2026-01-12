@@ -49,6 +49,28 @@ func init() {
 				},
 			},
 		},
+		&aflow.Flow{
+			Name: "dvyukov"
+			Root: &aflow.Pipeline{
+				Actions: []aflow.Action{
+					kernel.Checkout,
+					kernel.Build,
+					codesearcher.PrepareIndex,
+					&aflow.LLMAgent{
+						Name:  "expert",
+						Reply: "Explanation",
+						Outputs: aflow.LLMOutputs[struct {
+							Confident bool `jsonschema:"If you are confident in the verdict of the analysis or not."`
+							Benign    bool `jsonschema:"If the data race is benign or not."`
+						}](),
+						Temperature: 0.5,
+						Instruction: myInstruction,
+						Prompt:      kcsanPrompt,
+						Tools:       codesearcher.Tools,
+					},
+				},
+			},
+		},
 	)
 }
 
@@ -75,6 +97,10 @@ In the final reply explain why you think the given data race is benign or is har
 Use the provided tools to confirm any assumptions, what variables/fields being accessed, etc.
 In particular, don't make assumptions about the kernel source code,
 use codesearch tools to read the actual source code.
+`
+
+const myInstruction = `
+TODO
 `
 
 const kcsanPrompt = `
