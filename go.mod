@@ -31,7 +31,7 @@ require (
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/perf v0.0.0-20251008221758-42ba72fec400
 	golang.org/x/sync v0.18.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/tools v0.38.0
 	google.golang.org/api v0.257.0
 	google.golang.org/appengine/v2 v2.0.6
