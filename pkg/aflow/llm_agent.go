@@ -17,6 +17,9 @@ import (
 type LLMAgent struct {
 	// For logging/debugging.
 	Name string
+	// The default Gemini model name to execute this workflow.
+	// Use the consts defined below.
+	Model string
 	// Name of the state variable to store the final reply of the agent.
 	// These names can be used in subsequent action instructions/prompts,
 	// and as final workflow outputs.
@@ -41,6 +44,13 @@ type LLMAgent struct {
 	// Set of tools for the agent to use.
 	Tools []Tool
 }
+
+// Consts to use for LLMAgent.Model.
+// See https://ai.google.dev/gemini-api/docs/models
+const (
+	BestExpensiveModel = "gemini-3-pro-preview"
+	GoodBalancedModel  = "gemini-3-flash-preview"
+)
 
 // Tool represents a custom tool an LLMAgent can invoke.
 // Use NewFuncTool to create function-based tools.
@@ -133,6 +143,7 @@ func (a *LLMAgent) executeOne(ctx *Context) (string, map[string]any, error) {
 		Name:        a.Name,
 		Instruction: instruction,
 		Prompt:      formatTemplate(a.Prompt, ctx.state),
+		Model:       ctx.modelName(a.Model),
 	}
 	if err := ctx.startSpan(span); err != nil {
 		return "", nil, err
@@ -151,8 +162,9 @@ func (a *LLMAgent) chat(ctx *Context, cfg *genai.GenerateContentConfig, tools ma
 	req := []*genai.Content{genai.NewContentFromText(prompt, genai.RoleUser)}
 	for {
 		reqSpan := &trajectory.Span{
-			Type: trajectory.SpanLLM,
-			Name: a.Name,
+			Type:  trajectory.SpanLLM,
+			Name:  a.Name,
+			Model: ctx.modelName(a.Model),
 		}
 		if err := ctx.startSpan(reqSpan); err != nil {
 			return "", nil, err
@@ -277,7 +289,7 @@ func (a *LLMAgent) generateContent(ctx *Context, cfg *genai.GenerateContentConfi
 	req []*genai.Content) (*genai.GenerateContentResponse, error) {
 	backoff := time.Second
 	for try := 0; ; try++ {
-		resp, err := ctx.generateContent(cfg, req)
+		resp, err := ctx.generateContent(ctx.modelName(a.Model), cfg, req)
 		if err != nil && try < 100 &&
 			strings.Contains(err.Error(), "Error 503, Message: The model is overloaded. Please try again later.") {
 			time.Sleep(backoff)
@@ -290,6 +302,7 @@ func (a *LLMAgent) generateContent(ctx *Context, cfg *genai.GenerateContentConfi
 
 func (a *LLMAgent) verify(vctx *verifyContext) {
 	vctx.requireNotEmpty(a.Name, "Name", a.Name)
+	vctx.requireNotEmpty(a.Name, "Model", a.Model)
 	vctx.requireNotEmpty(a.Name, "Reply", a.Reply)
 	if temp, ok := a.Temperature.(int); ok {
 		a.Temperature = float32(temp)
