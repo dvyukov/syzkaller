@@ -288,13 +288,17 @@ func (a *LLMAgent) parseResponse(resp *genai.GenerateContentResponse) (
 func (a *LLMAgent) generateContent(ctx *Context, cfg *genai.GenerateContentConfig,
 	req []*genai.Content) (*genai.GenerateContentResponse, error) {
 	backoff := time.Second
+	model := ctx.modelName(a.Model)
 	for try := 0; ; try++ {
-		resp, err := ctx.generateContent(ctx.modelName(a.Model), cfg, req)
+		resp, err := ctx.generateContent(model, cfg, req)
 		if err != nil && try < 100 &&
 			strings.Contains(err.Error(), "Error 503, Message: The model is overloaded. Please try again later.") {
 			time.Sleep(backoff)
 			backoff = min(backoff+time.Second, 10*time.Second)
 			continue
+		}
+		if err != nil && strings.Contains(err.Error(), "Error 429, Message: You exceeded your current quota") {
+			return resp, &modelQuotaError{model}
 		}
 		return resp, err
 	}
