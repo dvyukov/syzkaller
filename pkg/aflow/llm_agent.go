@@ -6,6 +6,7 @@ package aflow
 import (
 	"fmt"
 	"maps"
+	"os"
 	"reflect"
 
 	"github.com/google/syzkaller/pkg/aflow/trajectory"
@@ -137,6 +138,10 @@ func (a *LLMAgent) config(ctx *Context) (*genai.GenerateContentConfig, string, m
 		instruction += a.Outputs.instruction
 		toolList = append(toolList, a.Outputs.tool)
 	}
+	if missingInfoDebug {
+		instruction += missingInfoInstruction
+		toolList = append(toolList, debugTool)
+	}
 	toolMap := make(map[string]Tool)
 	var tools []*genai.Tool
 	for _, tool := range toolList {
@@ -252,3 +257,23 @@ func (a *LLMAgent) verifyTemplate(vctx *verifyContext, what, text string) {
 		vctx.state[name].used = true
 	}
 }
+
+const missingInfoDebug = true
+
+const missingInfoInstruction = `
+
+If at any point during the analysis you realize that you are missing some tools,
+or tool capabilities, or instruction/prompt clarity/details during the analysis,
+and availability of these things would considerably improve your ability to
+provide a good answer, then call the missing-info tool with details of what's missing.
+`
+
+type debugToolArgs struct {
+	Explanation string `jsonschema:"Explanation of what's missing."`
+}
+
+var debugTool = NewFuncTool("missing-info", func(ctx *Context, state struct{}, args debugToolArgs) (struct{}, error) {
+	fmt.Printf("Agent reports missing capabilities/info:\n%s\n", args.Explanation)
+	os.Exit(1)
+	return struct{}{}, nil
+}, "Use this tool to provide feedback on missing tools/capabilities/clarity/details.")
