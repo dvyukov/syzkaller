@@ -1,0 +1,52 @@
+{
+	"definitions": [
+		{
+			"kind": "function",
+			"name": "refs0",
+			"type": "int ()",
+			"body": {
+				"file": "refs.c",
+				"start_line": 4,
+				"end_line": 7
+			},
+			"comment": {
+				"file": "refs.c",
+				"start_line": 1,
+				"end_line": 2
+			}
+		},
+		{
+			"kind": "function",
+			"name": "refs1",
+			"type": "void ()",
+			"body": {
+				"file": "refs.c",
+				"start_line": 9,
+				"end_line": 11
+			},
+			"comment": {}
+		},
+		{
+			"kind": "function",
+			"name": "refs2",
+			"type": "void (void (*)(), int)",
+			"body": {
+				"file": "refs.c",
+				"start_line": 13,
+				"end_line": 15
+			},
+			"comment": {}
+		},
+		{
+			"kind": "function",
+			"name": "refs3",
+			"type": "void ()",
+			"body": {
+				"file": "refs.c",
+				"start_line": 17,
+				"end_line": 21
+			},
+			"comment": {}
+		}
+	]
+}
