@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/profiler v0.4.3
 	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/spanner v1.86.0
-	cloud.google.com/go/storage v1.57.1
+	cloud.google.com/go/storage v1.59.1
 	github.com/VividCortex/gohistogram v1.0.0
 	github.com/argoproj/argo-workflows/v3 v3.7.3
 	github.com/golang-migrate/migrate/v4 v4.19.0
@@ -67,7 +67,7 @@ require (
 	github.com/GaijinEntertainment/go-exhaustruct/v3 v3.3.1 // indirect
 	github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.5.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.30.0 // indirect
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.53.0 // indirect
+	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.54.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.54.0 // indirect
 	github.com/Masterminds/semver/v3 v3.3.1 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.1 // indirect
