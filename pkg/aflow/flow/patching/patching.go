@@ -11,6 +11,7 @@ import (
 	"github.com/google/syzkaller/pkg/aflow/action/kernel"
 	"github.com/google/syzkaller/pkg/aflow/ai"
 	"github.com/google/syzkaller/pkg/aflow/tool/codesearcher"
+	"github.com/google/syzkaller/pkg/aflow/tool/researcher"
 )
 
 type Inputs struct {
@@ -38,7 +39,7 @@ type Outputs struct {
 }
 
 func init() {
-	tools := codesearcher.Tools
+	tools := append([]aflow.Tool{researcher.Tool}, codesearcher.Tools...)
 
 	aflow.Register[Inputs, Outputs](
 		ai.WorkflowPatching,
