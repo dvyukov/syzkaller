@@ -192,8 +192,7 @@ func (a *LLMAgent) chat(ctx *Context, cfg *genai.GenerateContentConfig, tools ma
 		if err != nil {
 			return "", nil, ctx.finishSpan(reqSpan, err)
 		}
-		reply, thoughts, calls, respErr := a.parseResponse(resp)
-		reqSpan.Thoughts = thoughts
+		reply, calls, respErr := a.parseResponse(resp, reqSpan)
 		if err := ctx.finishSpan(reqSpan, respErr); err != nil {
 			return "", nil, err
 		}
@@ -302,8 +301,8 @@ func (a *LLMAgent) callTools(ctx *Context, tools map[string]Tool, calls []*genai
 	return responses, outputs, nil
 }
 
-func (a *LLMAgent) parseResponse(resp *genai.GenerateContentResponse) (
-	reply, thoughts string, calls []*genai.FunctionCall, err error) {
+func (a *LLMAgent) parseResponse(resp *genai.GenerateContentResponse, span *trajectory.Span) (
+	reply string, calls []*genai.FunctionCall, err error) {
 	if len(resp.Candidates) == 0 || resp.Candidates[0] == nil {
 		err = fmt.Errorf("empty model response")
 		if resp.PromptFeedback != nil {
@@ -322,6 +321,12 @@ func (a *LLMAgent) parseResponse(resp *genai.GenerateContentResponse) (
 		err = fmt.Errorf("unexpected reply fields (%+v)", *candidate)
 		return
 	}
+	if resp.UsageMetadata != nil {
+		span.InputPromptTokens = int(resp.UsageMetadata.PromptTokenCount)
+		span.InputToolsTokens = int(resp.UsageMetadata.ToolUsePromptTokenCount)
+		span.OutputResponseTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+		span.OutputThoughtsTokens = int(resp.UsageMetadata.ThoughtsTokenCount)
+	}
 	for _, part := range candidate.Content.Parts {
 		// We don't expect to receive these now.
 		if part.VideoMetadata != nil || part.InlineData != nil ||
@@ -333,7 +338,7 @@ func (a *LLMAgent) parseResponse(resp *genai.GenerateContentResponse) (
 		if part.FunctionCall != nil {
 			calls = append(calls, part.FunctionCall)
 		} else if part.Thought {
-			thoughts += part.Text
+			span.Thoughts += part.Text
 		} else {
 			reply += part.Text
 		}

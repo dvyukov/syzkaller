@@ -38,6 +38,13 @@ type Span struct {
 
 	// LLM invocation.
 	Thoughts string `json:",omitzero"`
+
+	// For details see:
+	// https://pkg.go.dev/google.golang.org/genai#GenerateContentResponseUsageMetadata
+	InputPromptTokens    int
+	InputToolsTokens     int
+	OutputResponseTokens int
+	OutputThoughtsTokens int
 }
 
 type SpanType string
@@ -87,6 +94,9 @@ func (span *Span) String() string {
 			}
 			fmt.Fprintf(sb, "reply:\n%v\n", span.Reply)
 		case SpanLLM:
+			fmt.Fprintf(sb, "tokens: prompt=%v tools=%v response=%v thoughts=%v\n",
+				span.InputPromptTokens, span.InputToolsTokens,
+				span.OutputResponseTokens, span.OutputThoughtsTokens)
 			if span.Thoughts != "" {
 				fmt.Fprintf(sb, "thoughts:\n%v\n", span.Thoughts)
 			}
