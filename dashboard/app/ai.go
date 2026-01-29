@@ -17,10 +17,13 @@ import (
 	"github.com/google/syzkaller/dashboard/app/aidb"
 	"github.com/google/syzkaller/dashboard/dashapi"
 	"github.com/google/syzkaller/pkg/aflow/ai"
+	"github.com/google/syzkaller/pkg/email"
+	"github.com/google/syzkaller/pkg/gerrit"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/report/crash"
 	"github.com/google/syzkaller/pkg/vcs"
 	db "google.golang.org/appengine/v2/datastore"
+	"google.golang.org/appengine/v2/log"
 )
 
 const AIAccessLevel = AccessUser
@@ -389,8 +392,15 @@ func apiAIJobDone(ctx context.Context, req *dashapi.AIJobDoneReq) (any, error) {
 	if len(req.Results) != 0 {
 		job.Results = spanner.NullJSON{Value: req.Results, Valid: true}
 	}
-	err = aiJobUpdate(ctx, job)
-	return nil, err
+	if err = aiJobUpdate(ctx, job); err != nil {
+		return nil, err
+	}
+	if job.Type == ai.WorkflowPatching && job.BugID.Valid && job.Finished.Valid && job.Error == "" {
+		if err := createGerritChange(ctx, job); err != nil {
+			log.Errorf(ctx, "failed to create gerrit change for job %v: %v", job.ID, err)
+		}
+	}
+	return nil, nil
 }
 
 func aiJobUpdate(ctx context.Context, job *aidb.Job) error {
@@ -663,6 +673,29 @@ func workflowsForBug(bug *Bug, manual bool) map[ai.WorkflowType]bool {
 		}
 	}
 	return workflows
+}
+
+func createGerritChange(ctx context.Context, job *aidb.Job) error {
+	res, err := castJobResults[ai.PatchingOutputs](job)
+	if err != nil {
+		return err
+	}
+	subject := strings.Split(res.PatchDescription+"\n", "\n")[0]
+	// TODO: add Reported-by tag for the syzbot bug, or a link to lore report.
+	// Add Fixes tag if we have cause bisection, but we need to verify it with LLMs
+	// somehow since lots of them are wrong.
+	// Probably shouldn't cc stable for all patches (e.g. removing a WARNING)?
+	res.Recipients = append(res.Recipients, ai.Recipient{Email: "stable@vger.kernel.org"})
+	// TODO: move these constants to config.
+	const author = "syzbot@kernel.org"
+	notifyEmails := []string{"syzkaller-upstream-moderation@googlegroups.com"}
+	body := email.FormatPatch(res.PatchDescription, res.PatchDiff, author, res.KernelCommit, res.Recipients)
+	changeID, link, err := gerrit.CreateChange(ctx, res.KernelRepo, res.KernelCommit, subject, body, notifyEmails)
+	if err != nil {
+		return err
+	}
+	log.Infof(ctx, "created gerrit change %v for job %v: %v", changeID, job.ID, link)
+	return nil
 }
 
 const (
