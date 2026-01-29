@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/syzkaller/pkg/aflow"
 	"github.com/google/syzkaller/pkg/aflow/action/kernel"
+	"github.com/google/syzkaller/pkg/aflow/ai"
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/vcs"
 )
@@ -74,7 +75,7 @@ type maintainersArgs struct {
 }
 
 type maintainersResult struct {
-	Recipients []Recipient
+	Recipients []ai.Recipient
 }
 
 func maintainers(ctx *aflow.Context, args maintainersArgs) (maintainersResult, error) {
@@ -89,7 +90,7 @@ func maintainers(ctx *aflow.Context, args maintainersArgs) (maintainersResult, e
 		return res, err
 	}
 	for _, recipient := range vcs.ParseMaintainersLinux(output) {
-		res.Recipients = append(res.Recipients, Recipient{
+		res.Recipients = append(res.Recipients, ai.Recipient{
 			Name:  recipient.Address.Name,
 			Email: recipient.Address.Address,
 			To:    recipient.Type == vcs.To,
