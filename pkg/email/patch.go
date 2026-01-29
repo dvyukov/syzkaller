@@ -6,8 +6,12 @@ package email
 import (
 	"bufio"
 	"bytes"
+	"net/mail"
 	"regexp"
 	"strings"
+	"text/template"
+
+	"github.com/google/syzkaller/pkg/aflow/ai"
 )
 
 func ParsePatch(message []byte) (diff string) {
@@ -49,6 +53,44 @@ func ParsePatch(message []byte) (diff string) {
 	}
 	return
 }
+
+func FormatPatch(description, diff, author, baseCommit string, recipients []ai.Recipient) string {
+	buf := new(bytes.Buffer)
+	var to, cc []mail.Address
+	for _, recipient := range recipients {
+		addr := mail.Address{Name: recipient.Name, Address: recipient.Email}
+		if recipient.To {
+			to = append(to, addr)
+		} else {
+			cc = append(cc, addr)
+		}
+	}
+	err := patchTemplate.Execute(buf, map[string]any{
+		"description": strings.TrimSpace(description),
+		"diff":        diff,
+		"author":      author,
+		"baseCommit":  baseCommit,
+		"to":          to,
+		"cc":          cc,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return buf.String()
+}
+
+var patchTemplate = template.Must(template.New("").Parse(`{{.description}}
+
+Signed-off-by: {{.author}}
+{{- range $addr := .to}}
+To: {{$addr.String}}{{end}}
+{{- range $addr := .cc}}
+Cc: {{$addr.String}}{{end}}
+---
+
+{{.diff}}
+base-commit: {{.baseCommit}}
+`))
 
 var diffRegexps = []*regexp.Regexp{
 	regexp.MustCompile(`^(---|\+\+\+) [^\s]`),
