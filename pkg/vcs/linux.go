@@ -203,6 +203,10 @@ func (ctx *linux) PrepareBisect() error {
 			return fmt.Errorf("fetching upstream linux failed: %w", err)
 		}
 	}
+	// Build incremental commit graph to speed up tag queries.
+	if _, err := ctx.gitRepo.Run("commit-graph", "write", "--reachable", "--split"); err != nil {
+		return err
+	}
 	return nil
 }
 

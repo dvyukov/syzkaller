@@ -65,6 +65,9 @@ func pickBaseCommit(ctx *aflow.Context, args baseCommitArgs) (baseCommitResult, 
 		if err != nil {
 			return err
 		}
+		if err := repo.(vcs.Bisecter).PrepareBisect(); err != nil {
+			return err
+		}
 		tag, err := repo.ReleaseTag(head.Hash)
 		if err != nil {
 			return err

@@ -228,6 +228,10 @@ func (git *gitRepo) initRepo(reason error) error {
 	if _, err := git.Run("init"); err != nil {
 		return err
 	}
+	// This enables use of "git commit-graph" later.
+	if _, err := git.Run("config", "--local", "core.commitGraph", "true"); err != nil {
+		return err
+	}
 	return nil
 }
 
