@@ -107,6 +107,27 @@ func init() {
 		createPatchingFlow("summary", 10, 0),
 		createPatchingFlow("compressed", 0, 200_000),
 	)
+
+	aflow.Register[struct{}, struct{ BugExplanation string }](
+		"token-test",
+		"generate a kernel patch fixing a provided bug reproducer",
+		&aflow.Flow{
+			Consts: map[string]any{
+				"Index":        struct{}{},
+				"KernelSrc":    "",
+				"KernelCommit": "",
+			},
+			Root: &aflow.LLMAgent{
+				Name:        "debugger",
+				Model:       aflow.GoodBalancedModel,
+				Reply:       "BugExplanation",
+				TaskType:    aflow.FormalReasoningTask,
+				Instruction: tokenInstruction,
+				Prompt:      tokenPrompt,
+				Tools:       aflow.Tools(codesearcher.Tools, grepper.Tool, codeexpert.NewTool(0), gitlog.Tools),
+			},
+		},
+	)
 }
 
 // TODO: mention not doing assumptions about the source code, and instead querying code using tools.
@@ -381,3 +402,16 @@ var formatFixes = aflow.NewFuncAction("format-fixes",
 		})
 		return formatFixesResult{Fixes: fix}, err
 	})
+
+const tokenInstruction = `
+You are an experienced Linux kernel developer tasked with debugging a kernel crash root cause.
+You need to provide a detailed explanation of the root cause for another developer to be
+able to write a fix for the bug based on your explanation. Include all relevant details
+into the response: function/struct/field/etc names, code snippets, line numbers,
+macro/enum values, etc.
+`
+
+const tokenPrompt = `
+The crash is:
+WARNING: net/mac80211/offchannel.c:404 at ieee80211_start_next_roc+0x1d8/0x240 net/mac80211/offchannel.c:404, CPU#1: kworker/u10:0/27
+`

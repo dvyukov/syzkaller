@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -341,6 +342,7 @@ func (a *LLMAgent) chat(ctx *Context, cfg *genai.GenerateContentConfig, tools ma
 		if err := ctx.finishSpan(span, respErr); err != nil {
 			return "", nil, err
 		}
+		os.Exit(1)
 		// If the LLM did not provide any reply and does not want to call any
 		// tools, we got an empty response. Populate the `Part`s with `Text`
 		// before appending to the history to avoid `INVALID_ARGUMENT` errors.

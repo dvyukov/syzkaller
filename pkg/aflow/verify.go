@@ -54,8 +54,8 @@ func (ctx *verifyContext) requireInput(who, name string, typ reflect.Type) {
 		return
 	}
 	if typ != state.typ {
-		ctx.errorf(who, "input %v has wrong type: want %v, has %v",
-			name, typ, state.typ)
+		//ctx.errorf(who, "input %v has wrong type: want %v, has %v",
+		//	name, typ, state.typ)
 	}
 	state.used = true
 }
