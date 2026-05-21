@@ -73,6 +73,7 @@ func testPatch(ctx *aflow.Context, args testArgs) (testResult, error) {
 		for _, fn := range []func(ctx *aflow.Context, args testArgs) (string, error){
 			testPatchBuild,
 			testPatchRepro,
+			testPatchCheckPatch,
 		} {
 			testError, err := fn(ctx, args)
 			if err != nil || testError != "" {
@@ -119,6 +120,10 @@ func testPatchRepro(ctx *aflow.Context, args testArgs) (string, error) {
 		return string(testRes.Report.Report), nil
 	}
 	return testRes.BootError, nil
+}
+
+func testPatchCheckPatch(ctx *aflow.Context, args testArgs) (string, error) {
+	return "", nil
 }
 
 func currentDiff(repo string) (string, error) {
