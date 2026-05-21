@@ -15,7 +15,7 @@ func TestFormatCFunc(t *testing.T) {
 	args := FormatCArgs{CandidateReproC: "int main() { return 0; }"}
 	res, err := FormatCFunc(ctx, args)
 	assert.NoError(t, err)
-	assert.NotEmpty(t, res.FormattedReproC)
+	assert.NotEmpty(t, res.ReproC)
 }
 
 func TestTruncateLogFunc(t *testing.T) {
@@ -38,14 +38,13 @@ func TestLoopControllerFunc(t *testing.T) {
 		Feedback:             "good",
 		TitleMatches:         true,
 		CandidateReproduced:  true,
-		FormattedReproC:      "code",
+		ReproC:      "code",
 		CandidateBugTitle:    "title",
 		CandidateCrashReport: "report",
 	}
 	res, err := LoopControllerFunc(ctx, args)
 	assert.NoError(t, err)
 	assert.Equal(t, "", res.ContinueSignal)
-	assert.Equal(t, "code", res.ReproC)
 	assert.True(t, res.Reproduced)
 
 	// Case 2: Collision.

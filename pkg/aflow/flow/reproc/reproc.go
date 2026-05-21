@@ -41,15 +41,12 @@ type FormatCArgs struct {
 }
 
 type FormatCResult struct {
-	FormattedReproC string
+	ReproC string
 }
 
 func FormatCFunc(ctx *aflow.Context, args FormatCArgs) (FormatCResult, error) {
 	formatted, err := csource.Format([]byte(args.CandidateReproC))
-	if err != nil {
-		return FormatCResult{FormattedReproC: args.CandidateReproC}, nil
-	}
-	return FormatCResult{FormattedReproC: string(formatted)}, nil
+	return FormatCResult{string(formatted)}, err
 }
 
 var FormatC = aflow.NewFuncAction("format-c", FormatCFunc)
@@ -60,7 +57,7 @@ type CompileCProgArgs struct {
 
 type CompileCProgResult struct {
 	CompilerError   string
-	FormattedReproC string
+	ReproC string
 }
 
 func extractCCode(text string) string {
@@ -90,13 +87,11 @@ func CompileCProgFunc(ctx *aflow.Context, args CompileCProgArgs) (CompileCProgRe
 	if err == nil {
 		os.Remove(bin)
 		return CompileCProgResult{
-			CompilerError:   "",
-			FormattedReproC: string(formatted),
+			ReproC: string(formatted),
 		}, nil
 	}
 	return CompileCProgResult{
 		CompilerError:   err.Error(),
-		FormattedReproC: "",
 	}, nil
 }
 
@@ -170,7 +165,7 @@ var TruncateLog = aflow.NewFuncAction("truncate-log", TruncateLogFunc)
 
 type OracleResult struct {
 	Feedback     string `jsonschema:"Detailed feedback on the reproduction attempt"`
-	TitleMatches bool   `jsonschema:"Whether the candidate crash title matches the expected bug"`
+	DontMatch bool   `jsonschema:"Whether the candidate crash does not match the expected crash"`
 }
 
 type GeneratorResult struct {
@@ -182,7 +177,7 @@ type LoopControllerArgs struct {
 	Feedback             string
 	TitleMatches         bool
 	CandidateReproduced  bool
-	FormattedReproC      string
+	ReproC      string
 	CandidateBugTitle    string
 	CandidateCrashReport string
 	IsProbe              bool
@@ -192,7 +187,6 @@ type LoopControllerArgs struct {
 
 type LoopControllerResult struct {
 	ContinueSignal        string
-	ReproC                string
 	OracleFeedback        string
 	Reproduced            bool
 	ReproducedBugTitle    string
@@ -211,7 +205,6 @@ func LoopControllerFunc(ctx *aflow.Context, args LoopControllerArgs) (LoopContro
 	}
 
 	if args.CandidateReproduced && args.TitleMatches {
-		res.ReproC = args.FormattedReproC
 		res.Reproduced = true
 		res.ReproducedBugTitle = args.CandidateBugTitle
 		res.ReproducedCrashReport = args.CandidateCrashReport

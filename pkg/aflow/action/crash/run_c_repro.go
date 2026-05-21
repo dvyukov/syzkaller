@@ -10,21 +10,7 @@ import (
 	"github.com/google/syzkaller/pkg/aflow"
 )
 
-type RunCReproArgs struct {
-	Syzkaller       string
-	Image           string
-	Type            string
-	VM              json.RawMessage
-	KernelSrc       string
-	KernelObj       string
-	KernelCommit    string
-	KernelConfig    string
-	FormattedReproC string
-	StraceBin       string
-	NeedStrace      bool
-}
-
-type RunCReproResult struct {
+type probeResult struct {
 	CandidateReproduced  bool
 	ConsoleOutput        string
 	StraceOutput         string
@@ -32,15 +18,12 @@ type RunCReproResult struct {
 	CandidateCrashReport string
 	OtherCrashReports    []string
 	TestError            string
+	ProbeSuccessful bool
 }
 
-var RunCRepro = aflow.NewFuncAction("run-c-repro", RunCReproFunc)
+var Probe = aflow.NewFuncAction("probe-repro", probe)
 
-func RunCReproFunc(ctx *aflow.Context, args RunCReproArgs) (RunCReproResult, error) {
-	if args.FormattedReproC == "" {
-		return RunCReproResult{}, fmt.Errorf("no C reproducer provided")
-	}
-
+func probe(ctx *aflow.Context, args ReproduceArgs) (probeResult, error) {
 	workdir, err := ctx.TempDir()
 	if err != nil {
 		return RunCReproResult{}, err
@@ -55,7 +38,7 @@ func RunCReproFunc(ctx *aflow.Context, args RunCReproArgs) (RunCReproResult, err
 		KernelObj:    args.KernelObj,
 		KernelCommit: args.KernelCommit,
 		KernelConfig: args.KernelConfig,
-		ReproC:       args.FormattedReproC,
+		ReproC:       args.ReproC,
 		StraceBin:    args.StraceBin,
 	}
 
@@ -80,8 +63,8 @@ func RunCReproFunc(ctx *aflow.Context, args RunCReproArgs) (RunCReproResult, err
 
 	// Run 2: with strace (only if first run didn't crash and didn't have boot error)
 	if !result.CandidateReproduced && result.TestError == "" && args.NeedStrace && args.StraceBin != "" {
-		reproduceArgs.NeedStrace = true
-		res2, err2 := RunTest(reproduceArgs, workdir, false)
+		// TODO: also run with coverage collection and expose results to LLM.
+		res2, err2 := RunTest(reproduceArgs, workdir, false, true)
 		if err2 != nil {
 			return result, err2 // Return what we had from Run 1, plus the error.
 		}
@@ -100,5 +83,6 @@ func RunCReproFunc(ctx *aflow.Context, args RunCReproArgs) (RunCReproResult, err
 		}
 	}
 
+	result.ProbeSuccessful = 
 	return result, nil
 }

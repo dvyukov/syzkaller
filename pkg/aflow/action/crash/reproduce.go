@@ -30,7 +30,7 @@ var ErrDidNotCrash = errors.New("reproducer did not crash")
 // Reproduce action tries to reproduce a crash with the given reproducer,
 // and outputs the resulting crash report.
 // If the reproducer does not trigger a crash, action fails.
-var Reproduce = aflow.NewFuncAction("crash-reproducer", ReproduceFunc)
+var Reproduce = aflow.NewFuncAction("crash-reproducer", reproduceFunc)
 
 type ReproduceArgs struct {
 	Syzkaller    string
@@ -45,7 +45,6 @@ type ReproduceArgs struct {
 	KernelCommit string
 	KernelConfig string
 	StraceBin    string
-	NeedStrace   bool
 }
 
 type reproduceResult struct {
@@ -73,13 +72,16 @@ type RunTestResult struct {
 }
 
 // RunTest boots the kernel and runs a single test program.
-func RunTest(args ReproduceArgs, workdir string, collectCoverage bool) (RunTestResult, error) {
+func RunTest(args ReproduceArgs, workdir string, collectCoverage, runStrace bool) (RunTestResult, error) {
 	res := RunTestResult{}
 	if args.Type != "qemu" {
 		return res, errors.New("RunTest: only qemu VM type is supported")
 	}
 	if collectCoverage && args.ReproSyz == "" {
 		return res, errors.New("RunTest: coverage collection requires a syzkaller program")
+	}
+	if args.ReproSyz == "" && args.ReproC == "" {
+		return res, errors.New("RunTest: either syz or C reproducer is required")
 	}
 
 	var vmConfig map[string]any
@@ -101,7 +103,7 @@ func RunTest(args ReproduceArgs, workdir string, collectCoverage bool) (RunTestR
 	cfg.Image = args.Image
 	cfg.Type = args.Type
 	cfg.VM = vmCfg
-	if args.NeedStrace && args.StraceBin != "" {
+	if runStrace {
 		cfg.StraceBin = args.StraceBin
 		cfg.StraceBinOnTarget = false
 	}
@@ -240,17 +242,18 @@ func parseTestError(err *instance.TestError) string {
 	return fmt.Sprintf("%v: %v\n%s", what, err.Title, extraInfo)
 }
 
-func ReproduceFuncWithCoverage(ctx *aflow.Context, args ReproduceArgs,
-	collectCoverage bool) (reproduceResult, string, error) {
+func DoReproduce(ctx *aflow.Context, args ReproduceArgs,
+	collectCoverage, runStrace bool) (reproduceResult, string, error) {
 	imageData, err := os.ReadFile(args.Image)
 	if err != nil {
 		return reproduceResult{}, "", err
 	}
 	desc := fmt.Sprintf("kernel commit %v, kernel config hash %v, image hash %v,"+
-		" vm %v, vm config hash %v, C repro hash %v, syz repro hash %v, opts hash %v, cov %v, version 6",
+		" vm %v, vm config hash %v, C repro hash %v, syz repro hash %v, opts hash %v,"+
+		" cov %v, strace %v, version 6",
 		args.KernelCommit, hash.String(args.KernelConfig), hash.String(imageData),
 		args.Type, hash.String(args.VM), hash.String(args.ReproC),
-		hash.String(args.ReproSyz), hash.String(args.ReproOpts), collectCoverage)
+		hash.String(args.ReproSyz), hash.String(args.ReproOpts), collectCoverage, runStrace)
 	type Cached struct {
 		BugTitle       string
 		Report         string
@@ -265,7 +268,7 @@ func ReproduceFuncWithCoverage(ctx *aflow.Context, args ReproduceArgs,
 		if err != nil {
 			return res, err
 		}
-		testRes, err := RunTest(args, workdir, collectCoverage)
+		testRes, err := RunTest(args, workdir, collectCoverage, runStrace)
 		if testRes.Report != nil {
 			res.BugTitle = testRes.Report.Title
 			res.Report = string(testRes.Report.Report)
@@ -305,9 +308,9 @@ func ReproduceFuncWithCoverage(ctx *aflow.Context, args ReproduceArgs,
 	}, cached.CoverageID, nil
 }
 
-func ReproduceFunc(ctx *aflow.Context, args ReproduceArgs) (reproduceResult, error) {
-	res, _, err := ReproduceFuncWithCoverage(ctx, args, false)
-	return res, err
+func reproduceFunc(ctx *aflow.Context, args ReproduceArgs) (reproduceResult, error) {
+       res, _, err := DoReproduce(ctx, args, false, false)
+       return res, err
 }
 
 func symbolize(kernelObj string, coverage [][]uint64) ([][]symbolizer.Frame, error) {
